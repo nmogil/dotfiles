@@ -1,5 +1,6 @@
 # Taps
 tap "homebrew/bundle"
+tap "tw93/tap"
 
 # CLI Tools
 brew "ca-certificates"
@@ -12,13 +13,22 @@ brew "mactop"
 brew "node"
 brew "poppler"
 brew "python@3.11"
+brew "fd"              # Simple, fast find alternative
+brew "ffmpeg"          # Media processing
+brew "imagemagick"     # Image manipulation
+brew "lazygit"         # Terminal UI for git
+brew "resvg"           # SVG rendering
+brew "sevenzip"        # Archive tool
+brew "yazi"            # Terminal file manager
+brew "zoxide"          # Smarter cd command
+brew "tw93/tap/mole"   # Mole app
 
 # Optional but useful CLI tools (uncomment if wanted)
 # brew "bat"          # Better cat with syntax highlighting
 # brew "eza"          # Modern ls replacement
-# brew "fzf"          # Fuzzy finder
-# brew "ripgrep"      # Fast grep
-# brew "jq"           # JSON processor
+brew "fzf"            # Fuzzy finder
+brew "ripgrep"        # Fast grep
+brew "jq"             # JSON processor
 # brew "htop"         # Better top
 # brew "tldr"         # Simplified man pages
 # brew "tree"         # Directory tree view
@@ -29,6 +39,7 @@ cask "claude-code"
 cask "hiddenbar"
 cask "ngrok"
 cask "obsidian"
+cask "font-symbols-only-nerd-font"
 
 # Optional casks (uncomment if wanted)
 # cask "visual-studio-code"
