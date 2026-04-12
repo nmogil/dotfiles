@@ -1,6 +1,8 @@
 # Taps
 tap "homebrew/bundle"
 tap "tw93/tap"
+tap "2389-research/tap"
+tap "jurplel/tap"
 
 # CLI Tools
 brew "ca-certificates"
@@ -18,7 +20,9 @@ brew "ffmpeg"          # Media processing
 brew "imagemagick"     # Image manipulation
 brew "lazygit"         # Terminal UI for git
 brew "resvg"           # SVG rendering
+brew "rtk"             # Rust Token Killer — CLI proxy for token savings
 brew "sevenzip"        # Archive tool
+brew "sox"             # Audio processing
 brew "yazi"            # Terminal file manager
 brew "zoxide"          # Smarter cd command
 brew "tw93/tap/mole"   # Mole app
@@ -40,6 +44,7 @@ cask "hiddenbar"
 cask "ngrok"
 cask "obsidian"
 cask "font-symbols-only-nerd-font"
+cask "jurplel/tap/instant-space-switcher"
 
 # Optional casks (uncomment if wanted)
 # cask "visual-studio-code"
