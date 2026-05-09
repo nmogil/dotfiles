@@ -1,0 +1,13 @@
+# One repo per line. Lines starting with # are ignored.
+# Any of these forms work:
+#   owner/repo
+#   git@github.com:owner/repo.git
+#   https://github.com/owner/repo
+#   https://github.com/owner/repo.git
+#
+# Copy this file to repos.txt and edit. repos.txt is gitignored
+# so personal repo lists don't get committed.
+
+# Examples — replace with your actual repos:
+# nmogil/dotfiles
+# nmogil/some-other-project
