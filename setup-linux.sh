@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# -e: exit on error. -E: ERR trap inherited by functions (so `run` failures fire it).
+set -eE
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -81,7 +82,7 @@ should_install() {
 # -----------------------------------------------------------------------------
 section "Base tools (apt update + build-essential, curl, git, zsh)"
 run $SUDO apt-get update -y
-run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     build-essential \
     ca-certificates \
     curl \
@@ -98,7 +99,7 @@ run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # -----------------------------------------------------------------------------
 if should_install "full system upgrade (apt upgrade -y — can take a while)"; then
     section "Full system upgrade"
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 fi
 
 # -----------------------------------------------------------------------------
@@ -106,7 +107,7 @@ fi
 # -----------------------------------------------------------------------------
 if should_install "core CLI tools (fd, fzf, jq, ripgrep, zoxide)"; then
     section "Core CLI tools"
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
         fd-find \
         fzf \
         jq \
@@ -125,7 +126,7 @@ fi
 # -----------------------------------------------------------------------------
 if should_install "media tools (ffmpeg, imagemagick, ghostscript, poppler, librsvg, p7zip, sox)"; then
     section "Media tools"
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
         ffmpeg \
         ghostscript \
         imagemagick \
@@ -140,7 +141,7 @@ fi
 # -----------------------------------------------------------------------------
 if should_install "MesloLGS NF fonts for Powerlevel10k (desktop Linux only — useless on headless VPS)"; then
     section "MesloLGS NF fonts"
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y fontconfig
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y fontconfig
     FONT_DIR="$HOME/.local/share/fonts"
     mkdir -p "$FONT_DIR"
     for font in "MesloLGS%20NF%20Regular.ttf" "MesloLGS%20NF%20Bold.ttf" "MesloLGS%20NF%20Italic.ttf" "MesloLGS%20NF%20Bold%20Italic.ttf"; do
@@ -161,7 +162,7 @@ fi
 # -----------------------------------------------------------------------------
 if should_install "Python 3 + pip + venv"; then
     section "Python"
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
         python3 \
         python3-pip \
         python3-venv

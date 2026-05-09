@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# -e: exit on error. -E: ERR trap inherited by functions (so `run` failures fire it).
+set -eE
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -58,7 +59,7 @@ section "Step 1: Unattended security upgrades"
 read -rp "Enable automatic security patches? [y/N]: " do_unattended
 if [[ $do_unattended =~ ^[Yy]$ ]]; then
     run $SUDO apt-get update -y
-    run $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades
+    run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades
 
     log "Writing /etc/apt/apt.conf.d/20auto-upgrades"
     $SUDO tee /etc/apt/apt.conf.d/20auto-upgrades > /dev/null <<'EOF'

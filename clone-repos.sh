@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eE
 
 # -----------------------------------------------------------------------------
 # Bulk-clone repos listed in repos.txt into ~/code/<repo-name>
