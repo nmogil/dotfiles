@@ -207,7 +207,9 @@ if should_install "Node.js 22 (via NodeSource)"; then
     else
         # Pinned to v22 (rather than setup_lts.x) so the version doesn't drift
         # when a new LTS is cut. v22 is the current LTS through April 2027.
-        run bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -"
+        # Note: no sudo `-E` flag here — it only works when $SUDO=sudo, and breaks
+        # when $SUDO is empty (running as root). NodeSource doesn't need env preserved.
+        run bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO bash -"
         run $SUDO apt-get install -y nodejs
         log "Node version: $(node --version)"
     fi
