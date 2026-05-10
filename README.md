@@ -20,6 +20,7 @@ gh auth login              # then authenticate GitHub CLI
 cp repos.txt.example repos.txt && $EDITOR repos.txt
 ./clone-repos.sh           # bulk-clone your repos into ~/code
 ./harden-vps.sh            # optional: Tailscale + UFW + auto-upgrades
+./setup-obsidian-sync.sh   # optional: Obsidian Headless Sync
 ```
 
 ## What's Included
@@ -33,6 +34,7 @@ cp repos.txt.example repos.txt && $EDITOR repos.txt
 | `setup.sh` | macOS installation script |
 | `setup-linux.sh` | Debian/Ubuntu installation script (headless-friendly) |
 | `harden-vps.sh` | Optional VPS hardening: unattended-upgrades, Tailscale, UFW |
+| `setup-obsidian-sync.sh` | Optional: Obsidian Headless Sync (npm install, login, systemd user unit) |
 | `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/code` via `gh` |
 | `repos.txt.example` | Template for `repos.txt` (gitignored — personal list) |
 
@@ -133,6 +135,38 @@ have confirmed a working tailnet SSH session — this prevents lock-outs.
 After hardening, optionally edit `/etc/ssh/sshd_config` to set
 `PasswordAuthentication no` and `PermitRootLogin no` (the script prints the
 exact commands but does not run them automatically).
+
+## Obsidian Headless Sync (Optional)
+
+For a VPS that should keep an Obsidian vault in sync as a background service,
+run `./setup-obsidian-sync.sh` after `setup-linux.sh`. **Requires an active
+Obsidian Sync subscription (paid)** — without it, login will fail and there
+are no remote vaults to sync.
+
+```bash
+./setup-obsidian-sync.sh
+```
+
+What it does (each step is idempotent and safe to re-run):
+
+1. Verifies `node` / `npm` are present and confirms the subscription
+2. Installs `obsidian-headless` globally via npm (skipped if `ob` already on PATH)
+3. Logs in with `ob login` (skipped if `ob sync-list-remote` already succeeds)
+4. Picks an existing local vault setup or runs `ob sync-setup --vault <name>` against the local path (default `~/obsidian`)
+5. Runs a one-shot `ob sync` to populate the vault
+6. Installs a systemd **user** unit (`~/.config/systemd/user/ob-sync.service`) that runs `ob sync --continuous`, enables linger so it survives logout, and `enable --now`s the unit
+7. If `~/.hermes/.env` exists, appends or updates `OBSIDIAN_VAULT_PATH` to point at the vault
+
+Manage the sync service:
+
+```bash
+systemctl --user status ob-sync
+systemctl --user restart ob-sync
+systemctl --user stop ob-sync
+journalctl --user -u ob-sync -f
+```
+
+Docs: <https://help.obsidian.md/sync/headless>
 
 ## Manual Steps After Setup
 
