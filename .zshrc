@@ -125,3 +125,45 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # zoxide — smarter cd
 eval "$(zoxide init zsh)"
+
+# --- Noah remote dev DX ---
+# Lightweight VPS comfort helpers. Herdr is the agent/session cockpit;
+# tmux aliases kept below as fallback only.
+export EDITOR="${EDITOR:-micro}"
+
+alias e='micro'
+alias lg='lazygit'
+alias gs='git status --short'
+alias gd='git diff'
+alias gds='git diff --stat'
+
+# Herdr — agent cockpit
+alias hd='herdr'                    # launch/attach the persistent session
+alias hds='herdr status'            # client + server status
+alias hda='herdr agent list'        # detected agent sessions
+alias hdp='herdr pane list'         # panes in current session
+alias hdw='herdr workspace list'    # workspaces
+
+# tmux — fallback only
+alias ta='tmux attach -t'
+alias tn='tmux new -s'
+alias tls='tmux ls'
+
+if command -v bat >/dev/null 2>&1; then
+  alias b='bat --paging=never'
+elif command -v batcat >/dev/null 2>&1; then
+  alias b='batcat --paging=never'
+fi
+
+fe() {
+  local file
+  if command -v bat >/dev/null 2>&1; then
+    file=$(fd --type f --hidden --exclude .git | fzf --preview 'bat --color=always --style=numbers --line-range=:200 {}')
+  elif command -v batcat >/dev/null 2>&1; then
+    file=$(fd --type f --hidden --exclude .git | fzf --preview 'batcat --color=always --style=numbers --line-range=:200 {}')
+  else
+    file=$(fd --type f --hidden --exclude .git | fzf)
+  fi
+  [ -n "$file" ] && ${EDITOR:-micro} "$file"
+}
+# --- end Noah remote dev DX ---

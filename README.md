@@ -18,9 +18,10 @@ cd ~/dotfiles
 ./setup-linux.sh           # dev environment (interactive: Full or Custom)
 gh auth login              # then authenticate GitHub CLI
 cp repos.txt.example repos.txt && $EDITOR repos.txt
-./clone-repos.sh           # bulk-clone your repos into ~/code
+./clone-repos.sh           # bulk-clone your repos into ~/github_repos
 ./harden-vps.sh            # optional: Tailscale + UFW + auto-upgrades
 ./setup-obsidian-sync.sh   # optional: Obsidian Headless Sync
+herdr                      # launch the agent cockpit
 ```
 
 ## What's Included
@@ -35,8 +36,10 @@ cp repos.txt.example repos.txt && $EDITOR repos.txt
 | `setup-linux.sh` | Debian/Ubuntu installation script (headless-friendly) |
 | `harden-vps.sh` | Optional VPS hardening: unattended-upgrades, Tailscale, UFW |
 | `setup-obsidian-sync.sh` | Optional: Obsidian Headless Sync (npm install, login, systemd user unit) |
-| `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/code` via `gh` |
+| `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/github_repos` workstream buckets via `gh` |
 | `repos.txt.example` | Template for `repos.txt` (gitignored — personal list) |
+| `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
+| `server/scripts/patch-herdr-codex-detection.sh` | Patches Herdr's Codex detection manifest so update/hook prompts show as blocked |
 
 ## What the Setup Script Does
 
@@ -94,7 +97,7 @@ Component groups (each is `[Y/n]` in Custom mode):
 
 1. **Base tools** — `build-essential`, `curl`, `git`, `zsh` (always installed)
 2. **Full system upgrade** — `apt upgrade -y`
-3. **Core CLI tools** — `fd`, `fzf`, `jq`, `ripgrep`, `zoxide`
+3. **Core CLI tools** — `tmux`, `fd`, `fzf`, `jq`, `ripgrep`, `zoxide`, `micro`, `bat`, `git-delta`, `just`
 4. **Media tools** — `ffmpeg`, `imagemagick`, `ghostscript`, `poppler`, `librsvg`, `p7zip`, `sox`
 5. **MesloLGS NF fonts** — for Powerlevel10k (desktop Linux only — useless on a headless VPS)
 6. **Python** — `python3`, `pip`, `venv`
@@ -103,16 +106,19 @@ Component groups (each is `[Y/n]` in Custom mode):
 9. **Node.js 22** — pinned via NodeSource (LTS through April 2027)
 10. **Bun**
 11. **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
-12. **lazygit** — latest release binary
-13. **flyctl**
-14. **ngrok** — official apt repo
-15. **Docker Compose plugin** — only if `docker` is present
-16. **lazydocker** — latest release binary
-17. **yazi** — only if `cargo` is present
-18. **Oh My Zsh + plugins + Powerlevel10k**
-19. **Config files** — copies `.zshrc`, `.p10k.zsh`, `.gitconfig` (backs up existing)
-20. **Default shell** — `chsh` to zsh (prompted)
-21. **SSH key** — generates `ed25519` for GitHub (prompted)
+12. **Codex CLI** — `npm install -g @openai/codex`
+13. **Herdr** — agent session cockpit, official installer (`curl -fsSL https://herdr.dev/install.sh | sh`)
+14. **Herdr integrations** — `herdr integration install claude|codex|hermes` (skips agents not on PATH), plus the Codex detection manifest patch and the Hermes `herdr` skill (non-fatal if Hermes isn't installed/authenticated yet)
+15. **lazygit** — latest release binary
+16. **flyctl**
+17. **ngrok** — official apt repo
+18. **Docker Compose plugin** — only if `docker` is present
+19. **lazydocker** — latest release binary
+20. **yazi** — only if `cargo` is present
+21. **Oh My Zsh + plugins + Powerlevel10k**
+22. **Config files** — copies `.zshrc`, `.p10k.zsh`, `.gitconfig`, `.tmux.conf` (backs up existing)
+23. **Default shell** — `chsh` to zsh (prompted)
+24. **SSH key** — generates `ed25519` for GitHub (prompted)
 
 Skipped vs macOS: Homebrew, GUI apps (Arc, Obsidian, etc.), MesloLGS fonts
 (those live on the local terminal client, not the server), and macOS `defaults`.
@@ -167,6 +173,51 @@ journalctl --user -u ob-sync -f
 ```
 
 Docs: <https://help.obsidian.md/sync/headless>
+
+## VPS Repo Layout
+
+The Linux/VPS workflow uses `~/github_repos` as the canonical clone root, with
+workstream buckets to keep contexts separated:
+
+```text
+~/github_repos/
+├── external/
+├── pennie/
+├── personal/
+├── twilio/
+└── ventures/
+```
+
+`clone-repos.sh` accepts an optional bucket prefix in `repos.txt`, e.g.
+`personal nmogil/dotfiles` or `ventures mogilventures/a2pcheck-app`. Herdr is
+the preferred project/session cockpit (see below); start agents from the
+active repo root inside a Herdr workspace.
+
+## Herdr Agent Cockpit
+
+Herdr (<https://herdr.dev>) is the VPS session/agent orchestration layer —
+one persistent server hosting workspaces, panes, and agent sessions (Claude
+Code, Codex, Hermes), with agent state detection (idle/working/blocked).
+tmux remains installed as a fallback only.
+
+`setup-linux.sh` handles the full Herdr stack:
+
+1. **Herdr itself** — official stable installer, lands in `~/.local/bin/herdr`
+2. **Integrations** — `herdr integration install claude`, `codex`, and
+   `hermes` for whichever CLIs are on PATH. Herdr's installer is idempotent
+   and preserves existing hooks/settings.
+3. **Codex detection patch** — `server/scripts/patch-herdr-codex-detection.sh`
+   adds rules to Herdr's cached Codex manifest
+   (`~/.local/state/herdr/agent-detection/remote/codex.toml`) so the Codex
+   "Update available" and "Hooks need review" screens classify as **blocked**
+   instead of idle. Idempotent; re-run it if Herdr refreshes its remote
+   manifests and the rules disappear.
+4. **Hermes `herdr` skill** — `hermes skills install
+   https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md`,
+   skipped with a log line if Hermes isn't installed or authenticated yet.
+
+Day-to-day (aliases in `.zshrc`): `hd` attach cockpit, `hds` status, `hda`
+agent list, `hdp` pane list, `hdw` workspace list.
 
 ## Manual Steps After Setup
 
