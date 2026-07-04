@@ -97,7 +97,7 @@ Component groups (each is `[Y/n]` in Custom mode):
 
 1. **Base tools** — `build-essential`, `curl`, `git`, `zsh` (always installed)
 2. **Full system upgrade** — `apt upgrade -y`
-3. **Core CLI tools** — `tmux`, `fd`, `fzf`, `jq`, `ripgrep`, `zoxide`, `micro`, `bat`, `git-delta`, `just`
+3. **Core CLI tools** — `tmux`, `fd`, `fzf`, `jq`, `ripgrep`, `zoxide`, `micro`, `bat`, `git-delta`, `just`, `neofetch`
 4. **Media tools** — `ffmpeg`, `imagemagick`, `ghostscript`, `poppler`, `librsvg`, `p7zip`, `sox`
 5. **MesloLGS NF fonts** — for Powerlevel10k (desktop Linux only — useless on a headless VPS)
 6. **Python** — `python3`, `pip`, `venv`
