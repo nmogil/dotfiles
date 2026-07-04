@@ -105,14 +105,19 @@ fi
 # -----------------------------------------------------------------------------
 # Step 2: Core CLI tools
 # -----------------------------------------------------------------------------
-if should_install "core CLI tools (fd, fzf, jq, ripgrep, zoxide)"; then
+if should_install "core CLI tools (tmux, fd, fzf, jq, ripgrep, zoxide, micro, bat, git-delta, just)"; then
     section "Core CLI tools"
     run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        tmux \
         fd-find \
         fzf \
         jq \
         ripgrep \
-        zoxide
+        zoxide \
+        micro \
+        bat \
+        git-delta \
+        just
 
     if ! command -v fd &> /dev/null && command -v fdfind &> /dev/null; then
         mkdir -p "$HOME/.local/bin"
@@ -239,6 +244,69 @@ if should_install "Claude Code CLI (npm install -g @anthropic-ai/claude-code)"; 
     else
         run $SUDO npm install -g @anthropic-ai/claude-code
         log "Claude Code installed. Run 'claude' to start."
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Step 7c: Codex CLI (requires Node from Step 6)
+# -----------------------------------------------------------------------------
+if should_install "Codex CLI (npm install -g @openai/codex)"; then
+    section "Codex CLI"
+    if ! command -v npm &> /dev/null; then
+        log "npm not found — install Node.js first. Skipping Codex."
+    elif command -v codex &> /dev/null; then
+        log "Codex already installed: $(codex --version 2>&1 | head -n1)"
+    else
+        run $SUDO npm install -g @openai/codex
+        log "Codex installed. Run 'codex login' to authenticate."
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Step 7d: Herdr (terminal workspace manager / agent cockpit)
+# -----------------------------------------------------------------------------
+if should_install "Herdr (agent session cockpit — https://herdr.dev)"; then
+    section "Herdr"
+    if command -v herdr &> /dev/null || [ -x "$HOME/.local/bin/herdr" ]; then
+        log "Herdr already installed: $("$(command -v herdr || echo "$HOME/.local/bin/herdr")" --version 2>&1 | head -n1)"
+    else
+        run bash -c "curl -fsSL https://herdr.dev/install.sh | sh"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Step 7e: Herdr integrations + Hermes herdr skill + Codex detection patch
+# Runs after Claude/Codex install; Hermes is installed separately, so its
+# integration and skill are skipped (non-fatally) when hermes is absent.
+# -----------------------------------------------------------------------------
+if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr skill + Codex detection patch"; then
+    section "Herdr integrations"
+    HERDR_BIN="$(command -v herdr || true)"
+    [ -z "$HERDR_BIN" ] && [ -x "$HOME/.local/bin/herdr" ] && HERDR_BIN="$HOME/.local/bin/herdr"
+    if [ -z "$HERDR_BIN" ]; then
+        log "herdr not found — skipping integrations (re-run after installing Herdr)"
+    else
+        # Herdr's installer is idempotent and preserves existing hooks/settings.
+        for agent in claude codex hermes; do
+            if command -v "$agent" &> /dev/null; then
+                run "$HERDR_BIN" integration install "$agent" \
+                    || log "herdr integration install $agent failed — re-run manually later"
+            else
+                log "$agent not on PATH — skipping its Herdr integration"
+            fi
+        done
+        run bash "$DOTFILES_DIR/server/scripts/patch-herdr-codex-detection.sh" \
+            || log "Codex detection patch failed — re-run server/scripts/patch-herdr-codex-detection.sh later"
+    fi
+
+    HERDR_SKILL_URL="https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md"
+    if ! command -v hermes &> /dev/null; then
+        log "hermes not installed — after installing it, run: hermes skills install $HERDR_SKILL_URL"
+    elif hermes skills list 2>/dev/null | grep -qw herdr; then
+        log "Hermes herdr skill already installed"
+    else
+        run hermes skills install --yes "$HERDR_SKILL_URL" \
+            || log "Hermes herdr skill install failed (Hermes not authenticated yet?) — run manually: hermes skills install $HERDR_SKILL_URL"
     fi
 fi
 
@@ -392,17 +460,19 @@ if should_install "Oh My Zsh + zsh plugins + Powerlevel10k theme"; then
 fi
 
 # -----------------------------------------------------------------------------
-# Step 14: Copy dotfiles (.zshrc, .p10k.zsh, .gitconfig)
+# Step 14: Copy dotfiles (.zshrc, .p10k.zsh, .gitconfig, .tmux.conf)
 # -----------------------------------------------------------------------------
-if should_install "config files (.zshrc, .p10k.zsh, .gitconfig — backs up existing)"; then
+if should_install "config files (.zshrc, .p10k.zsh, .gitconfig, .tmux.conf — backs up existing)"; then
     section "Config files"
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
     [ -f ~/.zshrc ]     && run mv ~/.zshrc     ~/.zshrc.backup.$TIMESTAMP
     [ -f ~/.p10k.zsh ]  && run mv ~/.p10k.zsh  ~/.p10k.zsh.backup.$TIMESTAMP
     [ -f ~/.gitconfig ] && run mv ~/.gitconfig ~/.gitconfig.backup.$TIMESTAMP
+    [ -f ~/.tmux.conf ] && run mv ~/.tmux.conf ~/.tmux.conf.backup.$TIMESTAMP
 
     run cp "$DOTFILES_DIR/.zshrc"    ~/.zshrc
     run cp "$DOTFILES_DIR/.p10k.zsh" ~/.p10k.zsh
+    [ -f "$DOTFILES_DIR/.tmux.conf" ] && run cp "$DOTFILES_DIR/.tmux.conf" ~/.tmux.conf
 
     if [ -f "$DOTFILES_DIR/.gitconfig" ]; then
         run cp "$DOTFILES_DIR/.gitconfig" ~/.gitconfig
@@ -461,5 +531,6 @@ echo "  1. Start a new shell: exec zsh   (or log out and back in)"
 echo "  2. Authenticate GitHub CLI: gh auth login"
 echo "  3. Bulk-clone your repos: cp repos.txt.example repos.txt && ./clone-repos.sh"
 echo "  4. If exposed to public internet, harden the box: ./harden-vps.sh"
-echo "  5. Set local terminal font to 'MesloLGS NF' for Powerlevel10k icons"
+echo "  5. Launch the agent cockpit: herdr   (tmux remains as fallback)"
+echo "  6. Set local terminal font to 'MesloLGS NF' for Powerlevel10k icons"
 echo ""

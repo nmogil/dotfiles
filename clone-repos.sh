@@ -2,13 +2,16 @@
 set -eE
 
 # -----------------------------------------------------------------------------
-# Bulk-clone repos listed in repos.txt into ~/code/<repo-name>
+# Bulk-clone repos listed in repos.txt into ~/github_repos[/<workstream>]/<repo-name>
 #
-# Format of repos.txt: one repo per line, in any of these forms:
-#   owner/repo
-#   git@github.com:owner/repo.git
-#   https://github.com/owner/repo
-#   https://github.com/owner/repo.git
+# Format of repos.txt: one repo per line. Optional first field can be a workstream bucket:
+#   personal owner/repo
+#   ventures git@github.com:owner/repo.git
+#   pennie https://github.com/owner/repo
+#   twilio https://github.com/owner/repo.git
+#   external owner/repo
+#
+# Without a workstream prefix, repos are cloned directly under ~/github_repos.
 #
 # Lines starting with '#' and blank lines are ignored.
 #
@@ -26,7 +29,7 @@ trap 'rc=$?; echo ""; echo "✗ FAILED at line $LINENO (exit $rc)"; echo "  Full
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOS_FILE="${1:-$DOTFILES_DIR/repos.txt}"
-TARGET_DIR="${HOME}/code"
+TARGET_DIR="${GITHUB_REPOS_DIR:-${HOME}/github_repos}"
 
 echo "================================================================"
 echo "  Bulk-clone repos"
@@ -54,6 +57,9 @@ if ! gh auth status &> /dev/null; then
 fi
 
 mkdir -p "$TARGET_DIR"
+for bucket in personal ventures pennie twilio external; do
+    mkdir -p "$TARGET_DIR/$bucket"
+done
 
 CLONED=0
 SKIPPED=0
@@ -65,9 +71,27 @@ while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     [[ "$line" =~ ^# ]] && continue
 
+    # Optional workstream prefix keeps repos grouped by context.
+    workstream=""
+    repo_ref="$line"
+    first_field="${line%%[[:space:]]*}"
+    rest="${line#*[[:space:]]}"
+    if [ "$rest" != "$line" ]; then
+        case "$first_field" in
+            personal|ventures|pennie|twilio|external)
+                workstream="$first_field"
+                repo_ref="$rest"
+                ;;
+        esac
+    fi
+
     # Extract repo name (last path component, strip .git)
-    repo_name="$(basename "$line" .git)"
-    target="$TARGET_DIR/$repo_name"
+    repo_name="$(basename "$repo_ref" .git)"
+    if [ -n "$workstream" ]; then
+        target="$TARGET_DIR/$workstream/$repo_name"
+    else
+        target="$TARGET_DIR/$repo_name"
+    fi
 
     if [ -d "$target" ]; then
         log "↺ $repo_name already exists at $target — skipping"
@@ -75,11 +99,11 @@ while IFS= read -r line || [ -n "$line" ]; do
         continue
     fi
 
-    log "→ Cloning $line into $target"
-    if gh repo clone "$line" "$target"; then
+    log "→ Cloning $repo_ref into $target"
+    if gh repo clone "$repo_ref" "$target"; then
         CLONED=$((CLONED + 1))
     else
-        log "✗ Failed to clone $line"
+        log "✗ Failed to clone $repo_ref"
         FAILED=$((FAILED + 1))
     fi
 done < "$REPOS_FILE"

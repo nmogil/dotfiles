@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${AGENT_BOUNDED_SCOPE:-}" = "1" ]; then
+  exec codex "$@"
+fi
+
+exec systemd-run --user --scope --quiet --collect --same-dir \
+  --property=MemoryAccounting=yes \
+  --property=MemoryHigh=1536M \
+  --property=MemoryMax=2560M \
+  --property=MemorySwapMax=768M \
+  --property=TasksMax=384 \
+  --property=CPUWeight=80 \
+  --setenv=AGENT_BOUNDED_SCOPE=1 \
+  --setenv=NODE_OPTIONS=--max-old-space-size=1024 \
+  codex "$@"

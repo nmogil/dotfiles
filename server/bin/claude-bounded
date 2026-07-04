@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${AGENT_BOUNDED_SCOPE:-}" = "1" ]; then
+  exec claude "$@"
+fi
+
+exec systemd-run --user --scope --quiet --collect --same-dir \
+  --property=MemoryAccounting=yes \
+  --property=MemoryHigh=2G \
+  --property=MemoryMax=3G \
+  --property=MemorySwapMax=1G \
+  --property=TasksMax=512 \
+  --property=CPUWeight=80 \
+  --setenv=AGENT_BOUNDED_SCOPE=1 \
+  claude "$@"
