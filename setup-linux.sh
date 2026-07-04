@@ -105,7 +105,7 @@ fi
 # -----------------------------------------------------------------------------
 # Step 2: Core CLI tools
 # -----------------------------------------------------------------------------
-if should_install "core CLI tools (tmux, fd, fzf, jq, ripgrep, zoxide, micro, bat, git-delta, just)"; then
+if should_install "core CLI tools (tmux, fd, fzf, jq, ripgrep, zoxide, micro, bat, git-delta, just, neofetch)"; then
     section "Core CLI tools"
     run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y \
         tmux \
@@ -117,7 +117,8 @@ if should_install "core CLI tools (tmux, fd, fzf, jq, ripgrep, zoxide, micro, ba
         micro \
         bat \
         git-delta \
-        just
+        just \
+        neofetch
 
     if ! command -v fd &> /dev/null && command -v fdfind &> /dev/null; then
         mkdir -p "$HOME/.local/bin"
