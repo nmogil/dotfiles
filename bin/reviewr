@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Open Herdr Reviewr for the current git repository.
+# If called from an agent pane, open as a split targeted at that pane so
+# Reviewr's Send action can unambiguously deliver comments to the agent.
+# Otherwise, fall back to a visible tab in the current workspace.
+
+if ! command -v herdr >/dev/null 2>&1; then
+  echo "reviewr: herdr not found on PATH" >&2
+  exit 127
+fi
+
+if ! git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+  echo "reviewr: current directory is not inside a git repo" >&2
+  echo "cd into a repo first, e.g. /root/github_repos/ventures/a2pcheck-app or /root/obsidian" >&2
+  exit 2
+fi
+
+pane_id="${HERDR_PANE_ID:-}"
+if [ -n "$pane_id" ]; then
+  pane_json=$(herdr pane get "$pane_id" 2>/dev/null || true)
+else
+  pane_json=$(herdr pane current 2>/dev/null || true)
+fi
+
+read -r workspace_id target_is_agent <<EOF
+$(python3 - "$pane_json" <<'PY'
+import json, sys
+workspace = ""
+is_agent = "0"
+try:
+    data = json.loads(sys.argv[1])
+    pane = data["result"].get("pane") or data["result"]
+    workspace = pane.get("workspace_id", "")
+    if pane.get("agent"):
+        is_agent = "1"
+except Exception:
+    pass
+print(workspace, is_agent)
+PY
+)
+EOF
+
+if [ -z "$workspace_id" ]; then
+  echo "reviewr: could not determine current Herdr workspace" >&2
+  echo "Try from inside a Herdr pane, or run: herdr pane current" >&2
+  exit 3
+fi
+
+if [ -n "$pane_id" ] && [ "$target_is_agent" = "1" ]; then
+  exec herdr plugin pane open \
+    --plugin persiyanov.reviewr \
+    --entrypoint sidebar \
+    --placement split \
+    --target-pane "$pane_id" \
+    --direction right \
+    --cwd "$git_root" \
+    --focus
+fi
+
+exec herdr plugin pane open \
+  --plugin persiyanov.reviewr \
+  --entrypoint sidebar \
+  --placement tab \
+  --workspace "$workspace_id" \
+  --cwd "$git_root" \
+  --focus

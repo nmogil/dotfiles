@@ -298,6 +298,10 @@ if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr ski
         done
         run bash "$DOTFILES_DIR/server/scripts/patch-herdr-codex-detection.sh" \
             || log "Codex detection patch failed — re-run server/scripts/patch-herdr-codex-detection.sh later"
+
+        mkdir -p "$HOME/.local/bin"
+        run install -m 0755 "$DOTFILES_DIR/bin/reviewr" "$HOME/.local/bin/reviewr"
+        log "Installed reviewr wrapper (opens Reviewr beside the active agent when possible)"
     fi
 
     HERDR_SKILL_URL="https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md"
