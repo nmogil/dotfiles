@@ -39,6 +39,7 @@ herdr                      # launch the agent cockpit
 | `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/github_repos` workstream buckets via `gh` |
 | `repos.txt.example` | Template for `repos.txt` (gitignored — personal list) |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
+| `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
 | `server/scripts/patch-herdr-codex-detection.sh` | Patches Herdr's Codex detection manifest so update/hook prompts show as blocked |
 
@@ -48,14 +49,14 @@ herdr                      # launch the agent cockpit
 2. Installs **Homebrew** (Intel & Apple Silicon compatible)
 3. Installs all packages from `Brewfile`:
    - CLI tools: git, gh, node, python, flyctl, etc.
-   - Apps: Arc, Obsidian, Claude Code, HiddenBar, ngrok
+   - Apps: Arc, Ghostty, Obsidian, Claude Code, HiddenBar, ngrok
 4. Installs **Oh My Zsh** with plugins:
    - zsh-autosuggestions
    - zsh-syntax-highlighting
    - web-search
 5. Installs **Powerlevel10k** theme
 6. Downloads **MesloLGS NF** fonts automatically
-7. Copies all config files (with backups)
+7. Copies all config files (with backups), including the Ghostty terminal config
 8. Optionally configures git user name/email
 9. Optionally generates SSH key for GitHub
 10. Optionally applies macOS settings (Finder tweaks, faster key repeat, etc.)

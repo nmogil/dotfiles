@@ -41,6 +41,7 @@ brew "jq"             # JSON processor
 # Casks (GUI Applications)
 cask "arc"
 cask "claude-code"
+cask "ghostty"
 cask "hiddenbar"
 cask "ngrok"
 cask "obsidian"
