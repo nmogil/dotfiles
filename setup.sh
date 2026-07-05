@@ -103,6 +103,12 @@ echo "Installing config files..."
 cp "$DOTFILES_DIR/.zshrc" ~/.zshrc
 cp "$DOTFILES_DIR/.p10k.zsh" ~/.p10k.zsh
 
+# Ghostty terminal config
+GHOSTTY_DIR="$HOME/Library/Application Support/com.mitchellh.ghostty"
+mkdir -p "$GHOSTTY_DIR"
+[ -f "$GHOSTTY_DIR/config" ] && mv "$GHOSTTY_DIR/config" "$GHOSTTY_DIR/config.backup.$TIMESTAMP" || true
+cp "$DOTFILES_DIR/config/ghostty/config" "$GHOSTTY_DIR/config"
+
 # Copy git config (but prompt for email/name customization)
 if [ -f "$DOTFILES_DIR/.gitconfig" ]; then
     cp "$DOTFILES_DIR/.gitconfig" ~/.gitconfig
