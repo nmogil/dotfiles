@@ -1,0 +1,8 @@
+# Hunk (hunkdiff) — conservative defaults for VPS agent review sessions.
+# Copied to ~/.config/hunk/config.toml by setup-linux.sh (backs up if differing).
+theme = "auto"
+mode = "auto"
+line_numbers = true
+agent_notes = true
+wrap_lines = false
+menu_bar = true

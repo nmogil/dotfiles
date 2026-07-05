@@ -144,6 +144,13 @@ alias hda='herdr agent list'        # detected agent sessions
 alias hdp='herdr pane list'         # panes in current session
 alias hdw='herdr workspace list'    # workspaces
 
+# Hunk — diff review TUI (git pager stays delta; hunk is explicit)
+alias hk='hunk'                                # CLI/help entrypoint
+alias hkd='hunk diff'                          # open interactive working-tree diff
+alias hkr='hunk session review --repo .'        # inspect live review session for this repo
+alias hkl='hunk session comment list --repo .'  # list review comments for this repo
+alias hka='hunk session comment apply --repo . --stdin' # apply JSON-batch comments
+
 # tmux — fallback only
 alias ta='tmux attach -t'
 alias tn='tmux new -s'

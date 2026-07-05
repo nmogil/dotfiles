@@ -312,6 +312,54 @@ if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr ski
 fi
 
 # -----------------------------------------------------------------------------
+# Step 7f: Hunk (terminal diff review TUI for agent workflows)
+# Git core.pager stays delta — Hunk is invoked explicitly, not as default pager.
+# -----------------------------------------------------------------------------
+if should_install "Hunk (npm install -g hunkdiff) + config + Claude/Hermes hunk-review skill"; then
+    section "Hunk"
+    if ! command -v npm &> /dev/null; then
+        log "npm not found — install Node.js first. Skipping Hunk."
+    else
+        if command -v hunk &> /dev/null; then
+            log "Hunk already installed: $(hunk --version 2>&1 | head -n1)"
+        else
+            run $SUDO npm install -g hunkdiff
+        fi
+
+        HUNK_CONF_SRC="$DOTFILES_DIR/config/hunk/config.toml"
+        HUNK_CONF_DST="$HOME/.config/hunk/config.toml"
+        mkdir -p "$HOME/.config/hunk"
+        if [ -f "$HUNK_CONF_DST" ] && ! cmp -s "$HUNK_CONF_SRC" "$HUNK_CONF_DST"; then
+            run mv "$HUNK_CONF_DST" "$HUNK_CONF_DST.backup.$(date +%Y%m%d%H%M%S)"
+        fi
+        run cp "$HUNK_CONF_SRC" "$HUNK_CONF_DST"
+
+        # Claude Code skill — symlink the copy bundled inside the installed package
+        HUNK_SKILL_DIR="$(dirname "$(hunk skill path)")"
+        HUNK_SKILL_LINK="$HOME/.claude/skills/hunk-review"
+        if [ ! -d "$HUNK_SKILL_DIR" ]; then
+            log "Bundled hunk-review skill not found at $HUNK_SKILL_DIR — skipping Claude skill link"
+        elif [ -e "$HUNK_SKILL_LINK" ] && [ ! -L "$HUNK_SKILL_LINK" ]; then
+            log "$HUNK_SKILL_LINK exists and is not a symlink — leaving it in place"
+        else
+            mkdir -p "$HOME/.claude/skills"
+            run ln -sfn "$HUNK_SKILL_DIR" "$HUNK_SKILL_LINK"
+        fi
+
+        # Hermes skill — non-fatal, mirrors the Herdr skill pattern above
+        HUNK_SKILL_URL="https://raw.githubusercontent.com/modem-dev/hunk/main/skills/hunk-review/SKILL.md"
+        if ! command -v hermes &> /dev/null; then
+            log "hermes not installed — after installing it, run: hermes skills install $HUNK_SKILL_URL"
+        elif hermes skills list 2>/dev/null | grep -qw hunk-review; then
+            log "Hermes hunk-review skill already installed"
+        else
+            run hermes skills install --yes "$HUNK_SKILL_URL" \
+                || log "Hermes hunk-review skill install failed (Hermes not authenticated yet?) — run manually: hermes skills install $HUNK_SKILL_URL"
+        fi
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Step 8: lazygit
 # -----------------------------------------------------------------------------
 if should_install "lazygit"; then
