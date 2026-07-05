@@ -38,6 +38,7 @@ herdr                      # launch the agent cockpit
 | `setup-obsidian-sync.sh` | Optional: Obsidian Headless Sync (npm install, login, systemd user unit) |
 | `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/github_repos` workstream buckets via `gh` |
 | `repos.txt.example` | Template for `repos.txt` (gitignored — personal list) |
+| `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
 | `server/scripts/patch-herdr-codex-detection.sh` | Patches Herdr's Codex detection manifest so update/hook prompts show as blocked |
 
@@ -109,16 +110,17 @@ Component groups (each is `[Y/n]` in Custom mode):
 12. **Codex CLI** — `npm install -g @openai/codex`
 13. **Herdr** — agent session cockpit, official installer (`curl -fsSL https://herdr.dev/install.sh | sh`)
 14. **Herdr integrations** — `herdr integration install claude|codex|hermes` (skips agents not on PATH), plus the Codex detection manifest patch and the Hermes `herdr` skill (non-fatal if Hermes isn't installed/authenticated yet)
-15. **lazygit** — latest release binary
-16. **flyctl**
-17. **ngrok** — official apt repo
-18. **Docker Compose plugin** — only if `docker` is present
-19. **lazydocker** — latest release binary
-20. **yazi** — only if `cargo` is present
-21. **Oh My Zsh + plugins + Powerlevel10k**
-22. **Config files** — copies `.zshrc`, `.p10k.zsh`, `.gitconfig`, `.tmux.conf` (backs up existing)
-23. **Default shell** — `chsh` to zsh (prompted)
-24. **SSH key** — generates `ed25519` for GitHub (prompted)
+15. **Hunk** — `npm install -g hunkdiff` diff-review TUI, copies `config/hunk/config.toml`, symlinks the bundled `hunk-review` skill into `~/.claude/skills/`, and installs the Hermes skill (non-fatal)
+16. **lazygit** — latest release binary
+17. **flyctl**
+18. **ngrok** — official apt repo
+19. **Docker Compose plugin** — only if `docker` is present
+20. **lazydocker** — latest release binary
+21. **yazi** — only if `cargo` is present
+22. **Oh My Zsh + plugins + Powerlevel10k**
+23. **Config files** — copies `.zshrc`, `.p10k.zsh`, `.gitconfig`, `.tmux.conf` (backs up existing)
+24. **Default shell** — `chsh` to zsh (prompted)
+25. **SSH key** — generates `ed25519` for GitHub (prompted)
 
 Skipped vs macOS: Homebrew, GUI apps (Arc, Obsidian, etc.), MesloLGS fonts
 (those live on the local terminal client, not the server), and macOS `defaults`.
@@ -218,6 +220,27 @@ tmux remains installed as a fallback only.
 
 Day-to-day (aliases in `.zshrc`): `hd` attach cockpit, `hds` status, `hda`
 agent list, `hdp` pane list, `hdw` workspace list.
+
+## Hunk Diff Review
+
+Hunk (<https://github.com/modem-dev/hunk>, npm package `hunkdiff`) is a
+terminal diff viewer built for reviewing agent-written changes. Git's
+`core.pager` stays **delta** — Hunk is invoked explicitly, never as the
+default pager.
+
+Workflow: keep `hunk diff` open in one terminal (or Herdr pane) watching the
+working-tree diff while an agent works in another. The Claude Code skill
+(symlinked to `~/.claude/skills/hunk-review` from the npm package's bundled
+copy) teaches agents the session flow: `hunk session review --repo . --json`
+to inspect the live review, then `hunk session comment list --repo .` and
+`hunk session comment add --repo . --file <path> --new-line <n> --summary ...`
+to exchange feedback on specific hunks. Agents can use
+`hunk session comment apply --repo . --stdin` for JSON-batch comments. The same
+skill is installed into Hermes when available.
+
+Aliases in `.zshrc`: `hk` Hunk CLI, `hkd` diff viewer, `hkr` session review,
+`hkl` comment list, `hka` JSON-batch comment apply. Config lives at `~/.config/hunk/config.toml`
+(conservative defaults: auto theme/mode, line numbers, agent notes on).
 
 ## Manual Steps After Setup
 

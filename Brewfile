@@ -10,6 +10,7 @@ brew "flyctl"
 brew "gh"
 brew "ghostscript"
 brew "git"
+brew "hunk"             # Review-first terminal diff viewer
 brew "librsvg"
 brew "mactop"
 brew "node"
