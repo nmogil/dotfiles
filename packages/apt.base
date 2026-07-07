@@ -1,0 +1,41 @@
+# Core Debian/Ubuntu packages (mirrors setup-linux.sh base + CLI + media + python).
+# One package per line. `#` and blank lines ignored. Used by `./dot packages check`.
+
+# base
+build-essential
+ca-certificates
+curl
+wget
+gnupg
+lsb-release
+software-properties-common
+unzip
+git
+zsh
+
+# core CLI
+tmux
+fd-find
+fzf
+jq
+ripgrep
+zoxide
+micro
+bat
+git-delta
+just
+neofetch
+
+# media
+ffmpeg
+ghostscript
+imagemagick
+librsvg2-bin
+p7zip-full
+poppler-utils
+sox
+
+# python
+python3
+python3-pip
+python3-venv

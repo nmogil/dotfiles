@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# dot — control surface for this dotfiles repo. Thin wrapper around the existing
+# scripts; it locates them and dispatches, it does not duplicate their logic.
+set -euo pipefail
+
+script_path() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+# Repo root = dir this script lives in, resolving symlinks portably enough for
+# Linux and macOS so `dot` can later be linked onto PATH.
+DOT_ROOT="$(script_path)"
+
+run() {  # run <script> [args...] — fail clearly if the script is missing
+  local script="$DOT_ROOT/$1"; shift
+  [ -f "$script" ] || { echo "dot: missing script: $script" >&2; exit 1; }
+  exec bash "$script" "$@"
+}
+
+usage() {
+  cat <<'EOF'
+dot — dotfiles control surface
+
+Usage: ./dot <command> [args]
+
+  help                 Show this help
+  doctor               Read-only environment health check
+  setup mac            Run macOS setup (setup.sh)
+  setup linux          Run Linux/VPS setup (setup-linux.sh)
+  repos clone [file]   Bulk-clone repos from repos.txt (clone-repos.sh)
+  server harden        Harden a VPS: Tailscale + UFW + auto-upgrades (harden-vps.sh)
+  obsidian sync        Set up Obsidian headless sync (setup-obsidian-sync.sh)
+  packages check       Report which manifest packages are installed vs missing
+  chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
+                       read-only subcommands like `diff` are non-mutating.
+                       Warns if chezmoi is absent.
+
+Most setup/server commands are wrappers around the scripts of the same name;
+run them directly if you prefer. See AGENTS.md for where to edit things.
+EOF
+}
+
+packages_check() {
+  local pdir="$DOT_ROOT/packages" any=0
+  echo "== packages check =="
+  if command -v brew >/dev/null 2>&1 && [ -f "$DOT_ROOT/Brewfile" ]; then
+    any=1; echo "-- Brewfile (brew bundle check) --"
+    brew bundle check --file="$DOT_ROOT/Brewfile" || true
+  fi
+  if command -v dpkg >/dev/null 2>&1; then
+    for m in apt.base apt.agent; do
+      [ -f "$pdir/$m" ] || continue
+      any=1; echo "-- $m --"
+      while read -r pkg; do
+        pkg="${pkg%%#*}"; pkg="$(echo "$pkg" | tr -d '[:space:]')"; [ -n "$pkg" ] || continue
+        if dpkg -s "$pkg" >/dev/null 2>&1; then echo "  ok   $pkg"; else echo "  MISS $pkg"; fi
+      done < "$pdir/$m"
+    done
+  fi
+  if command -v npm >/dev/null 2>&1 && [ -f "$pdir/npm.global" ]; then
+    any=1; echo "-- npm.global --"
+    while read -r pkg; do
+      pkg="${pkg%%#*}"; pkg="$(echo "$pkg" | tr -d '[:space:]')"; [ -n "$pkg" ] || continue
+      if npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then echo "  ok   $pkg"; else echo "  MISS $pkg"; fi
+    done < "$pdir/npm.global"
+  fi
+  [ "$any" = 1 ] || echo "  (no package manager / manifests applicable on this host)"
+}
+
+chezmoi_wrap() {
+  if ! command -v chezmoi >/dev/null 2>&1; then
+    echo "dot: chezmoi is not installed. This repo does not use chezmoi yet;" >&2
+    echo "     see docs/chezmoi-plan.md. Install: https://chezmoi.io" >&2
+    exit 1
+  fi
+  [ $# -gt 0 ] || { echo "dot: chezmoi needs a subcommand (e.g. diff, apply, init)" >&2; exit 1; }
+  exec chezmoi "$@"
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help|-h|--help) usage ;;
+  doctor)         run scripts/doctor.sh "$@" ;;
+  setup)
+    case "${1:-}" in
+      mac)   run setup.sh ;;
+      linux) run setup-linux.sh ;;
+      *) echo "dot: setup needs 'mac' or 'linux'" >&2; usage; exit 1 ;;
+    esac ;;
+  repos)
+    case "${1:-}" in
+      clone) shift; run clone-repos.sh "$@" ;;
+      *) echo "dot: repos needs 'clone'" >&2; usage; exit 1 ;;
+    esac ;;
+  server)
+    case "${1:-}" in
+      harden) run harden-vps.sh ;;
+      *) echo "dot: server needs 'harden'" >&2; usage; exit 1 ;;
+    esac ;;
+  obsidian)
+    case "${1:-}" in
+      sync) run setup-obsidian-sync.sh ;;
+      *) echo "dot: obsidian needs 'sync'" >&2; usage; exit 1 ;;
+    esac ;;
+  packages)
+    case "${1:-}" in
+      check) packages_check ;;
+      *) echo "dot: packages needs 'check'" >&2; usage; exit 1 ;;
+    esac ;;
+  chezmoi) chezmoi_wrap "$@" ;;
+  *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;
+esac

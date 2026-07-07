@@ -4,30 +4,42 @@ My personal development environment setup. One command on macOS, one command on 
 
 ## Quick Start
 
+`./dot` is the control surface — a thin wrapper over the scripts below. Run
+`./dot help` for all commands and `./dot doctor` for a read-only health check.
+The direct script commands still work if you prefer them.
+
 **macOS:**
 ```bash
 git clone https://github.com/nmogil/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-./setup.sh
+./dot setup mac            # or: ./setup.sh
 ```
 
 **Linux (Debian/Ubuntu VPS):**
 ```bash
 git clone https://github.com/nmogil/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-./setup-linux.sh           # dev environment (interactive: Full or Custom)
+./dot setup linux          # dev environment (or: ./setup-linux.sh)
 gh auth login              # then authenticate GitHub CLI
 cp repos.txt.example repos.txt && $EDITOR repos.txt
-./clone-repos.sh           # bulk-clone your repos into ~/github_repos
-./harden-vps.sh            # optional: Tailscale + UFW + auto-upgrades
-./setup-obsidian-sync.sh   # optional: Obsidian Headless Sync
+./dot repos clone          # bulk-clone your repos (or: ./clone-repos.sh)
+./dot server harden        # optional: Tailscale + UFW + auto-upgrades
+./dot obsidian sync        # optional: Obsidian Headless Sync
+./dot doctor               # verify the environment (read-only)
 herdr                      # launch the agent cockpit
 ```
+
+See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules.
 
 ## What's Included
 
 | File | Description |
 |------|-------------|
+| `dot` | Control surface — thin wrapper over the setup scripts (`./dot help`) |
+| `scripts/doctor.sh` | Read-only environment health check (`./dot doctor`) |
+| `AGENTS.md` | Where to edit things + safety rules for agents/humans |
+| `packages/` | Package manifests split by role + `./dot packages check` |
+| `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
 | `Brewfile` | Homebrew packages and casks (macOS) |
 | `.zshrc` | Zsh configuration with Oh My Zsh |
 | `.p10k.zsh` | Powerlevel10k theme configuration |

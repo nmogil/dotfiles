@@ -1,0 +1,7 @@
+# Global npm CLIs (installed via `npm install -g` in setup-linux.sh /
+# setup-obsidian-sync.sh). One package per line. Used by `./dot packages check`.
+
+@anthropic-ai/claude-code
+@openai/codex
+hunkdiff
+obsidian-headless

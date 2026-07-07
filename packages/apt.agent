@@ -1,0 +1,5 @@
+# Debian/Ubuntu packages for agent / dev tooling (installed via their own apt
+# repos in setup-linux.sh). One package per line. Used by `./dot packages check`.
+
+gh
+nodejs
