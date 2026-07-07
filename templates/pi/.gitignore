@@ -1,0 +1,15 @@
+# Pi workspace runtime/state — never track these in the dotfiles repo.
+node_modules/
+dist/
+*.log
+
+# Live/runtime config derived from the examples. Copy the *.example.json files
+# to these names locally; keep the real ones out of git (they hold provider
+# endpoints, model IDs, tokens).
+agent/settings.json
+agent/mcp.json
+
+# Auth / session / cache state written by the pi CLI at runtime.
+agent/auth.json
+agent/session*
+agent/.cache/

@@ -65,7 +65,7 @@ fi
 
 echo
 echo "-- agent & sync tooling (optional) --"
-for tool in chezmoi herdr claude codex hunk ob tailscale; do
+for tool in chezmoi herdr claude codex hunk ob tailscale pi; do
   if have "$tool"; then PASS "$tool present"; else WARN "$tool missing"; fi
 done
 

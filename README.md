@@ -40,6 +40,7 @@ See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules.
 | `AGENTS.md` | Where to edit things + safety rules for agents/humans |
 | `packages/` | Package manifests split by role + `./dot packages check` |
 | `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
+| `templates/pi/` | Opt-in Pi coding agent workspace scaffold (`./dot pi ...`, `docs/pi-agent-setup.md`) |
 | `Brewfile` | Homebrew packages and casks (macOS) |
 | `.zshrc` | Zsh configuration with Oh My Zsh |
 | `.p10k.zsh` | Powerlevel10k theme configuration |
@@ -156,6 +157,25 @@ have confirmed a working tailnet SSH session — this prevents lock-outs.
 After hardening, optionally edit `/etc/ssh/sshd_config` to set
 `PasswordAuthentication no` and `PermitRootLogin no` (the script prints the
 exact commands but does not run them automatically).
+
+## Pi Agent Scaffold (Optional)
+
+An opt-in [Pi coding agent](https://github.com/mariozechner/pi) workspace,
+adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles). It is
+**not** applied by the setup scripts — you install it deliberately, and it holds
+no real endpoints, model IDs, tokens, or private MCP servers.
+
+```bash
+./dot pi doctor               # read-only checks
+./dot pi scaffold --dry-run   # preview copy into ~/.pi (writes nothing)
+./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
+./dot pi install              # install the pi CLI (Vite+ flow; prompts first)
+```
+
+The scaffold lives in `templates/pi/`; your real `settings.json` / `mcp.json`
+are created locally from the `*.example.json` files and stay gitignored. See
+[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for what was adapted vs.
+intentionally excluded.
 
 ## Obsidian Headless Sync (Optional)
 

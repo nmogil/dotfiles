@@ -38,6 +38,9 @@ Usage: ./dot <command> [args]
   server harden        Harden a VPS: Tailscale + UFW + auto-upgrades (harden-vps.sh)
   obsidian sync        Set up Obsidian headless sync (setup-obsidian-sync.sh)
   packages check       Report which manifest packages are installed vs missing
+  pi doctor            Read-only checks for the opt-in Pi agent scaffold
+  pi scaffold [flags]  Install templates/pi -> ~/.pi (--apply/--force/--dry-run)
+  pi install           Install the pi CLI (opt-in; prompts before running)
   chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
                        read-only subcommands like `diff` are non-mutating.
                        Warns if chezmoi is absent.
@@ -72,6 +75,33 @@ packages_check() {
     done < "$pdir/npm.global"
   fi
   [ "$any" = 1 ] || echo "  (no package manager / manifests applicable on this host)"
+}
+
+pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
+  local dest="${PI_HOME:-$HOME/.pi}" offender
+  echo "== pi doctor =="
+  if command -v pi >/dev/null 2>&1; then echo "  ok   pi CLI present: $(command -v pi)"
+  else echo "  --   pi CLI not installed (optional; ./dot pi install)"; fi
+  [ -f "$DOT_ROOT/templates/pi/package.json" ] && echo "  ok   scaffold present: templates/pi" \
+    || echo "  MISS scaffold missing: templates/pi/package.json"
+  if [ -d "$dest" ]; then
+    echo "  ok   \$PI_HOME exists: $dest"
+    [ -f "$dest/package.json" ] && echo "  ok   ~/.pi/package.json present" \
+      || echo "  --   ~/.pi/package.json missing (run ./dot pi scaffold --apply)"
+  else
+    echo "  --   \$PI_HOME not present: $dest (opt-in; ./dot pi scaffold --apply)"
+  fi
+  # Guard: the scaffold's example files must not carry real secrets/private URLs.
+  offender=$(grep -rIlE 'exe\.mulroy\.ai|cfdata\.org|UIDOTSH_TOKEN|sk-ant-[A-Za-z0-9]|AKIA[0-9A-Z]{16}' \
+        "$DOT_ROOT/templates/pi" 2>/dev/null || true)
+  if [ -z "$offender" ]; then
+    echo "  ok   scaffold free of known private strings/live secrets"
+  else
+    echo "  FAIL scaffold contains forbidden strings:"
+    while IFS= read -r path; do
+      [ -n "$path" ] && printf '        %s\n' "$path"
+    done <<< "$offender"
+  fi
 }
 
 chezmoi_wrap() {
@@ -113,6 +143,13 @@ case "$cmd" in
     case "${1:-}" in
       check) packages_check ;;
       *) echo "dot: packages needs 'check'" >&2; usage; exit 1 ;;
+    esac ;;
+  pi)
+    case "${1:-}" in
+      doctor)   pi_doctor ;;
+      scaffold) shift; run scripts/setup-pi-agent.sh "$@" ;;
+      install)  run scripts/setup-pi-agent.sh --install ;;
+      *) echo "dot: pi needs 'doctor', 'scaffold', or 'install'" >&2; usage; exit 1 ;;
     esac ;;
   chezmoi) chezmoi_wrap "$@" ;;
   *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;
