@@ -1,0 +1,13 @@
+{
+  "$comment": "EXAMPLE ONLY. Copy to agent/settings.json (gitignored) and edit. Placeholders below are generic — replace provider/model/baseUrl with your own. Do NOT commit the real settings.json.",
+  "theme": "catppuccin-macchiato",
+  "cloak": "cloak.json",
+  "provider": {
+    "$comment": "Pick a provider your pi CLI supports. Example generic shape:",
+    "name": "REPLACE_ME_PROVIDER",
+    "baseUrl": "https://api.example.com/v1",
+    "apiKeyEnv": "REPLACE_ME_API_KEY_ENV_VAR_NAME"
+  },
+  "model": "REPLACE_ME_MODEL_ID",
+  "$note": "Keep the API key in an environment variable referenced by apiKeyEnv; never inline the key here."
+}

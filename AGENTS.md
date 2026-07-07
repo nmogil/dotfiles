@@ -27,6 +27,7 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
+| Pi agent scaffold | `templates/pi/` + `scripts/setup-pi-agent.sh` (opt-in; see `docs/pi-agent-setup.md`) |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
 
 Package manifests under `packages/` are documentation + input for
@@ -43,6 +44,11 @@ Package manifests under `packages/` are documentation + input for
 - **Do not weaken VPS hardening.** `harden-vps.sh` and `server/` drop-ins exist
   on purpose; don't loosen firewall, SSH, or OOM/memory guardrails to make
   something convenient.
+- **Pi scaffold stays inert & generic.** `templates/pi/` must contain no real
+  provider endpoints, model IDs, tokens, or private MCP servers (no
+  `exe.mulroy.ai`, `cfdata.org`, `UIDOTSH_TOKEN`, opencode/cloudflare overlay).
+  Real config is created locally from the `*.example.json` files and stays
+  gitignored. Nothing installs into `~/.pi` without `./dot pi scaffold --apply`.
 - **Do not migrate agent/secret state into this repo:** `~/.hermes`, `~/.claude`,
   `~/.codex`, `~/.ssh`, Obsidian vault internals, env/provider keys, generated
   agent state. See `docs/chezmoi-plan.md` "Safe exclusions".

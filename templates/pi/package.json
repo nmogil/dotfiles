@@ -1,0 +1,13 @@
+{
+  "name": "pi-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Opt-in Pi coding agent workspace scaffold (extensions, theme, cloak).",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

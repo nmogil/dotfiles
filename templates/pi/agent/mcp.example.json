@@ -1,0 +1,19 @@
+{
+  "$comment": "EXAMPLE ONLY. Copy to agent/mcp.json (gitignored) and edit. All servers below are LOCAL/GENERIC placeholders. Private/remote MCP servers (with real URLs or tokens) were intentionally NOT copied from the source dotfiles — add your own here.",
+  "mcpServers": {
+    "example-local-stdio": {
+      "$comment": "A local stdio MCP server launched as a subprocess. Replace command/args.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/some/allowed/dir"],
+      "disabled": true
+    },
+    "example-remote-http": {
+      "$comment": "Template for a remote MCP server. Fill in your OWN url and put any token in an env var, not inline. Left disabled and blank on purpose.",
+      "url": "https://REPLACE_ME.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${REPLACE_ME_MCP_TOKEN_ENV_VAR}"
+      },
+      "disabled": true
+    }
+  }
+}
