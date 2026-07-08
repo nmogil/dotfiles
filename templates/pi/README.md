@@ -1,7 +1,7 @@
 # Pi agent workspace (opt-in scaffold)
 
 This directory is an **inert, opt-in scaffold** for a [Pi coding agent]
-(`@mariozechner/pi-coding-agent`) workspace, adapted from
+(`@earendil-works/pi-coding-agent`) workspace, adapted from
 [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles). Nothing here runs
 until you deliberately install it into `~/.pi` (see below). It is **not** wired
 into `setup.sh` / `setup-linux.sh`.
@@ -15,6 +15,12 @@ create locally from the `*.example.json` templates and which stay gitignored.
 | Path | Purpose |
 |------|---------|
 | `package.json`, `tsconfig.json` | TypeScript workspace for Pi extensions |
+| `agent/extensions/git-interceptor.ts` | Prevents git editor hangs and blocks `--no-verify` hook bypasses |
+| `agent/extensions/worker-configuration-guard.ts` | Blocks manual edits to generated Cloudflare `worker-configuration.d.ts` files |
+| `agent/extensions/pi-cloak/` | Redacts configured secret-like values from Pi read output |
+| `agent/extensions/pi-memory-compiler.ts` | Queues Pi session JSONL capture into the Obsidian memory compiler on compact/shutdown |
+| `agent/extensions/save-md/` | Adds `/save-md <name>` to save the latest assistant response as Markdown |
+| `agent/skills/` | Selected engineering and personal workflow skills adapted from dmmulroy's setup, not the full personal library |
 | `agent/cloak.json` | Secret-masking patterns (masks tokens/keys in the TUI) |
 | `agent/themes/catppuccin-macchiato.json` | A theme (public Catppuccin palette) |
 | `agent/settings.example.json` | Template settings — **generic placeholders only** |
@@ -37,6 +43,7 @@ cd "${PI_HOME:-$HOME/.pi}"
 npm install
 cp agent/settings.example.json agent/settings.json   # then edit: add your provider/model
 cp agent/mcp.example.json      agent/mcp.json         # then edit: add your MCP servers
+cp agent/memory-compiler.example.json agent/memory-compiler.json  # optional Obsidian memory capture
 pi /reload
 ```
 
@@ -48,7 +55,7 @@ Not installed by default. When you want it:
 ./dot pi install     # prints/runs the documented Vite+ install flow
 # equivalently, per dmmulroy's README:
 #   curl -fsSL https://vite.plus | bash
-#   vp install -g @mariozechner/pi-coding-agent
+#   vp install -g @earendil-works/pi-coding-agent
 ```
 
 See `docs/pi-agent-setup.md` in the repo root for what was adapted vs.

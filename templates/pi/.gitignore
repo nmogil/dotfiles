@@ -8,6 +8,7 @@ dist/
 # endpoints, model IDs, tokens).
 agent/settings.json
 agent/mcp.json
+agent/memory-compiler.json
 
 # Auth / session / cache state written by the pi CLI at runtime.
 agent/auth.json

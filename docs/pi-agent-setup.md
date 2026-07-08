@@ -27,9 +27,15 @@ an authoritative Pi schema.
 |------|-------|
 | `.gitignore` | Ignores `node_modules`, runtime `settings.json`/`mcp.json`, auth/session state |
 | `README.md` | Rewritten for this repo; opt-in framing |
-| `package.json`, `tsconfig.json` | Minimal TS workspace; no lockfile vendored |
-| `agent/cloak.json` | Secret-masking patterns — **generic name/shape regexes only**, no real secrets |
-| `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette |
+| `package.json`, `tsconfig.json` | TS workspace for selected safe extensions; no lockfile vendored |
+| `agent/extensions/git-interceptor.ts` | Portable safety guard: prevents git editor hangs and blocks `--no-verify` |
+| `agent/extensions/worker-configuration-guard.ts` | Portable Cloudflare/Wrangler guard for generated `worker-configuration.d.ts` |
+| `agent/extensions/pi-cloak/`, `agent/cloak.json` | Generic redaction extension + config; no real secrets |
+| `agent/extensions/pi-memory-compiler.ts`, `agent/memory-compiler.example.json` | Optional Obsidian memory capture through `claude-memory-compiler` |
+| `agent/extensions/save-md/` | Utility command `/save-md <name>` |
+| `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills |
+| `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
+| `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Placeholders only (`REPLACE_ME_*`); real file is gitignored |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
 
@@ -45,8 +51,11 @@ Copied nothing that is private, user-specific, or runtime state:
 - **Private model IDs and provider endpoints** — `settings.example.json` uses
   generic placeholders; supply your own.
 - **Auth / session / cache state** — never copied; gitignored in the scaffold.
-- **The large personal extension set and `.agents` skills** — out of scope; add
-  your own extensions under `templates/pi/` if you want them tracked.
+- **Live memory compiler config** — `agent/memory-compiler.json` is gitignored;
+  the example contains only the local repo path and no credentials.
+- **The full personal extension set and `.agents` skills** — only selected
+  portable extensions/skills are adapted. The private/opinionated remainder
+  stays out unless explicitly reviewed and added later.
 
 ## Installing the pi CLI
 
@@ -54,7 +63,7 @@ Per dmmulroy's README, via [Vite+](https://vite.plus):
 
 ```bash
 curl -fsSL https://vite.plus | bash
-vp install -g @mariozechner/pi-coding-agent
+vp install -g @earendil-works/pi-coding-agent
 ```
 
 `./dot pi install` prints these and prompts before running them. Because pi is
