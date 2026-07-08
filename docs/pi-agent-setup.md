@@ -32,7 +32,8 @@ an authoritative Pi schema.
 | `agent/extensions/worker-configuration-guard.ts` | Portable Cloudflare/Wrangler guard for generated `worker-configuration.d.ts` |
 | `agent/extensions/pi-cloak/`, `agent/cloak.json` | Generic redaction extension + config; no real secrets |
 | `agent/extensions/save-md/` | Utility command `/save-md <name>` |
-| `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills only |
+| `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills |
+| `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Placeholders only (`REPLACE_ME_*`); real file is gitignored |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |

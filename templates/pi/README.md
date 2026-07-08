@@ -19,7 +19,7 @@ create locally from the `*.example.json` templates and which stay gitignored.
 | `agent/extensions/worker-configuration-guard.ts` | Blocks manual edits to generated Cloudflare `worker-configuration.d.ts` files |
 | `agent/extensions/pi-cloak/` | Redacts configured secret-like values from Pi read output |
 | `agent/extensions/save-md/` | Adds `/save-md <name>` to save the latest assistant response as Markdown |
-| `agent/skills/` | Selected engineering skills adapted from dmmulroy's setup (not the full personal library) |
+| `agent/skills/` | Selected engineering and personal workflow skills adapted from dmmulroy's setup, not the full personal library |
 | `agent/cloak.json` | Secret-masking patterns (masks tokens/keys in the TUI) |
 | `agent/themes/catppuccin-macchiato.json` | A theme (public Catppuccin palette) |
 | `agent/settings.example.json` | Template settings — **generic placeholders only** |
