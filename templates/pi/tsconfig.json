@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": []
+    "types": ["node"]
   },
   "include": ["agent/**/*.ts", "extensions/**/*.ts"],
   "exclude": ["agent/extensions/*/node_modules/**"]
