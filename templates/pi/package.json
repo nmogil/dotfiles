@@ -3,11 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Opt-in Pi coding agent workspace scaffold (extensions, theme, cloak).",
+  "description": "Opt-in Pi coding agent workspace scaffold (extensions, theme, cloak, skills).",
+  "workspaces": [
+    "agent/extensions/*"
+  ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run typecheck --workspace=pi-save-md-extension"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.80.3",
+    "@earendil-works/pi-coding-agent": "^0.80.3",
+    "@earendil-works/pi-tui": "^0.80.3"
   },
   "devDependencies": {
-    "typescript": "^5.5.0"
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
   }
 }

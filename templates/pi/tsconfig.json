@@ -11,5 +11,6 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["agent/**/*.ts", "extensions/**/*.ts"]
+  "include": ["agent/**/*.ts", "extensions/**/*.ts"],
+  "exclude": ["agent/extensions/*/node_modules/**"]
 }

@@ -62,7 +62,7 @@ install_cli() {
 This follows dmmulroy's documented flow. Review before running:
 
   curl -fsSL https://vite.plus | bash
-  vp install -g @mariozechner/pi-coding-agent
+  vp install -g @earendil-works/pi-coding-agent
 
 EOF
   if command -v pi >/dev/null 2>&1; then
@@ -73,7 +73,14 @@ EOF
   case "$ans" in
     y|Y)
       curl -fsSL https://vite.plus | bash
-      vp install -g @mariozechner/pi-coding-agent
+      if ! command -v vp >/dev/null 2>&1 && [ -f "$HOME/.vite-plus/env" ]; then
+        # The Vite+ installer updates shell startup files, but this script keeps
+        # running in the current non-login shell. Load the just-installed env so
+        # the subsequent `vp install` works without asking for a new terminal.
+        # shellcheck disable=SC1091
+        . "$HOME/.vite-plus/env"
+      fi
+      vp install -g @earendil-works/pi-coding-agent
       ;;
     *) echo "Skipped. Run the two commands above yourself when ready." ;;
   esac

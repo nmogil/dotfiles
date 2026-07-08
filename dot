@@ -78,9 +78,13 @@ packages_check() {
 }
 
 pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
-  local dest="${PI_HOME:-$HOME/.pi}" offender
+  local dest="${PI_HOME:-$HOME/.pi}" offender pi_bin
   echo "== pi doctor =="
-  if command -v pi >/dev/null 2>&1; then echo "  ok   pi CLI present: $(command -v pi)"
+  pi_bin="$(command -v pi 2>/dev/null || true)"
+  if [ -z "$pi_bin" ] && [ -x "$HOME/.vite-plus/bin/pi" ]; then
+    pi_bin="$HOME/.vite-plus/bin/pi"
+  fi
+  if [ -n "$pi_bin" ]; then echo "  ok   pi CLI present: $pi_bin"
   else echo "  --   pi CLI not installed (optional; ./dot pi install)"; fi
   [ -f "$DOT_ROOT/templates/pi/package.json" ] && echo "  ok   scaffold present: templates/pi" \
     || echo "  MISS scaffold missing: templates/pi/package.json"

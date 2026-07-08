@@ -6,6 +6,6 @@
 hunkdiff
 obsidian-headless
 
-# Note: the Pi coding agent (@mariozechner/pi-coding-agent) is installed via
+# Note: the Pi coding agent (@earendil-works/pi-coding-agent) is installed via
 # Vite+ (`vp install -g ...`), NOT npm -g, so it is intentionally not listed
 # here. See docs/pi-agent-setup.md and `./dot pi install`.
