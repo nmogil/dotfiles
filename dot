@@ -52,7 +52,7 @@ EOF
 }
 
 packages_check() {
-  local pdir="$DOT_ROOT/packages" any=0 pi_path=""
+  local pdir="$DOT_ROOT/packages" any=0 pi_path="" pi_version=""
   echo "== packages check =="
   if command -v brew >/dev/null 2>&1 && [ -f "$DOT_ROOT/Brewfile" ]; then
     any=1; echo "-- Brewfile (brew bundle check) --"
@@ -72,12 +72,19 @@ packages_check() {
     any=1; echo "-- npm.global --"
     while read -r pkg; do
       pkg="${pkg%%#*}"; pkg="$(echo "$pkg" | tr -d '[:space:]')"; [ -n "$pkg" ] || continue
-      if [ "$pkg" = "@earendil-works/pi-coding-agent" ]; then
+      if [ "$pkg" = "@earendil-works/pi-coding-agent@0.80.6" ]; then
         pi_path="$(command -v pi 2>/dev/null || true)"
+        pi_version="$(pi --version 2>/dev/null || true)"
         case "$pi_path" in
           *"/.vite-plus/"*) echo "  MISS $pkg (Pi still uses Vite+ layout)" ;;
           "") echo "  MISS $pkg" ;;
-          *) echo "  ok   $pkg ($(pi --version 2>/dev/null || echo unknown))" ;;
+          *)
+            if [ "$pi_version" = "0.80.6" ]; then
+              echo "  ok   $pkg ($pi_version)"
+            else
+              echo "  MISMATCH $pkg (active Pi: ${pi_version:-unknown} at $pi_path)"
+            fi
+            ;;
         esac
       elif npm ls -g --depth=0 "$pkg" >/dev/null 2>&1; then echo "  ok   $pkg"; else echo "  MISS $pkg"; fi
     done < "$pdir/npm.global"
@@ -86,24 +93,33 @@ packages_check() {
 }
 
 pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
-  local dest="${PI_HOME:-$HOME/.pi}" offender pi_bin
+  local dest="${PI_HOME:-$HOME/.pi}" offender pi_bin pi_version
   echo "== pi doctor =="
   pi_bin="$(command -v pi 2>/dev/null || true)"
   if [ -z "$pi_bin" ] && [ -x "$HOME/.vite-plus/bin/pi" ]; then
     pi_bin="$HOME/.vite-plus/bin/pi"
   fi
   if [ -n "$pi_bin" ]; then
-    echo "  ok   pi CLI present: $pi_bin"
+    pi_version="$("$pi_bin" --version 2>/dev/null || true)"
     case "$pi_bin" in
       *"/.vite-plus/"*) echo "  WARN Pi uses Vite+ layout; run ./dot pi install before subagents" ;;
+      *)
+        if [ "$pi_version" = "0.80.6" ]; then
+          echo "  ok   pinned Pi CLI present: $pi_bin ($pi_version)"
+        else
+          echo "  WARN Pi version mismatch: expected 0.80.6, found ${pi_version:-unknown} at $pi_bin"
+        fi
+        ;;
     esac
   else echo "  --   pi CLI not installed (optional; ./dot pi install)"; fi
   [ -f "$DOT_ROOT/templates/pi/package.json" ] && echo "  ok   scaffold present: templates/pi" \
     || echo "  MISS scaffold missing: templates/pi/package.json"
   [ -f "$DOT_ROOT/templates/pi/agent/skills/subagent-routing/SKILL.md" ] \
-    && echo "  ok   Pi-first subagent routing policy present" \
+    && echo "  ok   direct-first subagent routing policy present" \
     || echo "  MISS subagent routing policy missing"
   [ -f "$DOT_ROOT/templates/pi/agent/agents/engineer.md" ] \
+    && [ -f "$DOT_ROOT/templates/pi/agent/agents/architect.md" ] \
+    && [ -f "$DOT_ROOT/templates/pi/agent/agents/analyst.md" ] \
     && [ -f "$DOT_ROOT/templates/pi/agent/agents/sol-reviewer.md" ] \
     && echo "  ok   task/model agent profiles present" \
     || echo "  MISS task/model agent profiles missing"

@@ -1,26 +1,39 @@
 ---
 name: subagent-routing
-description: "Pi-first subagent routing. Use before delegating work, choosing a worker model from the end user's task, spawning an agent pane, or handling model, quota, authentication, or usage-limit failures."
+description: "Direct-first routing policy. Use before delegating, choosing a worker model, spawning an agent, or handling worker runtime failures."
 ---
-# Pi-first subagent routing
+# Direct-first subagent routing
 
-Route from the **original end-user goal**, not from an isolated subtask label.
-Cost is not a selection factor.
+Pi completes work directly by default. The presence of the `Agent` tool or a
+matching role is never a reason to delegate. Honor any explicit instruction not
+to delegate.
+
+Delegate only when Noah explicitly requests it, or when at least one is true:
+
+- materially independent work can run in parallel;
+- large or risky context benefits from isolation;
+- a genuine blocker requires specialist context;
+- consequential work warrants independent cross-family review.
 
 ## Procedure
 
-1. Re-read the user's original request and classify its dominant work and risk.
-2. Do not delegate a task that is faster and clearer to complete directly.
-3. When delegation helps, use Pi first:
-   - Prefer the in-process `Agent` tool from `pi-subagents`.
-   - Use a separate Herdr pane running `pi` when the worker needs a visible terminal, a long-lived process, or the in-process tool is unavailable.
-   - Never start Claude Code as the first attempt.
-4. Give every worker the original goal, its bounded assignment, cwd, constraints, done conditions, and verification expected.
-5. Select the model from the table below and state the choice in the Agent call or Pi command.
-6. For consequential work, separate implementation and review across model families.
-7. Report the runtime, model, and any fallback in the final result.
+1. Route from the original end-user goal; cost is not a selection factor.
+2. Prefer in-process Pi `Agent`. Use a Herdr Pi pane only for a visible terminal,
+   long-lived process, or unavailable in-process tooling. Do not start Claude
+   Code first.
+3. Bound the assignment with the original goal, exact cwd, constraints, done
+   conditions, and verification. For every in-process Agent call, include the
+   exact target cwd in the prompt and verify it matches the target repository.
+4. Before any Herdr spawn, inspect panes/workspaces/tabs and the target repo.
+   Select or create a project-specific tab in the correct workspace; start with
+   explicit `--workspace`, `--tab`, and `--cwd`; then verify the new pane's `cwd`
+   and `foreground_cwd` before sending work. Never use an unrelated focused tab.
+5. Select the model below. Parallelize only independent assignments; isolate or
+   serialize writers. Use cross-family review for consequential work.
+6. Report delegation reason, runtime, model, fallback, and verification.
 
-Completion criterion: every delegated task has an explicit Pi runtime, model, reason, and bounded verification target.
+Completion criterion: each delegation passes the gate and has a bounded,
+cwd-verified assignment and explicit runtime/model.
 
 ## Model routing
 
@@ -47,10 +60,12 @@ the same working tree; use worktree isolation or serialize them.
 
 ## Claude Code fallback
 
-Claude Code is a worker fallback, not the delegator.
+Claude Code is a policy-authorized worker fallback, not the delegator. It is
+available only **when tool access permits**; this policy cannot guarantee the
+runtime is installed or callable.
 
-Trigger fallback automatically, without asking again, only when a selected
-`anthropic/...` model cannot run through Pi because of:
+Use fallback without asking again only when a selected `anthropic/...` model
+cannot run through Pi because of:
 
 - model unavailable or unsupported;
 - Pi/provider authentication failure;
@@ -60,13 +75,10 @@ Trigger fallback automatically, without asking again, only when a selected
 Fallback sequence:
 
 1. Preserve the exact assignment, cwd, constraints, and verification target.
-2. Invoke Claude Code with the originally selected Claude model (strip the
-   `anthropic/` provider prefix when needed).
-3. If Claude Code does not support or cannot run that model, retry with
-   `claude-opus-4-8` (or the `opus` alias if the full ID is unsupported).
-4. Keep Pi as the parent/delegator and collect the Claude Code result back into
-   the Pi session.
-5. Disclose the triggering failure and the runtime/model actually used.
+2. When tool access permits, invoke Claude Code with the selected Claude model
+   (strip `anthropic/` if needed), then Opus 4.8 only if that model is unsupported.
+3. Keep Pi as parent, preserve verification, and collect the result into Pi.
+4. Disclose the triggering failure and actual runtime/model.
 
 A weak but normally completed answer is not a runtime failure. Review it with a
 different Pi model instead. If an OpenAI model fails, try another suitable Pi

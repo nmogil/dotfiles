@@ -20,17 +20,16 @@ this means you can:
 
 ## coding-agent policy
 
-use Pi for every first-attempt coding subagent. prefer the in-process `Agent`
-tool when it is available; use a Herdr pane running `pi` when the worker needs a
-visible terminal or separate long-lived process. select its model using the
-original user's task and the [`subagent-routing`](../subagent-routing/SKILL.md)
-policy.
+follow [`subagent-routing`](../subagent-routing/SKILL.md); it is the source of
+truth for direct execution, delegation, model choice, and fallback.
 
-do not launch Claude Code as the first attempt. use it automatically only when
-a selected Claude model cannot run through Pi because of model availability,
-authentication, quota/usage limits, or repeated provider transport failure.
-try the same Claude model first, then Claude Opus 4.8. keep Pi as the delegator
-and disclose the fallback.
+for both Pi and Hermes workflows, inspect `pane list`, `workspace list`, the
+candidate tab, and the target repo before spawning. use a project-specific tab
+in the correct workspace and pass `--workspace`, `--tab`, and `--cwd` explicitly
+to `herdr agent start`; never inherit an unrelated focused tab. inspect the
+returned pane and verify both `cwd` and `foreground_cwd` equal the target repo
+before sending the assignment. for in-process Pi Agent calls, put the exact cwd
+in every assignment and verify that it is the target repo.
 
 the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
 
@@ -284,18 +283,20 @@ herdr pane read 1-3 --source recent-unwrapped --lines 40
 
 ### spawn a Pi agent and give it a task
 
-choose the model from the original user request before launching. this example
-uses the default implementation model:
+only after the routing delegation gate passes, inspect placement and launch
+with explicit identifiers:
 
 ```bash
-NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
-herdr pane run "$NEW_PANE" "pi --model openai-codex/gpt-5.6-sol --thinking high"
-herdr wait output "$NEW_PANE" --match ">" --timeout 15000
-herdr pane run "$NEW_PANE" "Review the original user goal and implement this bounded assignment: ..."
+herdr pane list
+herdr workspace list
+herdr tab list --workspace "$WORKSPACE_ID"
+START=$(herdr agent start helper-pi --workspace "$WORKSPACE_ID" --tab "$TAB_ID" \
+  --cwd "$TARGET_REPO" --no-focus -- \
+  pi --model openai-codex/gpt-5.6-sol --thinking high)
+NEW_PANE=$(printf '%s' "$START" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["pane_id"])')
+herdr pane list  # verify NEW_PANE cwd and foreground_cwd before sending work
+herdr agent send "$NEW_PANE" "Original goal: ... Exact cwd: $TARGET_REPO. Bounded assignment: ..."
 ```
-
-if a qualifying Claude-in-Pi failure occurs, preserve the assignment and launch
-Claude Code with the same Claude model; if unsupported, retry with Opus 4.8.
 
 ### coordinate with another agent
 

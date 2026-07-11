@@ -2,8 +2,8 @@
 description: Handles nuanced writing, product analysis, and tone-sensitive documentation requested by the user.
 display_name: Writer
 tools: read, bash, grep, find, ls, edit, write
-extensions: true
-skills: true
+extensions: false
+skills: false
 model: anthropic/claude-sonnet-5
 thinking: high
 max_turns: 30

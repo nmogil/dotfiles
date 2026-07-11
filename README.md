@@ -175,13 +175,10 @@ committed for deterministic subagent routing.
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
-The scaffold lives in `templates/pi/`; your real `settings.json` / `mcp.json`
-are created locally from the `*.example.json` files and stay gitignored. Its
-routing policy selects models from the original user goal, runs every first
-subagent through Pi, and uses Claude Code automatically only when the selected
-Claude model cannot run in Pi, trying the same model and then Opus 4.8. See
-[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for the package pin and full
-routing details.
+The scaffold lives in `templates/pi/`; live config stays gitignored. Pi works
+directly by default and delegates only under the reviewed routing policy. See
+[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for installation and
+operations.
 
 ## Obsidian Headless Sync (Optional)
 

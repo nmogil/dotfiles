@@ -12,7 +12,8 @@ you change what the setup scripts install.
 | `npm.global` | Global npm CLIs (Claude Code, Codex, Pi, Hunk, Obsidian headless) |
 | `Brewfile` note | macOS packages live in the repo-root [`../Brewfile`](../Brewfile) |
 
-Format: one package per line; `#` comments and blank lines ignored.
+Format: one npm package spec per line (versions may be pinned); `#` comments
+and blank lines ignored.
 
 macOS packages intentionally stay in the top-level `Brewfile` so `brew bundle`
 and `./setup.sh` keep working unchanged. Do not move it.

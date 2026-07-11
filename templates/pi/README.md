@@ -58,10 +58,8 @@ From the dotfiles repository root, install the reviewed Pi delegation packages:
 ./dot pi subagents --check
 ```
 
-All first-attempt subagents run through Pi. Claude Code is used automatically
-only when a selected Claude model cannot run through Pi because of model,
-authentication/provider, quota/usage, or repeated transport failures; it tries
-the same model and then Opus 4.8.
+Pi executes directly by default. Delegation and any policy-authorized runtime
+fallback follow `agent/skills/subagent-routing/SKILL.md`.
 
 ## Installing the Pi CLI itself
 
@@ -75,5 +73,5 @@ When you want it:
 #   npm install -g @earendil-works/pi-coding-agent@0.80.6
 ```
 
-See `docs/pi-agent-setup.md` in the repo root for what was adapted vs.
-intentionally excluded from dmmulroy's setup.
+See `docs/pi-agent-setup.md` in the repo root for installation, operation, and
+what was adapted or intentionally excluded.

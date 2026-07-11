@@ -37,7 +37,7 @@ an authoritative Pi schema.
 | `agent/extensions/save-md/` | Utility command `/save-md <name>` |
 | `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills |
 | `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
-| `agent/skills/subagent-routing/` | Pi-first task/model policy with automatic Claude Code fallback only for qualifying Claude-on-Pi failures |
+| `agent/skills/subagent-routing/` | Direct-first delegation, model, placement, and fallback policy |
 | `agent/agents/` | Explicit Sol, Opus, Sonnet, and Fable worker profiles selected from the original user goal |
 | `agent/subagents.json`, `agent/agent-tool-description.md` | Deterministic subagent defaults and model-facing role guidance |
 | `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `pi-subagents` and `pi-herdr` source; excludes incomplete mirrors |
@@ -69,7 +69,7 @@ Copied nothing that is private, user-specific, or runtime state:
 The optional subagent stack is pinned to reviewed `WeShipWork/threeonefour`
 commit `7f86a2931f83b68f7915fd132a026bb8fa76ae97`. Apply the scaffold first; the
 package installer refuses to continue unless the routing policy, profiles, and
-subagent defaults are present. It keeps an immutable checkout under
+subagent defaults are present. It keeps a commit-pinned, clean checkout under
 `~/.local/share/pi-packages`, installs production dependencies from the
 committed lockfile, and adds only `pi-subagents` and `pi-herdr` to Pi:
 
@@ -82,10 +82,13 @@ committed lockfile, and adds only `pi-subagents` and `pi-herdr` to Pi:
 `PI_HOME` and `PI_CODING_AGENT_DIR` overrides are honored consistently by the
 scaffold and package checks. `pi-herd` is deliberately excluded until its
 transcript mirror is complete.
-The scaffold remains the policy source of truth: all first-attempt workers run
-in Pi; Claude Code is an automatic fallback only for unavailable Claude models,
-authentication/provider failures, quota or usage limits, and repeated transport
-failures. It retries the selected Claude model, then Opus 4.8.
+The routing skill is the policy source of truth. Pi executes directly by
+default. It delegates only on explicit request or when parallelism, isolation,
+specialist context, or independent consequential review materially helps.
+Claude Code fallback is policy-authorized only for qualifying Claude-in-Pi
+runtime failures and only when tool access permits; assignments, cwd, and
+verification are preserved, and the actual runtime/model is disclosed. Poor
+output is reviewed, not treated as runtime failure.
 
 ## Installing the pi CLI
 
@@ -110,8 +113,8 @@ Pi is therefore listed in `packages/npm.global`.
 
 ## Safety checks
 
-`./dot pi doctor` verifies: the scaffold and Pi-first routing assets are present,
+`./dot pi doctor` verifies: the scaffold and direct-first routing assets are present,
 `~/.pi` state (if any) has no runtime auth files tracked by git, and the scaffold
 is free of known private strings / live secret shapes. `./dot pi subagents
---check` verifies the immutable source pin and installed package entries.
+--check` verifies the commit-pinned, clean checkout and installed package entries.
 `git diff --check` and `./dot doctor` also apply.

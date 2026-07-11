@@ -70,6 +70,8 @@ check_routing_assets() {
     subagents.json \
     agent-tool-description.md \
     agents/engineer.md \
+    agents/architect.md \
+    agents/analyst.md \
     agents/reviewer.md \
     agents/sol-reviewer.md \
     agents/writer.md \
@@ -141,7 +143,7 @@ case "$MODE" in
     cat <<EOF
 
 Would:
-  1. create an immutable checkout at the pinned commit;
+  1. create a commit-pinned, clean checkout;
   2. install production dependencies from the repository's frozen lockfile;
   3. run pi install for pi-subagents and pi-herdr.
 

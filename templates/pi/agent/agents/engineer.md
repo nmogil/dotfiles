@@ -2,8 +2,8 @@
 description: Implements, refactors, debugs, and tests code when the original user request requires repository changes.
 display_name: Engineer
 tools: "*"
-extensions: true
-skills: true
+extensions: false
+skills: false
 model: openai-codex/gpt-5.6-sol
 thinking: high
 max_turns: 50
