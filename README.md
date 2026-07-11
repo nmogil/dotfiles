@@ -40,7 +40,7 @@ See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules.
 | `AGENTS.md` | Where to edit things + safety rules for agents/humans |
 | `packages/` | Package manifests split by role + `./dot packages check` |
 | `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
-| `templates/pi/` | Opt-in Pi coding agent workspace scaffold (`./dot pi ...`, `docs/pi-agent-setup.md`) |
+| `templates/pi/` | Opt-in Pi workspace plus Pi-first subagent/model routing (`./dot pi ...`, `docs/pi-agent-setup.md`) |
 | `Brewfile` | Homebrew packages and casks (macOS) |
 | `.zshrc` | Zsh configuration with Oh My Zsh |
 | `.p10k.zsh` | Powerlevel10k theme configuration |
@@ -162,20 +162,26 @@ exact commands but does not run them automatically).
 
 An opt-in [Pi coding agent](https://github.com/mariozechner/pi) workspace,
 adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles). It is
-**not** applied by the setup scripts — you install it deliberately, and it holds
-no real endpoints, model IDs, tokens, or private MCP servers.
+**not** applied by the setup scripts — you install it deliberately. It holds no
+private endpoints, tokens, or private MCP servers; reviewed public model IDs are
+committed for deterministic subagent routing.
 
 ```bash
 ./dot pi doctor               # read-only checks
 ./dot pi scaffold --dry-run   # preview copy into ~/.pi (writes nothing)
 ./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
-./dot pi install              # install the pi CLI (Vite+ flow; prompts first)
+./dot pi subagents --dry-run  # preview pinned Pi subagent package setup
+./dot pi subagents --apply    # install pi-subagents + pi-herdr (not pi-herd)
+./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
 The scaffold lives in `templates/pi/`; your real `settings.json` / `mcp.json`
-are created locally from the `*.example.json` files and stay gitignored. See
-[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for what was adapted vs.
-intentionally excluded.
+are created locally from the `*.example.json` files and stay gitignored. Its
+routing policy selects models from the original user goal, runs every first
+subagent through Pi, and uses Claude Code automatically only when the selected
+Claude model cannot run in Pi, trying the same model and then Opus 4.8. See
+[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for the package pin and full
+routing details.
 
 ## Obsidian Headless Sync (Optional)
 

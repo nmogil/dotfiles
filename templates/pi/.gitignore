@@ -4,8 +4,8 @@ dist/
 *.log
 
 # Live/runtime config derived from the examples. Copy the *.example.json files
-# to these names locally; keep the real ones out of git (they hold provider
-# endpoints, model IDs, tokens).
+# to these names locally; keep the real ones out of git (they may hold provider
+# endpoints, package paths, tokens, and machine-specific preferences).
 agent/settings.json
 agent/mcp.json
 agent/memory-compiler.json

@@ -18,6 +18,20 @@ this means you can:
 - wait for another agent to finish
 - spawn more agent instances
 
+## coding-agent policy
+
+use Pi for every first-attempt coding subagent. prefer the in-process `Agent`
+tool when it is available; use a Herdr pane running `pi` when the worker needs a
+visible terminal or separate long-lived process. select its model using the
+original user's task and the [`subagent-routing`](../subagent-routing/SKILL.md)
+policy.
+
+do not launch Claude Code as the first attempt. use it automatically only when
+a selected Claude model cannot run through Pi because of model availability,
+authentication, quota/usage limits, or repeated provider transport failure.
+try the same Claude model first, then Claude Opus 4.8. keep Pi as the delegator
+and disclose the fallback.
+
 the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
 
 if you need the raw protocol or full api reference, read the [socket api docs](https://herdr.dev/docs/socket-api/).
@@ -164,7 +178,7 @@ use this when you want the same `done` / `idle` distinction the UI shows.
 send text without pressing Enter:
 
 ```bash
-herdr pane send-text 1-1 "hello from claude"
+herdr pane send-text 1-1 "hello from pi"
 ```
 
 press Enter or other keys:
@@ -268,14 +282,20 @@ herdr wait output 1-3 --match "ready" --timeout 30000
 herdr pane read 1-3 --source recent-unwrapped --lines 40
 ```
 
-### spawn a new agent and give it a task
+### spawn a Pi agent and give it a task
+
+choose the model from the original user request before launching. this example
+uses the default implementation model:
 
 ```bash
-herdr pane split 1-2 --direction right --no-focus
-herdr pane run 1-3 "claude"
-herdr wait output 1-3 --match ">" --timeout 15000
-herdr pane run 1-3 "review the test coverage in src/api/"
+NEW_PANE=$(herdr pane split 1-2 --direction right --no-focus | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+herdr pane run "$NEW_PANE" "pi --model openai-codex/gpt-5.6-sol --thinking high"
+herdr wait output "$NEW_PANE" --match ">" --timeout 15000
+herdr pane run "$NEW_PANE" "Review the original user goal and implement this bounded assignment: ..."
 ```
+
+if a qualifying Claude-in-Pi failure occurs, preserve the assignment and launch
+Claude Code with the same Claude model; if unsupported, retry with Opus 4.8.
 
 ### coordinate with another agent
 

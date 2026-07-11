@@ -9,7 +9,7 @@ you change what the setup scripts install.
 |------|-------|
 | `apt.base` | Core Debian/Ubuntu packages (shell, CLI, media, Python) |
 | `apt.agent` | Debian/Ubuntu packages for agent/dev tooling (gh, nodejs) |
-| `npm.global` | Global npm CLIs (Claude Code, Codex, Hunk, Obsidian headless) |
+| `npm.global` | Global npm CLIs (Claude Code, Codex, Pi, Hunk, Obsidian headless) |
 | `Brewfile` note | macOS packages live in the repo-root [`../Brewfile`](../Brewfile) |
 
 Format: one package per line; `#` comments and blank lines ignored.

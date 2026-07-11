@@ -10,7 +10,9 @@ It is **not** applied by `setup.sh` / `setup-linux.sh`; you install it deliberat
 ./dot pi doctor               # read-only checks
 ./dot pi scaffold --dry-run   # preview copy into ~/.pi
 ./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
-./dot pi install              # install the pi CLI (Vite+ flow; prompts first)
+./dot pi subagents --dry-run  # preview pinned Pi subagent package installation
+./dot pi subagents --apply    # install pi-subagents + pi-herdr from reviewed source
+./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
 The scaffold lives in [`templates/pi/`](../templates/pi/). Its own
@@ -35,6 +37,10 @@ an authoritative Pi schema.
 | `agent/extensions/save-md/` | Utility command `/save-md <name>` |
 | `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills |
 | `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
+| `agent/skills/subagent-routing/` | Pi-first task/model policy with automatic Claude Code fallback only for qualifying Claude-on-Pi failures |
+| `agent/agents/` | Explicit Sol, Opus, Sonnet, and Fable worker profiles selected from the original user goal |
+| `agent/subagents.json`, `agent/agent-tool-description.md` | Deterministic subagent defaults and model-facing role guidance |
+| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `pi-subagents` and `pi-herdr` source; excludes incomplete mirrors |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Placeholders only (`REPLACE_ME_*`); real file is gitignored |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
@@ -48,8 +54,9 @@ Copied nothing that is private, user-specific, or runtime state:
   The example uses `REPLACE_ME` placeholders and stays disabled.
 - **`opencode-cloudflare` extension** and any private gateway / Cloudflare
   account overlay — not copied.
-- **Private model IDs and provider endpoints** — `settings.example.json` uses
-  generic placeholders; supply your own.
+- **Private model IDs and provider endpoints** — the scaffold includes only the
+  reviewed public model IDs required by the routing policy. Custom/private
+  providers and credentials remain local.
 - **Auth / session / cache state** — never copied; gitignored in the scaffold.
 - **Live memory compiler config** — `agent/memory-compiler.json` is gitignored;
   the example contains only the local repo path and no credentials.
@@ -57,21 +64,54 @@ Copied nothing that is private, user-specific, or runtime state:
   portable extensions/skills are adapted. The private/opinionated remainder
   stays out unless explicitly reviewed and added later.
 
-## Installing the pi CLI
+## Installing Pi subagents
 
-Per dmmulroy's README, via [Vite+](https://vite.plus):
+The optional subagent stack is pinned to reviewed `WeShipWork/threeonefour`
+commit `7f86a2931f83b68f7915fd132a026bb8fa76ae97`. Apply the scaffold first; the
+package installer refuses to continue unless the routing policy, profiles, and
+subagent defaults are present. It keeps an immutable checkout under
+`~/.local/share/pi-packages`, installs production dependencies from the
+committed lockfile, and adds only `pi-subagents` and `pi-herdr` to Pi:
 
 ```bash
-curl -fsSL https://vite.plus | bash
-vp install -g @earendil-works/pi-coding-agent
+./dot pi subagents --dry-run
+./dot pi subagents --apply
+./dot pi subagents --check
 ```
 
-`./dot pi install` prints these and prompts before running them. Because pi is
-installed via `vp` (not `npm -g`), it is **not** listed in `packages/npm.global`
-— see the note there.
+`PI_HOME` and `PI_CODING_AGENT_DIR` overrides are honored consistently by the
+scaffold and package checks. `pi-herd` is deliberately excluded until its
+transcript mirror is complete.
+The scaffold remains the policy source of truth: all first-attempt workers run
+in Pi; Claude Code is an automatic fallback only for unavailable Claude models,
+authentication/provider failures, quota or usage limits, and repeated transport
+failures. It retries the selected Claude model, then Opus 4.8.
+
+## Installing the pi CLI
+
+Install the tested npm distribution:
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@0.80.6
+```
+
+`./dot pi install` prints the command and prompts before running it. It requires
+Node.js >=22.19 and npm outside Vite+'s managed runtime (system/NodeSource on
+Linux or Homebrew on macOS). If the system global prefix is not writable, the
+installer uses the user-owned `~/.local` prefix. After the npm executable passes a version check,
+it removes only Vite+'s global Pi package
+with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
+available for project tooling.
+
+The npm layout is intentional. Pi 0.80.6 installed globally through Vite+ was
+verified to fail runtime imports used by `pi-subagents` and other extensions,
+while the same Pi version installed through npm loaded the pinned source stack.
+Pi is therefore listed in `packages/npm.global`.
 
 ## Safety checks
 
-`./dot pi doctor` verifies: the scaffold is present, `~/.pi` state (if any) has
-no runtime auth files tracked by git, and the scaffold is free of known private
-strings / live secret shapes. `git diff --check` and `./dot doctor` also apply.
+`./dot pi doctor` verifies: the scaffold and Pi-first routing assets are present,
+`~/.pi` state (if any) has no runtime auth files tracked by git, and the scaffold
+is free of known private strings / live secret shapes. `./dot pi subagents
+--check` verifies the immutable source pin and installed package entries.
+`git diff --check` and `./dot doctor` also apply.
