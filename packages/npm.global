@@ -3,9 +3,10 @@
 
 @anthropic-ai/claude-code
 @openai/codex
+@earendil-works/pi-coding-agent@0.80.6
 hunkdiff
 obsidian-headless
 
-# Note: the Pi coding agent (@earendil-works/pi-coding-agent) is installed via
-# Vite+ (`vp install -g ...`), NOT npm -g, so it is intentionally not listed
-# here. See docs/pi-agent-setup.md and `./dot pi install`.
+# Pi is installed by `./dot pi install`, pinned there to the version verified
+# with runtime-importing extensions. npm's standard global layout is required;
+# the Vite+ global layout currently breaks pi-subagents imports.

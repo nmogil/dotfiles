@@ -1,13 +1,15 @@
 {
-  "$comment": "EXAMPLE ONLY. Copy to agent/settings.json (gitignored) and edit. Placeholders below are generic — replace provider/model/baseUrl with your own. Do NOT commit the real settings.json.",
+  "$comment": "EXAMPLE ONLY. Copy to agent/settings.json (gitignored). Keep credentials in Pi auth or environment variables; never commit them.",
   "theme": "catppuccin-macchiato",
   "cloak": "cloak.json",
-  "provider": {
-    "$comment": "Pick a provider your pi CLI supports. Example generic shape:",
-    "name": "REPLACE_ME_PROVIDER",
-    "baseUrl": "https://api.example.com/v1",
-    "apiKeyEnv": "REPLACE_ME_API_KEY_ENV_VAR_NAME"
-  },
-  "model": "REPLACE_ME_MODEL_ID",
-  "$note": "Keep the API key in an environment variable referenced by apiKeyEnv; never inline the key here."
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "high",
+  "enabledModels": [
+    "openai-codex/gpt-5.6-sol",
+    "anthropic/claude-opus-4-8",
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-fable-5"
+  ],
+  "$note": "The pinned subagent installer adds local package paths to the live packages array. Authenticate providers locally; this file contains no credentials."
 }

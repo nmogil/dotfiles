@@ -18,6 +18,19 @@ this means you can:
 - wait for another agent to finish
 - spawn more agent instances
 
+## coding-agent policy
+
+follow [`subagent-routing`](../subagent-routing/SKILL.md); it is the source of
+truth for direct execution, delegation, model choice, and fallback.
+
+for both Pi and Hermes workflows, inspect `pane list`, `workspace list`, the
+candidate tab, and the target repo before spawning. use a project-specific tab
+in the correct workspace and pass `--workspace`, `--tab`, and `--cwd` explicitly
+to `herdr agent start`; never inherit an unrelated focused tab. inspect the
+returned pane and verify both `cwd` and `foreground_cwd` equal the target repo
+before sending the assignment. for in-process Pi Agent calls, put the exact cwd
+in every assignment and verify that it is the target repo.
+
 the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
 
 if you need the raw protocol or full api reference, read the [socket api docs](https://herdr.dev/docs/socket-api/).
@@ -164,7 +177,7 @@ use this when you want the same `done` / `idle` distinction the UI shows.
 send text without pressing Enter:
 
 ```bash
-herdr pane send-text 1-1 "hello from claude"
+herdr pane send-text 1-1 "hello from pi"
 ```
 
 press Enter or other keys:
@@ -268,13 +281,21 @@ herdr wait output 1-3 --match "ready" --timeout 30000
 herdr pane read 1-3 --source recent-unwrapped --lines 40
 ```
 
-### spawn a new agent and give it a task
+### spawn a Pi agent and give it a task
+
+only after the routing delegation gate passes, inspect placement and launch
+with explicit identifiers:
 
 ```bash
-herdr pane split 1-2 --direction right --no-focus
-herdr pane run 1-3 "claude"
-herdr wait output 1-3 --match ">" --timeout 15000
-herdr pane run 1-3 "review the test coverage in src/api/"
+herdr pane list
+herdr workspace list
+herdr tab list --workspace "$WORKSPACE_ID"
+START=$(herdr agent start helper-pi --workspace "$WORKSPACE_ID" --tab "$TAB_ID" \
+  --cwd "$TARGET_REPO" --no-focus -- \
+  pi --model openai-codex/gpt-5.6-sol --thinking high)
+NEW_PANE=$(printf '%s' "$START" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["pane_id"])')
+herdr pane list  # verify NEW_PANE cwd and foreground_cwd before sending work
+herdr agent send "$NEW_PANE" "Original goal: ... Exact cwd: $TARGET_REPO. Bounded assignment: ..."
 ```
 
 ### coordinate with another agent
