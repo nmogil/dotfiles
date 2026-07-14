@@ -3,6 +3,7 @@
 An opt-in scaffold for a [Pi coding agent](https://github.com/mariozechner/pi)
 workspace, adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles).
 It is **not** applied by `setup.sh` / `setup-linux.sh`; you install it deliberately.
+Provenance and reuse terms are unresolved — see [`licensing.md`](licensing.md).
 
 ## TL;DR
 
@@ -50,8 +51,11 @@ an authoritative Pi schema.
 Copied nothing that is private, user-specific, or runtime state:
 
 - **`agent/mcp.json` with private URLs** — the source referenced private
-  endpoints (`exe.mulroy.ai`, `cfdata.org`) and a `UIDOTSH_TOKEN`. Not copied.
-  The example uses `REPLACE_ME` placeholders and stays disabled.
+  provider endpoints and an auth token. Not copied. The example uses
+  `REPLACE_ME` placeholders and stays disabled. `./dot pi doctor` rejects
+  generic secret shapes in the scaffold and appends any project-specific
+  private patterns from a local, gitignored blocklist
+  (`DOTFILES_PI_BLOCKLIST`; see `config/dotfiles/local.env.example`).
 - **`opencode-cloudflare` extension** and any private gateway / Cloudflare
   account overlay — not copied.
 - **Private model IDs and provider endpoints** — the scaffold includes only the

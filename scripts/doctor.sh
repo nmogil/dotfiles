@@ -16,6 +16,9 @@ script_dir() {
 }
 
 ROOT="$(cd "$(script_dir)/.." && pwd)"
+# shellcheck source=lib/local-env.sh
+. "$ROOT/scripts/lib/local-env.sh"
+dotfiles_load_config
 
 pass=0; warn=0; fail=0
 PASS() { printf 'PASS  %s\n' "$*"; pass=$((pass+1)); }
@@ -74,12 +77,29 @@ echo "-- repo buckets under \${GITHUB_REPOS_DIR:-\$HOME/github_repos} --"
 REPOS_DIR="${GITHUB_REPOS_DIR:-$HOME/github_repos}"
 if [ -d "$REPOS_DIR" ]; then
   PASS "repos dir exists: $REPOS_DIR"
-  for b in personal ventures pennie twilio external; do
-    [ -d "$REPOS_DIR/$b" ] && PASS "bucket: $b" || WARN "bucket not present: $b"
+  # Report counts only; bucket names may be private codenames — do not log them.
+  bucket_total=0; bucket_present=0
+  for b in $DOTFILES_REPO_BUCKETS; do
+    bucket_total=$((bucket_total+1))
+    [ -d "$REPOS_DIR/$b" ] && bucket_present=$((bucket_present+1))
   done
+  PASS "workstream buckets present: $bucket_present/$bucket_total (names omitted)"
 else
   WARN "repos dir not present: $REPOS_DIR (run: ./dot repos clone)"
 fi
+
+echo
+echo "-- local configuration --"
+LOCAL_ENV_PATH="$(dotfiles_local_env_path)"
+if [ -f "$LOCAL_ENV_PATH" ]; then
+  PASS "local override present: $LOCAL_ENV_PATH"
+else
+  WARN "no local override (using portable defaults): $LOCAL_ENV_PATH — see config/dotfiles/local.env.example"
+fi
+# Count configured buckets without printing their (possibly private) names.
+bucket_count=0
+for _b in $DOTFILES_REPO_BUCKETS; do bucket_count=$((bucket_count+1)); done
+PASS "repo buckets configured: $bucket_count (names omitted; see local.env)"
 
 echo
 echo "-- secret hygiene --"
@@ -88,6 +108,12 @@ if git -C "$ROOT" ls-files --error-unmatch repos.txt >/dev/null 2>&1; then
   FAIL "repos.txt is tracked by git — remove it (it should stay gitignored)"
 else
   PASS "repos.txt not tracked"
+fi
+# The tracked .gitconfig must not carry a personal identity (kept local).
+if grep -qiE '^[[:space:]]*(name|email)[[:space:]]*=' "$ROOT/.gitconfig" 2>/dev/null; then
+  FAIL ".gitconfig has a tracked user.name/email — move identity to ~/.config/dotfiles/local.env"
+else
+  PASS "no tracked git identity in .gitconfig"
 fi
 # Warn on any tracked env/secret-ish files.
 tracked_secrets="$(git -C "$ROOT" ls-files 2>/dev/null | grep -iE '(^|/)\.env|\.env($|\.)|secret|credential|\.pem$|id_rsa' || true)"

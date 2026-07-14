@@ -6,6 +6,9 @@ echo ""
 
 # Determine script directory
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/local-env.sh
+. "$DOTFILES_DIR/scripts/lib/local-env.sh"
+dotfiles_load_config
 
 # Install Xcode Command Line Tools if not installed
 if ! xcode-select -p &> /dev/null; then
@@ -113,15 +116,23 @@ cp "$DOTFILES_DIR/config/ghostty/config" "$GHOSTTY_DIR/config"
 if [ -f "$DOTFILES_DIR/.gitconfig" ]; then
     cp "$DOTFILES_DIR/.gitconfig" ~/.gitconfig
     echo ""
-    read -p "Update git user.name? (current: $(git config user.name)) [y/N]: " update_name
-    if [[ $update_name =~ ^[Yy]$ ]]; then
-        read -p "Enter your name: " git_name
-        git config --global user.name "$git_name"
+    if dotfiles_apply_git_identity; then
+        echo "Applied git identity from ~/.config/dotfiles/local.env"
+    else
+        read -p "Update git user.name? (current: $(git config user.name 2>/dev/null || echo unset)) [y/N]: " update_name
+        if [[ $update_name =~ ^[Yy]$ ]]; then
+            read -p "Enter your name: " git_name
+            git config --global user.name "$git_name"
+        fi
+        read -p "Update git user.email? (current: $(git config user.email 2>/dev/null || echo unset)) [y/N]: " update_email
+        if [[ $update_email =~ ^[Yy]$ ]]; then
+            read -p "Enter your email: " git_email
+            git config --global user.email "$git_email"
+        fi
     fi
-    read -p "Update git user.email? (current: $(git config user.email)) [y/N]: " update_email
-    if [[ $update_email =~ ^[Yy]$ ]]; then
-        read -p "Enter your email: " git_email
-        git config --global user.email "$git_email"
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh auth setup-git
+        echo "Configured GitHub CLI as the secure Git credential helper"
     fi
 fi
 
@@ -130,7 +141,7 @@ if [ ! -f ~/.ssh/id_ed25519 ]; then
     echo ""
     read -p "Generate SSH key for GitHub? [y/N]: " gen_ssh
     if [[ $gen_ssh =~ ^[Yy]$ ]]; then
-        ssh-keygen -t ed25519 -C "$(git config user.email)" -f ~/.ssh/id_ed25519
+        ssh-keygen -t ed25519 -C "$(git config user.email 2>/dev/null || echo "$(whoami)@$(hostname)")" -f ~/.ssh/id_ed25519
         eval "$(ssh-agent -s)"
         ssh-add ~/.ssh/id_ed25519
         echo ""

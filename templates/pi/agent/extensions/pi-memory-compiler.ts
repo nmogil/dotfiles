@@ -15,9 +15,16 @@ interface PiMemoryState {
   lastFlushBySession?: Record<string, number>;
 }
 
+function defaultCompilerDir(): string {
+  // Portable default; override with PI_MEMORY_COMPILER_DIR or the config file.
+  if (process.env.PI_MEMORY_COMPILER_DIR) return process.env.PI_MEMORY_COMPILER_DIR;
+  const reposDir = process.env.GITHUB_REPOS_DIR ?? join(homedir(), "github_repos");
+  return join(reposDir, "personal", "claude-memory-compiler");
+}
+
 const DEFAULT_CONFIG: Required<PiMemoryCompilerConfig> = {
   enabled: true,
-  compilerDir: "/root/github_repos/personal/claude-memory-compiler",
+  compilerDir: defaultCompilerDir(),
   flushScript: "scripts/pi_session.py",
   minSecondsBetweenFlushes: 60,
   notify: false,

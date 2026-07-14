@@ -1,8 +1,16 @@
-[user]
-	email = noah.mogil97@gmail.com
-	name = nmogil
-[credential]
-	helper = store
+# Public, portable git config. Personal identity is intentionally NOT tracked
+# in this repo. Provide it locally via any of:
+#   - ~/.config/dotfiles/local.env  (DOTFILES_GIT_NAME / DOTFILES_GIT_EMAIL)
+#   - ~/.config/git/local.gitconfig (included below; written by ./dot setup)
+#   - git config --global user.name / user.email
+# A missing include path is silently ignored by git.
+[include]
+	path = ~/.config/git/local.gitconfig
+# Credential storage is intentionally NOT configured here. Plaintext
+# `credential.helper = store` is discouraged. Set up a secure helper locally:
+#   - GitHub CLI:     gh auth setup-git
+#   - macOS Keychain: git config --global credential.helper osxkeychain
+#   - libsecret:      git config --global credential.helper libsecret
 [core]
 	pager = delta
 [interactive]

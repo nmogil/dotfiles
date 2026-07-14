@@ -1,10 +1,10 @@
 # One repo per line. Lines starting with # are ignored.
 #
-# Preferred VPS layout uses workstream buckets under ~/github_repos:
+# Preferred VPS layout uses workstream buckets under ~/github_repos.
+# Recognized buckets default to "personal ventures external" and are
+# configurable via DOTFILES_REPO_BUCKETS in ~/.config/dotfiles/local.env:
 #   personal owner/repo
 #   ventures owner/repo
-#   pennie owner/repo
-#   twilio owner/repo
 #   external owner/repo
 #
 # The repo field can be any gh-supported form:
@@ -18,6 +18,6 @@
 # gitignored so personal repo lists do not get committed.
 
 # Examples — replace with your actual repos:
-# personal nmogil/dotfiles
-# ventures mogilventures/a2pcheck-app
+# personal owner/dotfiles
+# ventures owner/some-app
 # external browserbase/stagehand

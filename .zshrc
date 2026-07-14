@@ -113,7 +113,6 @@ source $ZSH/oh-my-zsh.sh
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 export PATH="$HOME/Library/Python/3.9/bin:$PATH"
-export PATH="/Users/noahmogil/Library/Python/3.9/bin:$PATH"
 export PATH="$(python3.11 -m site --user-base)/bin:$PATH"
 
 # bun completions

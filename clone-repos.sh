@@ -7,10 +7,10 @@ set -eE
 # Format of repos.txt: one repo per line. Optional first field can be a workstream bucket:
 #   personal owner/repo
 #   ventures git@github.com:owner/repo.git
-#   pennie https://github.com/owner/repo
-#   twilio https://github.com/owner/repo.git
-#   external owner/repo
+#   external https://github.com/owner/repo.git
 #
+# Recognized buckets come from DOTFILES_REPO_BUCKETS (default:
+# "personal ventures external"); set your own in ~/.config/dotfiles/local.env.
 # Without a workstream prefix, repos are cloned directly under ~/github_repos.
 #
 # Lines starting with '#' and blank lines are ignored.
@@ -28,6 +28,9 @@ log() { echo "  [$(ts)] $*"; }
 trap 'rc=$?; echo ""; echo "✗ FAILED at line $LINENO (exit $rc)"; echo "  Full log: $LOG_FILE"; exit $rc' ERR
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/local-env.sh
+. "$DOTFILES_DIR/scripts/lib/local-env.sh"
+dotfiles_load_config
 REPOS_FILE="${1:-$DOTFILES_DIR/repos.txt}"
 TARGET_DIR="${GITHUB_REPOS_DIR:-${HOME}/github_repos}"
 
@@ -57,7 +60,7 @@ if ! gh auth status &> /dev/null; then
 fi
 
 mkdir -p "$TARGET_DIR"
-for bucket in personal ventures pennie twilio external; do
+for bucket in $DOTFILES_REPO_BUCKETS; do
     mkdir -p "$TARGET_DIR/$bucket"
 done
 
@@ -76,13 +79,9 @@ while IFS= read -r line || [ -n "$line" ]; do
     repo_ref="$line"
     first_field="${line%%[[:space:]]*}"
     rest="${line#*[[:space:]]}"
-    if [ "$rest" != "$line" ]; then
-        case "$first_field" in
-            personal|ventures|pennie|twilio|external)
-                workstream="$first_field"
-                repo_ref="$rest"
-                ;;
-        esac
+    if [ "$rest" != "$line" ] && dotfiles_is_bucket "$first_field"; then
+        workstream="$first_field"
+        repo_ref="$rest"
     fi
 
     # Extract repo name (last path component, strip .git)

@@ -10,6 +10,9 @@ Everything here is safe to commit: no private provider endpoints, tokens, or
 private MCP servers. It does include reviewed public model IDs for deterministic
 subagent routing. Credential-bearing live config stays gitignored.
 
+**Provenance:** this scaffold is adapted from a third party and its license is
+unresolved — see [`docs/licensing.md`](../../docs/licensing.md) before reusing it.
+
 ## What's here
 
 | Path | Purpose |
