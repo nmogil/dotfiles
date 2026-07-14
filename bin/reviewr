@@ -13,7 +13,7 @@ fi
 
 if ! git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
   echo "reviewr: current directory is not inside a git repo" >&2
-  echo "cd into a repo first, e.g. /root/github_repos/ventures/a2pcheck-app or /root/obsidian" >&2
+  echo "cd into a repo first, e.g. \${GITHUB_REPOS_DIR:-\$HOME/github_repos}/personal/example-repo" >&2
   exit 2
 fi
 

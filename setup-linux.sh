@@ -32,6 +32,9 @@ echo "  Log file: $LOG_FILE"
 echo "================================================================"
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/local-env.sh
+. "$DOTFILES_DIR/scripts/lib/local-env.sh"
+dotfiles_load_config
 
 # -----------------------------------------------------------------------------
 # Privilege detection
@@ -530,15 +533,23 @@ if should_install "config files (.zshrc, .p10k.zsh, .gitconfig, .tmux.conf — b
     if [ -f "$DOTFILES_DIR/.gitconfig" ]; then
         run cp "$DOTFILES_DIR/.gitconfig" ~/.gitconfig
         echo ""
-        read -rp "Update git user.name? (current: $(git config user.name 2>/dev/null || echo 'unset')) [y/N]: " update_name
-        if [[ $update_name =~ ^[Yy]$ ]]; then
-            read -rp "Enter your name: " git_name
-            run git config --global user.name "$git_name"
+        if dotfiles_apply_git_identity; then
+            log "Applied git identity from ~/.config/dotfiles/local.env"
+        else
+            read -rp "Update git user.name? (current: $(git config user.name 2>/dev/null || echo 'unset')) [y/N]: " update_name
+            if [[ $update_name =~ ^[Yy]$ ]]; then
+                read -rp "Enter your name: " git_name
+                run git config --global user.name "$git_name"
+            fi
+            read -rp "Update git user.email? (current: $(git config user.email 2>/dev/null || echo 'unset')) [y/N]: " update_email
+            if [[ $update_email =~ ^[Yy]$ ]]; then
+                read -rp "Enter your email: " git_email
+                run git config --global user.email "$git_email"
+            fi
         fi
-        read -rp "Update git user.email? (current: $(git config user.email 2>/dev/null || echo 'unset')) [y/N]: " update_email
-        if [[ $update_email =~ ^[Yy]$ ]]; then
-            read -rp "Enter your email: " git_email
-            run git config --global user.email "$git_email"
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+            run gh auth setup-git
+            log "Configured GitHub CLI as the secure Git credential helper"
         fi
     fi
 fi

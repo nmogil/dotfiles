@@ -2,3 +2,7 @@
 *.backup.*
 repos.txt
 .dotfiles-*.log
+# Local, machine-specific config must never be committed. The canonical copy
+# lives under ~/.config/dotfiles/; ignore any in-repo copies defensively.
+config/dotfiles/local.env
+pi-scaffold-blocklist.txt

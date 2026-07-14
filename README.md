@@ -1,17 +1,30 @@
 # Dotfiles
 
-My personal development environment setup. One command on macOS, one command on a Linux VPS.
+A personal development environment setup: one command on macOS, one command on a
+Linux VPS. Published as a reference for how one machine is wired up — not a
+turnkey product. **Read the scripts before you run them**; they install
+packages, copy config into your `$HOME`, and can harden a VPS. Fork and adapt
+rather than running blind. See [Licensing & provenance](#licensing--provenance)
+before reusing parts of it.
+
+Machine- and person-specific values (git identity, workstream repo buckets,
+private endpoints) are intentionally **not** tracked here — see
+[Local configuration](#local-configuration).
 
 ## Quick Start
 
 `./dot` is the control surface — a thin wrapper over the scripts below. Run
 `./dot help` for all commands and `./dot doctor` for a read-only health check.
-The direct script commands still work if you prefer them.
+The direct script commands still work if you prefer them. The canonical repo is
+`https://github.com/nmogil/dotfiles.git`; swap in your own fork's URL if you
+forked it.
 
 **macOS:**
 ```bash
 git clone https://github.com/nmogil/dotfiles.git ~/dotfiles
 cd ~/dotfiles
+mkdir -p ~/.config/dotfiles                                        # optional local config
+cp config/dotfiles/local.env.example ~/.config/dotfiles/local.env  # optional; then edit
 ./dot setup mac            # or: ./setup.sh
 ```
 
@@ -29,7 +42,57 @@ cp repos.txt.example repos.txt && $EDITOR repos.txt
 herdr                      # launch the agent cockpit
 ```
 
-See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules.
+See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules, and
+[Local configuration](#local-configuration) for machine-specific values.
+
+## Local configuration
+
+Portable defaults live in the tracked scripts; anything personal or
+machine-specific stays in an optional file **outside** this repo so it is never
+committed:
+
+```bash
+mkdir -p ~/.config/dotfiles
+cp config/dotfiles/local.env.example ~/.config/dotfiles/local.env
+$EDITOR ~/.config/dotfiles/local.env
+```
+
+Everything works without it — the scripts fall back to generic defaults. When
+present, `setup`, `clone-repos`, `doctor`, and `./dot pi doctor` source it.
+Note it is read by these repo scripts, **not** automatically by unrelated Pi
+processes. Documented keys (see
+[`config/dotfiles/local.env.example`](config/dotfiles/local.env.example)):
+
+| Key | Effect | Default |
+|-----|--------|---------|
+| `DOTFILES_GIT_NAME` / `DOTFILES_GIT_EMAIL` | Git identity, written to `~/.config/git/local.gitconfig` (included by `.gitconfig`) instead of prompting | prompt / unset |
+| `DOTFILES_REPO_BUCKETS` | Workstream bucket dirs + recognized `repos.txt` prefixes | `personal ventures external` |
+| `GITHUB_REPOS_DIR` | Clone root | `~/github_repos` |
+| `PI_MEMORY_COMPILER_DIR` | Consumed by the Pi memory-compiler extension **only when exported into the Pi process environment** (e.g. your shell rc) or set in `~/.pi/agent/memory-compiler.json`; putting it in `local.env` alone does not reach Pi | `~/github_repos/personal/claude-memory-compiler` |
+| `DOTFILES_PI_BLOCKLIST` | Extra private-string regexes `./dot pi doctor` rejects in the Pi scaffold | `~/.config/dotfiles/pi-scaffold-blocklist.txt` |
+
+**Migrating from an earlier personal checkout.** The tracked `.gitconfig` no
+longer carries an identity. Recreate yours locally (values below are
+placeholders — use your own):
+
+```bash
+mkdir -p ~/.config/dotfiles
+cat > ~/.config/dotfiles/local.env <<'EOF'
+DOTFILES_GIT_NAME="Your Name"
+DOTFILES_GIT_EMAIL="you@example.com"
+DOTFILES_REPO_BUCKETS="personal ventures external"
+EOF
+# or, without local.env:
+git config --global user.name  "Your Name"
+git config --global user.email "you@example.com"
+```
+
+The setup scripts also run `gh auth setup-git` when GitHub CLI is already
+authenticated, rather than installing Git's plaintext `credential.helper=store`.
+
+Add any private workstream codenames to `DOTFILES_REPO_BUCKETS`, and keep the
+private-endpoint patterns you want `./dot pi doctor` to reject in
+`~/.config/dotfiles/pi-scaffold-blocklist.txt` (one regex per line).
 
 ## What's Included
 
@@ -51,6 +114,9 @@ See [`AGENTS.md`](AGENTS.md) for where to edit things and safety rules.
 | `setup-obsidian-sync.sh` | Optional: Obsidian Headless Sync (npm install, login, systemd user unit) |
 | `clone-repos.sh` | Bulk-clone repos from `repos.txt` into `~/github_repos` workstream buckets via `gh` |
 | `repos.txt.example` | Template for `repos.txt` (gitignored — personal list) |
+| `config/dotfiles/local.env.example` | Template for machine-local overrides (copy to `~/.config/dotfiles/local.env`) |
+| `scripts/lib/local-env.sh` | Loader for the local config layer + portable defaults |
+| `scripts/tests/local-env.test.sh` | Focused test for override loading and defaults |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -220,16 +286,16 @@ workstream buckets to keep contexts separated:
 ```text
 ~/github_repos/
 ├── external/
-├── pennie/
 ├── personal/
-├── twilio/
 └── ventures/
 ```
 
-`clone-repos.sh` accepts an optional bucket prefix in `repos.txt`, e.g.
-`personal nmogil/dotfiles` or `ventures mogilventures/a2pcheck-app`. Herdr is
-the preferred project/session cockpit (see below); start agents from the
-active repo root inside a Herdr workspace.
+Buckets default to `personal ventures external` and are configurable via
+`DOTFILES_REPO_BUCKETS` in `~/.config/dotfiles/local.env` (add codenamed
+employer/client buckets there — they stay out of the repo). `clone-repos.sh`
+accepts an optional bucket prefix in `repos.txt`, e.g. `personal owner/dotfiles`
+or `ventures owner/some-app`. Herdr is the preferred project/session cockpit
+(see below); start agents from the active repo root inside a Herdr workspace.
 
 ## Herdr Agent Cockpit
 
@@ -290,3 +356,22 @@ To update packages after cloning on a new machine:
 ```bash
 brew bundle --file=~/dotfiles/Brewfile
 ```
+
+## Licensing & provenance
+
+This repository is published as a personal reference. **No blanket license is
+granted, and portions are adapted from third parties whose rights are not fully
+resolved** — so do not assume you may copy it wholesale. See
+[`docs/licensing.md`](docs/licensing.md) for the full boundary. In short:
+
+- The top-level scripts and config were assembled for this setup, but some
+  include conventional patterns, generated output, or vendor-documented commands;
+  see the detailed provenance notes before reusing them.
+- The opt-in Pi scaffold (`templates/pi/`) and several `agent/skills/` are
+  **adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles)**
+  and other upstreams; their license terms are unverified.
+- Third-party installers and packages retain their own upstream licenses.
+
+If you want to reuse a non-trivial part, inspect its provenance first and seek
+permission from the upstream author where the license is unclear. Prefer forking
+and adapting for your own machine over redistribution.

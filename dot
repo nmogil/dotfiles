@@ -18,6 +18,11 @@ script_path() {
 # Linux and macOS so `dot` can later be linked onto PATH.
 DOT_ROOT="$(script_path)"
 
+# Optional local config layer (defines functions only; no side effects at source
+# time). Lets pi_doctor honor DOTFILES_PI_BLOCKLIST from ~/.config/dotfiles/local.env.
+# shellcheck source=scripts/lib/local-env.sh
+[ -f "$DOT_ROOT/scripts/lib/local-env.sh" ] && . "$DOT_ROOT/scripts/lib/local-env.sh"
+
 run() {  # run <script> [args...] — fail clearly if the script is missing
   local script="$DOT_ROOT/$1"; shift
   [ -f "$script" ] || { echo "dot: missing script: $script" >&2; exit 1; }
@@ -138,8 +143,33 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     echo "  --   \$PI_HOME not present: $dest (opt-in; ./dot pi scaffold --apply)"
   fi
   # Guard: the scaffold's example files must not carry real secrets/private URLs.
-  offender=$(grep -rIlE 'exe\.mulroy\.ai|cfdata\.org|UIDOTSH_TOKEN|sk-ant-[A-Za-z0-9]|AKIA[0-9A-Z]{16}' \
-        "$DOT_ROOT/templates/pi" 2>/dev/null || true)
+  # Generic secret shapes are checked here; project-specific private endpoint/
+  # token patterns stay in a local, gitignored blocklist so the public repo does
+  # not enumerate them. See config/dotfiles/local.env.example (DOTFILES_PI_BLOCKLIST).
+  # Load local.env so a locally-configured DOTFILES_PI_BLOCKLIST is honored.
+  declare -F load_local_env >/dev/null 2>&1 && { load_local_env || true; }
+  local pattern blocklist rc=0 line lineno=0 grc valid_extra=""
+  pattern='sk-ant-[A-Za-z0-9]|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]+|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  blocklist="${DOTFILES_PI_BLOCKLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/pi-scaffold-blocklist.txt}"
+  if [ -f "$blocklist" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      lineno=$((lineno+1))
+      case "$line" in ''|[[:space:]]*'#'*|'#'*) continue ;; esac
+      [ -n "${line//[[:space:]]/}" ] || continue
+      # grep -E: 0 match, 1 no-match, >=2 error (invalid regex). Test against
+      # empty input so only regex validity is exercised.
+      grc=0
+      printf '' | grep -E -- "$line" >/dev/null 2>&1 || grc=$?
+      if [ "$grc" -ge 2 ]; then
+        echo "  FAIL invalid regex in blocklist (line $lineno)"  # value not printed
+        rc=1
+      else
+        valid_extra="${valid_extra:+$valid_extra|}$line"
+      fi
+    done < "$blocklist"
+    [ -n "$valid_extra" ] && pattern="$pattern|$valid_extra"
+  fi
+  offender=$(grep -rIlE "$pattern" "$DOT_ROOT/templates/pi" 2>/dev/null || true)
   if [ -z "$offender" ]; then
     echo "  ok   scaffold free of known private strings/live secrets"
   else
@@ -147,7 +177,9 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     while IFS= read -r path; do
       [ -n "$path" ] && printf '        %s\n' "$path"
     done <<< "$offender"
+    rc=1
   fi
+  return "$rc"
 }
 
 chezmoi_wrap() {
