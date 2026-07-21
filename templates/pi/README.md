@@ -18,6 +18,7 @@ unresolved — see [`docs/licensing.md`](../../docs/licensing.md) before reusing
 | Path | Purpose |
 |------|---------|
 | `package.json`, `tsconfig.json` | TypeScript workspace for Pi extensions |
+| `agent/extensions/account-profile-indicator.ts` | Shows the active credential profile persistently in Pi's footer |
 | `agent/extensions/git-interceptor.ts` | Prevents git editor hangs and blocks `--no-verify` hook bypasses |
 | `agent/extensions/worker-configuration-guard.ts` | Blocks manual edits to generated Cloudflare `worker-configuration.d.ts` files |
 | `agent/extensions/pi-cloak/` | Redacts configured secret-like values from Pi read output |
@@ -30,6 +31,7 @@ unresolved — see [`docs/licensing.md`](../../docs/licensing.md) before reusing
 | `agent/cloak.json` | Secret-masking patterns (masks tokens/keys in the TUI) |
 | `agent/themes/catppuccin-macchiato.json` | A theme (public Catppuccin palette) |
 | `agent/settings.example.json` | Credential-free defaults and the reviewed model allowlist |
+| `agent/models.work.example.json` | Generic work-profile model detail names without credentials or model-ID changes |
 | `agent/mcp.example.json` | Template MCP config — **local/commented examples only** |
 
 ## Install (opt-in)
@@ -53,16 +55,25 @@ cp agent/memory-compiler.example.json agent/memory-compiler.json  # optional Obs
 pi /reload
 ```
 
-From the dotfiles repository root, install the reviewed Pi delegation packages:
+From the dotfiles repository root, optionally prepare separate personal and
+work profiles, then install the reviewed Pi delegation packages. A private
+`DOTFILES_PI_WORK_PROFILE_SLUG` value can name the work profile locally:
 
 ```bash
+./dot pi profiles --dry-run
+./dot pi profiles --apply
+./dot pi profiles --check
+
 ./dot pi subagents --dry-run
 ./dot pi subagents --apply    # pinned pi-subagents + pi-herdr; no pi-herd mirror
 ./dot pi subagents --check
 ```
 
 Pi executes directly by default. Delegation and any policy-authorized runtime
-fallback follow `agent/skills/subagent-routing/SKILL.md`.
+fallback follow `agent/skills/subagent-routing/SKILL.md`. In-process Pi
+Subagents inherit the active parent profile. Fresh Pi processes must receive
+`PI_CODING_AGENT_DIR` explicitly; bare Claude Code is not an authorized
+work-profile fallback because its credentials are independent from Pi.
 
 ## Installing the Pi CLI itself
 

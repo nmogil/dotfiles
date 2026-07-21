@@ -44,7 +44,7 @@ for f in "${required[@]}"; do
 done
 
 # --- scripts executable ---
-for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh; do
+for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/tests/local-env.test.sh scripts/tests/pi-profiles.test.sh; do
   [ -e "$ROOT/$s" ] || continue
   if [ -x "$ROOT/$s" ]; then PASS "executable: $s"; else WARN "not executable: $s (chmod +x $s)"; fi
 done

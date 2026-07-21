@@ -26,10 +26,14 @@ truth for direct execution, delegation, model choice, and fallback.
 for both Pi and Hermes workflows, inspect `pane list`, `workspace list`, the
 candidate tab, and the target repo before spawning. use a project-specific tab
 in the correct workspace and pass `--workspace`, `--tab`, and `--cwd` explicitly
-to `herdr agent start`; never inherit an unrelated focused tab. inspect the
-returned pane and verify both `cwd` and `foreground_cwd` equal the target repo
-before sending the assignment. for in-process Pi Agent calls, put the exact cwd
-in every assignment and verify that it is the target repo.
+to `herdr agent start`; never inherit an unrelated focused tab. Fresh Pi workers
+must also receive `PI_CODING_AGENT_DIR` explicitly (`~/.pi/agent` for personal
+or `~/.pi/agent-<slug>` for the configured work profile). A model ID does not
+identify the account. Inspect the returned pane and verify `cwd`,
+`foreground_cwd`, and the expected profile footer badge before
+sending the assignment. For in-process Pi Agent calls, put the exact cwd in
+every assignment and verify that it is the target repo; they inherit the parent
+Pi profile automatically.
 
 the `herdr` binary is available in your PATH. its workspace, tab, pane, and wait commands talk to the running herdr instance over a local unix socket.
 
@@ -290,11 +294,14 @@ with explicit identifiers:
 herdr pane list
 herdr workspace list
 herdr tab list --workspace "$WORKSPACE_ID"
+ACTIVE_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 START=$(herdr agent start helper-pi --workspace "$WORKSPACE_ID" --tab "$TAB_ID" \
-  --cwd "$TARGET_REPO" --no-focus -- \
+  --cwd "$TARGET_REPO" --split right \
+  --env PI_CODING_AGENT_DIR="$ACTIVE_AGENT_DIR" --no-focus -- \
   pi --model openai-codex/gpt-5.6-sol --thinking high)
 NEW_PANE=$(printf '%s' "$START" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["agent"]["pane_id"])')
-herdr pane list  # verify NEW_PANE cwd and foreground_cwd before sending work
+herdr pane list  # verify NEW_PANE cwd and foreground_cwd
+herdr pane read "$NEW_PANE" --source visible --lines 20  # verify account badge
 herdr agent send "$NEW_PANE" "Original goal: ... Exact cwd: $TARGET_REPO. Bounded assignment: ..."
 ```
 

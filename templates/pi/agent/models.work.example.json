@@ -1,0 +1,22 @@
+{
+  "providers": {
+    "anthropic": {
+      "modelOverrides": {
+        "claude-fable-5": { "name": "Work · Claude Fable 5" },
+        "claude-haiku-4-5": { "name": "Work · Claude Haiku 4.5 (latest)" },
+        "claude-haiku-4-5-20251001": { "name": "Work · Claude Haiku 4.5" },
+        "claude-opus-4-1": { "name": "Work · Claude Opus 4.1 (latest)" },
+        "claude-opus-4-1-20250805": { "name": "Work · Claude Opus 4.1" },
+        "claude-opus-4-5": { "name": "Work · Claude Opus 4.5 (latest)" },
+        "claude-opus-4-5-20251101": { "name": "Work · Claude Opus 4.5" },
+        "claude-opus-4-6": { "name": "Work · Claude Opus 4.6" },
+        "claude-opus-4-7": { "name": "Work · Claude Opus 4.7" },
+        "claude-opus-4-8": { "name": "Work · Claude Opus 4.8" },
+        "claude-sonnet-4-5": { "name": "Work · Claude Sonnet 4.5 (latest)" },
+        "claude-sonnet-4-5-20250929": { "name": "Work · Claude Sonnet 4.5" },
+        "claude-sonnet-4-6": { "name": "Work · Claude Sonnet 4.6" },
+        "claude-sonnet-5": { "name": "Work · Claude Sonnet 5" }
+      }
+    }
+  }
+}

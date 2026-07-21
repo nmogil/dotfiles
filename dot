@@ -45,6 +45,7 @@ Usage: ./dot <command> [args]
   packages check       Report which manifest packages are installed vs missing
   pi doctor            Read-only checks for the opt-in Pi agent scaffold
   pi scaffold [flags]  Install templates/pi -> ~/.pi (--apply/--force/--dry-run)
+  pi profiles [flags]  Prepare/check personal + work profiles (--apply/--check/--dry-run)
   pi subagents [flags] Install/check pinned Pi subagents (--apply/--check/--dry-run)
   pi install           Install the pi CLI (opt-in; prompts before running)
   chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
@@ -135,6 +136,13 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
   [ -f "$DOT_ROOT/scripts/setup-pi-subagents.sh" ] \
     && echo "  ok   pinned subagent installer present" \
     || echo "  MISS pinned subagent installer missing"
+  [ -f "$DOT_ROOT/scripts/setup-pi-profiles.sh" ] \
+    && [ -f "$DOT_ROOT/templates/pi/agent/extensions/account-profile-indicator.ts" ] \
+    && [ -f "$DOT_ROOT/templates/pi/agent/skills/coding-agent-account-routing/SKILL.md" ] \
+    && [ -f "$DOT_ROOT/templates/pi/agent/models.work.example.json" ] \
+    && [ -f "$DOT_ROOT/templates/hermes/skills/software-development/coding-agent-account-routing/SKILL.md" ] \
+    && echo "  ok   personal/work profile assets present" \
+    || echo "  MISS personal/work profile assets missing"
   if [ -d "$dest" ]; then
     echo "  ok   \$PI_HOME exists: $dest"
     [ -f "$dest/package.json" ] && echo "  ok   ~/.pi/package.json present" \
@@ -226,9 +234,10 @@ case "$cmd" in
     case "${1:-}" in
       doctor)    pi_doctor ;;
       scaffold)  shift; run scripts/setup-pi-agent.sh "$@" ;;
+      profiles)  shift; run scripts/setup-pi-profiles.sh "$@" ;;
       subagents) shift; run scripts/setup-pi-subagents.sh "$@" ;;
       install)   run scripts/setup-pi-agent.sh --install ;;
-      *) echo "dot: pi needs 'doctor', 'scaffold', 'subagents', or 'install'" >&2; usage; exit 1 ;;
+      *) echo "dot: pi needs 'doctor', 'scaffold', 'profiles', 'subagents', or 'install'" >&2; usage; exit 1 ;;
     esac ;;
   chezmoi) chezmoi_wrap "$@" ;;
   *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;

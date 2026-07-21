@@ -227,6 +227,7 @@ Next steps (manual — this script does none of these):
   cp agent/settings.example.json agent/settings.json   # then edit provider/model
   cp agent/mcp.example.json      agent/mcp.json         # then edit MCP servers
   cd "$ROOT"
+  ./dot pi profiles --apply      # optional separate personal/work profiles
   ./dot pi subagents --apply     # optional pinned Pi-first delegation stack
   pi /reload
 EOF

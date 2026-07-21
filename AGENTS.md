@@ -31,6 +31,7 @@ and dispatches to them.
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
 | Pi agent scaffold | `templates/pi/` + `scripts/setup-pi-agent.sh` (opt-in; see `docs/pi-agent-setup.md`) |
+| Pi account profiles | `.zshrc` + local profile slug + `templates/{pi,hermes}/` + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | `templates/pi/agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
 
@@ -66,9 +67,10 @@ Package manifests under `packages/` are documentation + input for
 
 ```bash
 bash -n dot scripts/doctor.sh scripts/setup-pi-agent.sh \
-  scripts/setup-pi-subagents.sh setup.sh setup-linux.sh clone-repos.sh \
+  scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh      # local override + portable defaults
+bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
 ./dot packages check                      # installed vs declared packages

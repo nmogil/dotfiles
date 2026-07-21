@@ -7,6 +7,7 @@ dist/
 # to these names locally; keep the real ones out of git (they may hold provider
 # endpoints, package paths, tokens, and machine-specific preferences).
 agent/settings.json
+agent/models.json
 agent/mcp.json
 agent/memory-compiler.json
 
