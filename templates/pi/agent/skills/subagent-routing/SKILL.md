@@ -27,10 +27,11 @@ Delegate only when Noah explicitly requests it, or when at least one is true:
    conditions, and verification. For every in-process Agent call, include the
    exact target cwd in the prompt and verify it matches the target repository.
 5. Before any Herdr spawn, inspect panes/workspaces/tabs and the target repo.
-   Select or create a project-specific tab in the correct workspace; start with
-   explicit `--workspace`, `--tab`, `--cwd`, and `PI_CODING_AGENT_DIR`; then
-   verify the new pane's `cwd`, `foreground_cwd`, and account badge before
-   sending work. Never use an unrelated focused tab or bare `pi`.
+   Select or create a project-specific tab in the correct workspace. Create its
+   shell pane first with the exact `--cwd` and `PI_CODING_AGENT_DIR`, parse the
+   returned pane ID, verify `cwd`, `foreground_cwd`, and the account badge, then
+   use `agent start --kind pi --pane ...`. Submit normal work with
+   `agent prompt ... --wait`. Never use an unrelated focused pane or bare `pi`.
 6. Select the model below. Parallelize only independent assignments; isolate or
    serialize writers. Use cross-family review for consequential work.
 7. Report delegation reason, runtime, model, account profile, fallback, and
@@ -58,13 +59,15 @@ cwd-verified assignment plus explicit runtime, model, and account profile.
 
 ```bash
 ACTIVE_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-herdr agent start helper-pi --workspace "$WORKSPACE_ID" --tab "$TAB_ID" \
-  --cwd "$TARGET_REPO" --split right \
-  --env PI_CODING_AGENT_DIR="$ACTIVE_AGENT_DIR" --no-focus -- \
-  pi --model <provider/model> --thinking high
+split_json=$(herdr pane split --current --direction right --cwd "$TARGET_REPO" \
+  --env PI_CODING_AGENT_DIR="$ACTIVE_AGENT_DIR" --no-focus)
+agent_pane=$(printf '%s' "$split_json" | jq -r '.result.pane.pane_id')
+herdr agent start helper-pi --kind pi --pane "$agent_pane" -- \
+  --model <provider/model> --thinking high
 ```
 
-Verify the spawned footer badge before sending work.
+Verify the spawned footer badge before submitting work with
+`herdr agent prompt helper-pi "$prompt" --wait --timeout <ms>`.
 
 ## Model routing
 

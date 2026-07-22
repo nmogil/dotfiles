@@ -54,18 +54,19 @@ PI_CODING_AGENT_DIR="$HOME/.pi/agent-$WORK_PROFILE_SLUG" \
   pi --model <provider/model>
 ```
 
-For Herdr, pass the active profile into the new pane rather than assuming it
-inherits the caller's shell:
+For Herdr, put the active profile and target cwd on a new shell pane, then start
+Pi in that existing pane:
 
 ```bash
-herdr agent start <name> --workspace "$WORKSPACE_ID" --tab "$TAB_ID" \
-  --cwd "$TARGET_REPO" --split right \
-  --env PI_CODING_AGENT_DIR="$AGENT_DIR" --no-focus -- \
-  pi --model <provider/model>
+split_json=$(herdr pane split --current --direction right --cwd "$TARGET_REPO" \
+  --env PI_CODING_AGENT_DIR="$AGENT_DIR" --no-focus)
+agent_pane=$(printf '%s' "$split_json" | jq -r '.result.pane.pane_id')
+herdr agent start <name> --kind pi --pane "$agent_pane" -- \
+  --model <provider/model>
 ```
 
 After spawn, verify the pane cwd and require the expected profile badge in its
-Pi footer before sending the assignment.
+Pi footer before submitting the assignment with `herdr agent prompt ... --wait`.
 
 ### Claude Code fallback
 
