@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "enforceAssignments": false,
+  "agents": {
+    "pi": {
+      "keep": [
+        "account-profile-indicator",
+        "git-interceptor",
+        "herdr-agent-state",
+        "pi-cloak",
+        "worker-configuration-guard"
+      ],
+      "review": [
+        "pi-memory-compiler",
+        "save-md"
+      ]
+    },
+    "claude": {
+      "keep": [
+        "codex@openai-codex",
+        "vercel@claude-plugins-official"
+      ],
+      "review": [
+        "frontend-design@claude-plugins-official",
+        "ponytail@ponytail",
+        "superpowers@claude-plugins-official"
+      ]
+    },
+    "codex": {
+      "keep": [],
+      "review": []
+    },
+    "hermes": {
+      "keep": [
+        "herdr-agent-state"
+      ],
+      "review": [
+        "hermes-achievements",
+        "spotify"
+      ]
+    }
+  }
+}

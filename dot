@@ -43,6 +43,9 @@ Usage: ./dot <command> [args]
   server harden        Harden a VPS: Tailscale + UFW + auto-upgrades (harden-vps.sh)
   obsidian sync        Set up Obsidian headless sync (setup-obsidian-sync.sh)
   packages check       Report which manifest packages are installed vs missing
+  agents inventory     List capability names without printing config values
+  agents plan          Compare current capabilities with the cleanup policy
+  agents check         Validate policy; assignments remain report-only
   pi doctor            Read-only checks for the opt-in Pi agent scaffold
   pi scaffold [flags]  Install templates/pi -> ~/.pi (--apply/--force/--dry-run)
   pi subagents [flags] Install/check pinned Pi subagents (--apply/--check/--dry-run)
@@ -221,6 +224,11 @@ case "$cmd" in
     case "${1:-}" in
       check) packages_check ;;
       *) echo "dot: packages needs 'check'" >&2; usage; exit 1 ;;
+    esac ;;
+  agents)
+    case "${1:-}" in
+      inventory|plan|check) run scripts/manage-agents.sh "$@" ;;
+      *) echo "dot: agents needs 'inventory', 'plan', or 'check'" >&2; usage; exit 1 ;;
     esac ;;
   pi)
     case "${1:-}" in

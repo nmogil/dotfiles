@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "shareCredentials": false,
+  "trackLiveAssignments": false,
+  "rules": [
+    "Keep MCP configuration, OAuth state, tokens, and caches outside dotfiles.",
+    "Assign each MCP to the smallest profile that needs it.",
+    "Do not symlink credential-bearing MCP files between agent profiles.",
+    "Inventory capability names only; never print commands, URLs, headers, environment values, or project paths."
+  ]
+}
