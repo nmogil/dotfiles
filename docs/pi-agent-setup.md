@@ -46,7 +46,8 @@ an authoritative Pi schema.
 | `agent/subagents.json`, `agent/agent-tool-description.md` | Deterministic subagent defaults and model-facing role guidance |
 | `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `pi-subagents` and `pi-herdr` source; excludes incomplete mirrors |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
-| `agent/settings.example.json` | Placeholders only (`REPLACE_ME_*`); real file is gitignored |
+| `agent/settings.example.json` | Credential-free defaults with a reviewed, version-pinned Codex compaction package; real file is gitignored |
+| `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage and shows a notification when it runs |
 | `agent/models.work.example.json` | Credential-free work-profile detail-name template; model IDs and routing stay unchanged |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
 | `templates/hermes/.../coding-agent-account-routing/SKILL.md` | Separates Hermes-native delegation from external Pi/Claude account selection |
@@ -108,6 +109,25 @@ selecting a Pi work profile does not select a corresponding Claude Code account.
 Without an identity-verified work-account wrapper, fallback stays in the
 selected Pi profile instead of launching bare `claude`.
 
+## Codex native compaction
+
+The personal-profile settings example pins
+`@ogulcancelik/pi-codex-compaction@0.1.0`. The accompanying
+`agent/pi-codex-compaction.json` enables provider-native compaction at 90%
+context usage and displays a notification when it runs. It activates only for
+`openai-codex` models; the independent Anthropic work profile is unaffected.
+Native checkpoints are model-specific, so return to the Codex model that
+created a checkpoint before continuing older compacted history.
+
+Install it into an existing personal profile with:
+
+```bash
+PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
+  pi install npm:@ogulcancelik/pi-codex-compaction@0.1.0
+cp templates/pi/agent/pi-codex-compaction.json \
+  "$HOME/.pi/agent/pi-codex-compaction.json"
+```
+
 ## Installing Pi subagents
 
 The optional subagent stack is pinned to reviewed `WeShipWork/threeonefour`
@@ -147,7 +167,7 @@ reviewed, not treated as runtime failure.
 Install the tested npm distribution:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@0.80.6
+npm install -g @earendil-works/pi-coding-agent@0.81.1
 ```
 
 `./dot pi install` prints the command and prompts before running it. It requires
@@ -158,9 +178,9 @@ it removes only Vite+'s global Pi package
 with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
 available for project tooling.
 
-The npm layout is intentional. Pi 0.80.6 installed globally through Vite+ was
+The npm layout is intentional. A Pi CLI installed globally through Vite+ was
 verified to fail runtime imports used by `pi-subagents` and other extensions,
-while the same Pi version installed through npm loaded the pinned source stack.
+while the npm-installed CLI loaded the pinned source stack.
 Pi is therefore listed in `packages/npm.global`.
 
 ## Safety checks

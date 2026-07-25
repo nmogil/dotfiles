@@ -1,0 +1,5 @@
+{
+  "autoCompact": true,
+  "thresholdRatio": 0.9,
+  "notify": true
+}

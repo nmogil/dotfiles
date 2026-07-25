@@ -12,9 +12,9 @@
     "check": "npm run typecheck && npm run typecheck --workspace=pi-save-md-extension"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.80.6",
-    "@earendil-works/pi-coding-agent": "0.80.6",
-    "@earendil-works/pi-tui": "0.80.6"
+    "@earendil-works/pi-ai": "0.81.1",
+    "@earendil-works/pi-coding-agent": "0.81.1",
+    "@earendil-works/pi-tui": "0.81.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

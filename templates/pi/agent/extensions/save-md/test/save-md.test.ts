@@ -5,12 +5,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
-	AuthStorage,
+	InMemoryCredentialStore,
+	InMemoryModelsStore,
+	type AssistantMessage,
+} from "@earendil-works/pi-ai";
+import {
 	discoverAndLoadExtensions,
 	ExtensionRunner,
 	ModelRegistry,
+	ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
@@ -41,12 +45,17 @@ async function createHarness(cwd: string) {
 	const loaded = await discoverAndLoadExtensions([extensionPath], cwd, join(cwd, ".agent"));
 	assert.deepEqual(loaded.errors, []);
 
+	const modelRuntime = await ModelRuntime.create({
+		credentials: new InMemoryCredentialStore(),
+		modelsPath: null,
+		modelsStore: new InMemoryModelsStore(),
+	});
 	const runner = new ExtensionRunner(
 		loaded.extensions,
 		loaded.runtime,
 		cwd,
 		sessionManager,
-		ModelRegistry.inMemory(AuthStorage.inMemory()),
+		new ModelRegistry(modelRuntime),
 	);
 	const notifications: Array<{ message: string; type?: "info" | "warning" | "error" }> = [];
 	runner.setUIContext({

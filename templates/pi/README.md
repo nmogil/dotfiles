@@ -30,7 +30,8 @@ unresolved — see [`docs/licensing.md`](../../docs/licensing.md) before reusing
 | `agent/agent-tool-description.md` | Model-facing role selection guidance for the `Agent` tool |
 | `agent/cloak.json` | Secret-masking patterns (masks tokens/keys in the TUI) |
 | `agent/themes/catppuccin-macchiato.json` | A theme (public Catppuccin palette) |
-| `agent/settings.example.json` | Credential-free defaults and the reviewed model allowlist |
+| `agent/settings.example.json` | Credential-free defaults, reviewed model allowlist, and pinned Codex compaction package |
+| `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage with a visible notification |
 | `agent/models.work.example.json` | Generic work-profile model detail names without credentials or model-ID changes |
 | `agent/mcp.example.json` | Template MCP config — **local/commented examples only** |
 
@@ -52,6 +53,7 @@ npm install
 cp agent/settings.example.json agent/settings.json   # then edit: add your provider/model
 cp agent/mcp.example.json      agent/mcp.json         # then edit: add your MCP servers
 cp agent/memory-compiler.example.json agent/memory-compiler.json  # optional Obsidian memory capture
+# agent/pi-codex-compaction.json is ready as copied; settings.example.json pins its package
 pi /reload
 ```
 
@@ -84,7 +86,7 @@ When you want it:
 ```bash
 ./dot pi install     # installs pinned npm Pi and migrates an existing Vite+ Pi
 # equivalent install command:
-#   npm install -g @earendil-works/pi-coding-agent@0.80.6
+#   npm install -g @earendil-works/pi-coding-agent@0.81.1
 ```
 
 See `docs/pi-agent-setup.md` in the repo root for installation, operation, and
