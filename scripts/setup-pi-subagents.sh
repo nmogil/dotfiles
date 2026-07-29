@@ -13,6 +13,12 @@ PI_ROOT="${PI_HOME:-$HOME/.pi}"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$PI_ROOT/agent}"
 PI_BIN="${PI_BIN:-pi}"
 MODE="dry-run"
+AGENT_BASENAME="$(basename "$AGENT_DIR")"
+case "$AGENT_BASENAME" in
+  agent) PROFILE_LABEL="personal" ;;
+  agent-*) PROFILE_LABEL="${AGENT_BASENAME#agent-}" ;;
+  *) PROFILE_LABEL="$AGENT_BASENAME" ;;
+esac
 
 usage() {
   cat <<EOF
@@ -56,6 +62,7 @@ source:   $REPO_URL
 commit:   $REF
 checkout: $CHECKOUT
 agent dir: $AGENT_DIR
+profile:   $PROFILE_LABEL
 packages:
   $CHECKOUT/packages/pi-subagents
   $CHECKOUT/packages/pi-herdr
@@ -211,5 +218,6 @@ EOF
       exit 1
     fi
     echo "Restart Pi or run /reload before using the new tools."
+    echo "Install/check each credential profile separately by setting PI_CODING_AGENT_DIR."
     ;;
 esac

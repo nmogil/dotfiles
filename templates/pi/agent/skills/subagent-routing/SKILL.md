@@ -18,22 +18,56 @@ Delegate only when Noah explicitly requests it, or when at least one is true:
 ## Procedure
 
 1. Route from the original end-user goal; cost is not a selection factor.
-2. Prefer in-process Pi `Agent`. Use a Herdr Pi pane only for a visible terminal,
+2. Verify the workstream and active credential profile before selecting a model
+   or runtime. A model ID identifies a model, not a personal/work account.
+3. Prefer in-process Pi `Agent`. Use a Herdr Pi pane only for a visible terminal,
    long-lived process, or unavailable in-process tooling. Do not start Claude
    Code first.
-3. Bound the assignment with the original goal, exact cwd, constraints, done
+4. Bound the assignment with the original goal, exact cwd, constraints, done
    conditions, and verification. For every in-process Agent call, include the
    exact target cwd in the prompt and verify it matches the target repository.
-4. Before any Herdr spawn, inspect panes/workspaces/tabs and the target repo.
-   Select or create a project-specific tab in the correct workspace; start with
-   explicit `--workspace`, `--tab`, and `--cwd`; then verify the new pane's `cwd`
-   and `foreground_cwd` before sending work. Never use an unrelated focused tab.
-5. Select the model below. Parallelize only independent assignments; isolate or
+5. Before any Herdr spawn, inspect panes/workspaces/tabs and the target repo.
+   Select or create a project-specific tab in the correct workspace. Create its
+   shell pane first with the exact `--cwd` and `PI_CODING_AGENT_DIR`, parse the
+   returned pane ID, verify `cwd`, `foreground_cwd`, and the account badge, then
+   use `agent start --kind pi --pane ...`. Submit normal work with
+   `agent prompt ... --wait`. Never use an unrelated focused pane or bare `pi`.
+6. Select the model below. Parallelize only independent assignments; isolate or
    serialize writers. Use cross-family review for consequential work.
-6. Report delegation reason, runtime, model, fallback, and verification.
+7. Report delegation reason, runtime, model, account profile, fallback, and
+   verification.
 
 Completion criterion: each delegation passes the gate and has a bounded,
-cwd-verified assignment and explicit runtime/model.
+cwd-verified assignment plus explicit runtime, model, and account profile.
+
+## Credential profile routing
+
+- Personal work runs from `~/.pi/agent` and shows `[PERSONAL]`.
+- Work assigned to the locally configured second profile runs from
+  `~/.pi/agent-<slug>` and shows the uppercase slug.
+  The local workstream/profile name stays outside this public repository.
+- `anthropic/...` never identifies which Claude account is active.
+- The account boundary outranks model preference. If a routed model is not
+  available in the correct profile, choose a suitable model in that profile or
+  ask the user; never switch profiles just to satisfy the model table.
+- In-process Pi Subagents reuse the parent model registry and agent directory,
+  so they inherit the parent profile automatically and need no separate login.
+- If the parent profile is wrong, stop and relaunch with `pi-personal`,
+  `pi-work`, or the configured `pi-<slug>` alias. Do not replace credentials
+  mid-session with `/logout`/`/login`.
+- A fresh Herdr Pi worker must receive the active profile explicitly:
+
+```bash
+ACTIVE_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+split_json=$(herdr pane split --current --direction right --cwd "$TARGET_REPO" \
+  --env PI_CODING_AGENT_DIR="$ACTIVE_AGENT_DIR" --no-focus)
+agent_pane=$(printf '%s' "$split_json" | jq -r '.result.pane.pane_id')
+herdr agent start helper-pi --kind pi --pane "$agent_pane" -- \
+  --model <provider/model> --thinking high
+```
+
+Verify the spawned footer badge before submitting work with
+`herdr agent prompt helper-pi "$prompt" --wait --timeout <ms>`.
 
 ## Model routing
 
@@ -60,9 +94,9 @@ the same working tree; use worktree isolation or serialize them.
 
 ## Claude Code fallback
 
-Claude Code is a policy-authorized worker fallback, not the delegator. It is
-available only **when tool access permits**; this policy cannot guarantee the
-runtime is installed or callable.
+Claude Code is a policy-authorized worker fallback, not the delegator. Its
+credential store is independent from Pi profiles. Selecting a Pi work profile
+does not select a matching Claude Code account.
 
 Use fallback without asking again only when a selected `anthropic/...` model
 cannot run through Pi because of:
@@ -75,10 +109,14 @@ cannot run through Pi because of:
 Fallback sequence:
 
 1. Preserve the exact assignment, cwd, constraints, and verification target.
-2. When tool access permits, invoke Claude Code with the selected Claude model
-   (strip `anthropic/` if needed), then Opus 4.8 only if that model is unsupported.
-3. Keep Pi as parent, preserve verification, and collect the result into Pi.
-4. Disclose the triggering failure and actual runtime/model.
+2. For personal work, invoke Claude Code only after verifying its active
+   account is the intended one.
+3. For work assigned to the configured second profile, use only an
+   account-explicit, identity-verified Claude Code wrapper. Without one,
+   fallback is blocked: stay in that Pi profile or ask the user rather than
+   launching bare `claude`.
+4. Keep Pi as parent, preserve verification, and collect the result into Pi.
+5. Disclose the triggering failure and actual runtime/model/account boundary.
 
 A weak but normally completed answer is not a runtime failure. Review it with a
 different Pi model instead. If an OpenAI model fails, try another suitable Pi

@@ -130,6 +130,29 @@ eval "$(zoxide init zsh)"
 # tmux aliases kept below as fallback only.
 export EDITOR="${EDITOR:-micro}"
 
+# Pi credential profiles. The optional local slug stays outside this public
+# repo; e.g. DOTFILES_PI_WORK_PROFILE_SLUG=clientx creates `pi-clientx`.
+_dotfiles_local_env="${DOTFILES_LOCAL_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/local.env}"
+[[ -r "$_dotfiles_local_env" ]] && source "$_dotfiles_local_env"
+: "${DOTFILES_PI_WORK_PROFILE_SLUG:=work}"
+case "$DOTFILES_PI_WORK_PROFILE_SLUG" in
+  ""|personal|*[!A-Za-z0-9_-]*) DOTFILES_PI_WORK_PROFILE_SLUG="work" ;;
+esac
+export DOTFILES_PI_WORK_PROFILE_SLUG
+
+pi-personal() {
+  PI_CODING_AGENT_DIR="$HOME/.pi/agent" command pi "$@"
+}
+
+pi-work() {
+  PI_CODING_AGENT_DIR="$HOME/.pi/agent-$DOTFILES_PI_WORK_PROFILE_SLUG" command pi "$@"
+}
+
+if [[ "$DOTFILES_PI_WORK_PROFILE_SLUG" != "work" ]]; then
+  alias "pi-$DOTFILES_PI_WORK_PROFILE_SLUG=pi-work"
+fi
+unset _dotfiles_local_env
+
 alias e='micro'
 alias lg='lazygit'
 alias gs='git status --short'
