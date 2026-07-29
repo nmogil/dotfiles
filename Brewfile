@@ -1,5 +1,6 @@
 # Taps
-tap "homebrew/bundle"
+# homebrew/bundle was deprecated and emptied upstream; `brew bundle` is built in
+# now, so tapping it makes `brew bundle check` fail permanently.
 tap "tw93/tap"
 tap "2389-research/tap"
 tap "jurplel/tap"
