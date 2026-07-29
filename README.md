@@ -11,6 +11,26 @@ Machine- and person-specific values (git identity, workstream repo buckets,
 private endpoints) are intentionally **not** tracked here — see
 [Local configuration](#local-configuration).
 
+## The short version
+
+If you're here because you asked about my setup, this is the core of it:
+
+- **Terminal**: [Ghostty](https://ghostty.org) + zsh + Oh My Zsh +
+  [Powerlevel10k](https://github.com/romkatv/powerlevel10k)
+  (`config/ghostty/config`, `.zshrc`, `.p10k.zsh`)
+- **Git**: [delta](https://github.com/dandavison/delta) as pager,
+  `zdiff3` conflicts, identity kept out of the repo, `gh` as the credential
+  helper — no plaintext credential store (`.gitconfig`)
+- **Agents**: Claude Code, Codex, and [Pi](https://github.com/mariozechner/pi),
+  with [Herdr](https://herdr.dev) as the session cockpit and
+  [Hunk](https://hunk.dev) for reviewing agent diffs
+- **Repo hygiene**: everything clones into `~/github_repos/<workstream>/`
+  buckets to keep contexts separated (`./dot repos clone`)
+- **One command**: `./dot setup mac` (or `./dot setup linux` for a VPS), then
+  `./dot doctor` to verify
+
+Everything below is the detail.
+
 ## Quick Start
 
 `./dot` is the control surface — a thin wrapper over the scripts below. Run
@@ -108,7 +128,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `AGENTS.md` | Where to edit things + safety rules for agents/humans |
 | `packages/` | Package manifests split by role + `./dot packages check` |
 | `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
-| `templates/pi/` | Opt-in Pi workspace plus Pi-first subagent/model routing (`./dot pi ...`, `docs/pi-agent-setup.md`) |
+| `scripts/setup-pi-agent.sh` | Opt-in Pi workspace installer (`./dot pi ...`, `docs/pi-agent-setup.md`); the scaffold itself lives outside this repo |
 | `Brewfile` | Homebrew packages and casks (macOS) |
 | `.zshrc` | Zsh configuration with Oh My Zsh |
 | `.p10k.zsh` | Powerlevel10k theme configuration |
@@ -231,11 +251,13 @@ exact commands but does not run them automatically).
 
 ## Pi Agent Scaffold (Optional)
 
-An opt-in [Pi coding agent](https://github.com/mariozechner/pi) workspace,
-adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles). It is
-**not** applied by the setup scripts — you install it deliberately. It holds no
-private endpoints, tokens, or private MCP servers; reviewed public model IDs are
-committed for deterministic subagent routing.
+An opt-in [Pi coding agent](https://github.com/mariozechner/pi) workspace. It is
+**not** applied by the setup scripts — you install it deliberately. The scaffold
+content is **not tracked in this repo**: it was adapted from
+[dmmulroy/.dotfiles](https://github.com/dmmulroy/.dotfiles), which grants no
+license, so it lives in a private companion repo until that is resolved. Point
+`DOTFILES_PI_SCAFFOLD_DIR` (in `~/.config/dotfiles/local.env`) at your own
+scaffold checkout; a fork-local `templates/pi/` works as a fallback.
 
 ```bash
 ./dot pi doctor               # read-only checks
@@ -246,7 +268,7 @@ committed for deterministic subagent routing.
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
-The scaffold lives in `templates/pi/`; live config stays gitignored. Pi works
+Live config stays gitignored. Pi works
 directly by default and delegates only under the reviewed routing policy. See
 [`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for installation and
 operations.
@@ -364,19 +386,15 @@ brew bundle --file=~/dotfiles/Brewfile
 
 ## Licensing & provenance
 
-This repository is published as a personal reference. **No blanket license is
-granted, and portions are adapted from third parties whose rights are not fully
-resolved** — so do not assume you may copy it wholesale. See
-[`docs/licensing.md`](docs/licensing.md) for the full boundary. In short:
+MIT — see [`LICENSE`](LICENSE). The material that previously blocked a license
+(a Pi scaffold adapted from an unlicensed upstream) has been moved out of this
+repository; what remains is original work plus conventional/generated config
+whose upstreams (Oh My Zsh, Powerlevel10k) are MIT. Two caveats, detailed in
+[`docs/licensing.md`](docs/licensing.md):
 
-- The top-level scripts and config were assembled for this setup, but some
-  include conventional patterns, generated output, or vendor-documented commands;
-  see the detailed provenance notes before reusing them.
-- The opt-in Pi scaffold (`templates/pi/`) and several `agent/skills/` are
-  **adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles)**
-  and other upstreams; their license terms are unverified.
-- Third-party installers and packages retain their own upstream licenses.
-
-If you want to reuse a non-trivial part, inspect its provenance first and seek
-permission from the upstream author where the license is unclear. Prefer forking
-and adapting for your own machine over redistribution.
+- Generated/derived config (`.p10k.zsh`, `.zshrc`) carries its upstream's MIT
+  terms, not a fresh claim of authorship.
+- Third-party software the scripts install retains its own licenses; this repo
+  only automates fetching it.
+- The removed scaffold still exists in this repository's **git history**; the
+  license applies to the current tree, not to historical unlicensed material.

@@ -11,7 +11,7 @@ brew "flyctl"
 brew "gh"
 brew "ghostscript"
 brew "git"
-brew "hunk"             # Review-first terminal diff viewer
+brew "hunk"             # Review-first terminal diff viewer (macOS: brew; Linux installs npm `hunkdiff` instead)
 brew "librsvg"
 brew "mactop"
 brew "node"

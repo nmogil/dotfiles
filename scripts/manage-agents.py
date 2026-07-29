@@ -122,7 +122,12 @@ def load_policy(policy_dir: Path, name: str) -> dict[str, object]:
     path = policy_dir / name
     policy = json_object(path)
     if not policy:
-        raise ValueError(f"missing or invalid policy: {name}")
+        # skills.json / plugins.json are personal manifests and are not tracked
+        # in the public repo; point DOTFILES_AGENT_POLICY_DIR at your copy.
+        raise ValueError(
+            f"missing or invalid policy: {name} (looked in {policy_dir}; "
+            "set DOTFILES_AGENT_POLICY_DIR to the directory holding your manifests)"
+        )
     return policy
 
 

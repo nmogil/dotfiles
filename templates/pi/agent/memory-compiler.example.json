@@ -1,7 +1,0 @@
-{
-  "enabled": true,
-  "compilerDir": "~/github_repos/personal/claude-memory-compiler",
-  "flushScript": "scripts/pi_session.py",
-  "minSecondsBetweenFlushes": 60,
-  "notify": false
-}

@@ -30,8 +30,8 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
-| Pi agent scaffold | `templates/pi/` + `scripts/setup-pi-agent.sh` (opt-in; see `docs/pi-agent-setup.md`) |
-| Pi subagents/model routing | `templates/pi/agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
+| Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
+| Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
 
 Package manifests under `packages/` are documentation + input for
@@ -50,7 +50,8 @@ Package manifests under `packages/` are documentation + input for
 - **Do not weaken VPS hardening.** `harden-vps.sh` and `server/` drop-ins exist
   on purpose; don't loosen firewall, SSH, or OOM/memory guardrails to make
   something convenient.
-- **Pi scaffold stays inert and credential-free.** `templates/pi/` may contain
+- **Pi scaffold stays inert and credential-free.** The scaffold (untracked
+  here; resolved via `DOTFILES_PI_SCAFFOLD_DIR`) may contain
   reviewed public model IDs used by the routing policy, but no real provider
   endpoints, tokens, or private MCP servers. The private-endpoint/token
   blocklist enforced by `./dot pi doctor` lives locally and gitignored
