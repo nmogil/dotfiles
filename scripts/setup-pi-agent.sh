@@ -53,7 +53,7 @@ Usage: scripts/setup-pi-agent.sh [--apply] [--force] [--install] [--dry-run]
 
   (no flags)   Dry run: show what would be copied. Writes nothing.
   --dry-run    Same as no flags (explicit).
-  --apply      Copy templates/pi/ into \${PI_HOME:-\$HOME/.pi}, skipping files
+  --apply      Copy the scaffold into \${PI_HOME:-\$HOME/.pi}, skipping files
                that already exist.
   --force      With --apply: overwrite existing files, backing each up first
                to <file>.bak.<timestamp>.
@@ -114,7 +114,7 @@ find_standalone_npm() {
 }
 
 install_cli() {
-  local package="@earendil-works/pi-coding-agent@0.80.6"
+  local package="@earendil-works/pi-coding-agent@0.81.1"
   local package_name="@earendil-works/pi-coding-agent"
   local current="" resolved="" npm_prefix="" npm_pi=""
   local NPM_NODE="" NPM_CLI=""
@@ -139,8 +139,8 @@ EOF
     case "$current:$resolved" in
       *"/.vite-plus/"*) echo "Current Pi uses Vite+: $current (migration needed)" ;;
       *)
-        if [ "$(pi --version 2>/dev/null || true)" = "0.80.6" ]; then
-          echo "Pi npm installation already active: $current (0.80.6)"
+        if [ "$(pi --version 2>/dev/null || true)" = "0.81.1" ]; then
+          echo "Pi npm installation already active: $current (0.81.1)"
           return 0
         fi
         echo "Current non-Vite+ Pi will be replaced: $current"
@@ -168,7 +168,7 @@ EOF
         echo "setup-pi-agent: npm installed Pi but no executable was found at $npm_pi" >&2
         exit 1
       }
-      [ "$($npm_pi --version)" = "0.80.6" ] || {
+      [ "$($npm_pi --version)" = "0.81.1" ] || {
         echo "setup-pi-agent: npm Pi version verification failed" >&2
         exit 1
       }
@@ -192,7 +192,7 @@ EOF
           exit 1
           ;;
       esac
-      [ "$(pi --version 2>/dev/null || true)" = "0.80.6" ] || {
+      [ "$(pi --version 2>/dev/null || true)" = "0.81.1" ] || {
         echo "setup-pi-agent: active Pi is not the pinned npm version" >&2
         exit 1
       }
@@ -248,6 +248,7 @@ Next steps (manual — this script does none of these):
   cp agent/settings.example.json agent/settings.json   # then edit provider/model
   cp agent/mcp.example.json      agent/mcp.json         # then edit MCP servers
   cd "$ROOT"
+  ./dot pi profiles --apply      # optional separate personal/work profiles
   ./dot pi subagents --apply     # optional pinned Pi-first delegation stack
   pi /reload
 EOF

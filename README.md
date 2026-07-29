@@ -263,15 +263,22 @@ scaffold checkout; a fork-local `templates/pi/` works as a fallback.
 ./dot pi doctor               # read-only checks
 ./dot pi scaffold --dry-run   # preview copy into ~/.pi (writes nothing)
 ./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
+./dot pi profiles --apply     # prepare separate personal/work profiles
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package setup
 ./dot pi subagents --apply    # install pi-subagents + pi-herdr (not pi-herd)
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
 Live config stays gitignored. Pi works
-directly by default and delegates only under the reviewed routing policy. See
-[`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for installation and
-operations.
+directly by default and delegates only under the reviewed routing policy. The
+profile setup keeps credentials/sessions separate, shares reviewed resources,
+and installs a Hermes rule that requires explicit profile selection for fresh
+Pi workers. Set `DOTFILES_PI_WORK_PROFILE_SLUG` in the gitignored local config
+to name the second profile without publishing the workstream name. In-process
+Pi Subagents inherit the parent profile; Hermes-native
+`delegate_task` children inherit Hermes provider credentials and are unrelated
+to Pi auth. See [`docs/pi-agent-setup.md`](docs/pi-agent-setup.md) for
+installation and operations.
 
 ## Obsidian Headless Sync (Optional)
 

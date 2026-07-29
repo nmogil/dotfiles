@@ -159,5 +159,36 @@ printf 'false\n' > "$TMP/failing.env"
 ) > "$TMP/out12" 2>/dev/null
 check "failed local.env restores shell state" "$(cat "$TMP/out12")" "1|off"
 
+# --- 13: Pi work profile has a portable default ----------------------------
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/does-not-exist.env"
+  unset DOTFILES_PI_WORK_PROFILE_SLUG 2>/dev/null || true
+  dotfiles_load_config
+  echo "$DOTFILES_PI_WORK_PROFILE_SLUG"
+) > "$TMP/out13" 2>/dev/null
+check "default Pi work profile slug" "$(cat "$TMP/out13")" "work"
+
+# --- 14: local Pi work profile slug is loaded -------------------------------
+printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' > "$TMP/pi-profile.env"
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/pi-profile.env"
+  unset DOTFILES_PI_WORK_PROFILE_SLUG 2>/dev/null || true
+  dotfiles_load_config
+  echo "$DOTFILES_PI_WORK_PROFILE_SLUG"
+) > "$TMP/out14" 2>/dev/null
+check "local Pi work profile slug" "$(cat "$TMP/out14")" "clientx"
+
+# --- 15: invalid Pi work profile slug falls back safely ---------------------
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/does-not-exist.env"
+  export DOTFILES_PI_WORK_PROFILE_SLUG="../private"
+  dotfiles_load_config
+  echo "$DOTFILES_PI_WORK_PROFILE_SLUG"
+) > "$TMP/out15" 2>/dev/null
+check "invalid Pi work profile slug" "$(cat "$TMP/out15")" "work"
+
 echo "== local-env tests: $pass pass, $fail fail =="
 [ "$fail" -eq 0 ]
