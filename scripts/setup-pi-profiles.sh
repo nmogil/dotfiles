@@ -79,10 +79,13 @@ EOF
   exit 0
 fi
 
-ACCOUNT_EXTENSION_SOURCE="$ROOT/templates/pi/agent/extensions/account-profile-indicator.ts"
-PI_ACCOUNT_SKILL_SOURCE="$ROOT/templates/pi/agent/skills/coding-agent-account-routing/SKILL.md"
-WORK_MODELS_SOURCE="$ROOT/templates/pi/agent/models.work.example.json"
-GENERIC_CLOAK_SOURCE="$ROOT/templates/pi/agent/cloak.json"
+# The scaffold is not tracked in this public repo; resolve it the same way as
+# setup-pi-agent.sh (DOTFILES_PI_SCAFFOLD_DIR, fork-local templates/pi fallback).
+SCAFFOLD="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
+ACCOUNT_EXTENSION_SOURCE="$SCAFFOLD/agent/extensions/account-profile-indicator.ts"
+PI_ACCOUNT_SKILL_SOURCE="$SCAFFOLD/agent/skills/coding-agent-account-routing/SKILL.md"
+WORK_MODELS_SOURCE="$SCAFFOLD/agent/models.work.example.json"
+GENERIC_CLOAK_SOURCE="$SCAFFOLD/agent/cloak.json"
 HERMES_SKILL_SOURCE="$ROOT/templates/hermes/skills/software-development/coding-agent-account-routing/SKILL.md"
 
 fail() {

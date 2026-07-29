@@ -1,9 +1,16 @@
 # Pi agent setup (opt-in)
 
-An opt-in scaffold for a [Pi coding agent](https://github.com/mariozechner/pi)
-workspace, adapted from [dmmulroy/.dotfiles](https://github.com/dmmulroy/dotfiles).
-It is **not** applied by `setup.sh` / `setup-linux.sh`; you install it deliberately.
-Provenance and reuse terms are unresolved — see [`licensing.md`](licensing.md).
+An opt-in installer for a [Pi coding agent](https://github.com/mariozechner/pi)
+workspace. It is **not** applied by `setup.sh` / `setup-linux.sh`; you install
+it deliberately.
+
+The scaffold content itself is **not tracked in this repo**: it was adapted
+from [dmmulroy/.dotfiles](https://github.com/dmmulroy/.dotfiles), which grants
+no license, so it lives outside the public tree — see
+[`licensing.md`](licensing.md). Point `DOTFILES_PI_SCAFFOLD_DIR` in
+`~/.config/dotfiles/local.env` at a local checkout of your scaffold (for the
+author, a private companion repo); a fork-local `templates/pi/` is used as the
+fallback when the variable is unset.
 
 ## TL;DR
 
@@ -17,8 +24,7 @@ Provenance and reuse terms are unresolved — see [`licensing.md`](licensing.md)
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
-The scaffold lives in [`templates/pi/`](../templates/pi/). Its own
-[README](../templates/pi/README.md) covers the post-copy manual steps
+The scaffold's own README covers the post-copy manual steps
 (`npm install`, copy the `*.example.json` files, `pi /reload`).
 
 The example JSON field names are intentionally conservative and may need to be
@@ -124,7 +130,7 @@ Install it into an existing personal profile with:
 ```bash
 PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
   pi install npm:@ogulcancelik/pi-codex-compaction@0.1.0
-cp templates/pi/agent/pi-codex-compaction.json \
+cp "$DOTFILES_PI_SCAFFOLD_DIR/agent/pi-codex-compaction.json" \
   "$HOME/.pi/agent/pi-codex-compaction.json"
 ```
 

@@ -2,9 +2,15 @@
 # setup-pi-agent.sh — opt-in installer for the Pi coding agent scaffold.
 #
 # Safe by default: with no flags it does a DRY RUN and writes nothing. It copies
-# the inert scaffold from templates/pi/ into ${PI_HOME:-$HOME/.pi} only with
-# --apply, and never overwrites an existing file unless you pass --force (which
-# backs the file up first). It can optionally install the pi CLI with --install.
+# the inert scaffold into ${PI_HOME:-$HOME/.pi} only with --apply, and never
+# overwrites an existing file unless you pass --force (which backs the file up
+# first). It can optionally install the pi CLI with --install.
+#
+# The scaffold itself is NOT tracked in this public repo (its upstream carries
+# no license grant — see docs/licensing.md). Point DOTFILES_PI_SCAFFOLD_DIR in
+# ~/.config/dotfiles/local.env at a local checkout of your scaffold (e.g. a
+# private companion repo). A templates/pi/ directory in this repo, if you add
+# one in a fork, is used as the fallback.
 #
 # It deliberately does NOT: run npm install, create your real settings.json /
 # mcp.json (copy the *.example.json yourself), or touch any auth/session state.
@@ -20,8 +26,23 @@ script_dir() {
 }
 
 ROOT="$(cd "$(script_dir)/.." && pwd)"
-SRC="$ROOT/templates/pi"
+# shellcheck source=lib/local-env.sh
+. "$ROOT/scripts/lib/local-env.sh"
+dotfiles_load_config
+
+SRC="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
 DEST="${PI_HOME:-$HOME/.pi}"
+
+require_scaffold() {
+  [ -f "$SRC/package.json" ] && return 0
+  cat >&2 <<EOF
+setup-pi-agent: no scaffold found at: $SRC
+The scaffold is not tracked in this repo. Set DOTFILES_PI_SCAFFOLD_DIR in
+~/.config/dotfiles/local.env to a local checkout of your Pi scaffold, or add
+your own templates/pi/ in a fork.
+EOF
+  exit 1
+}
 
 APPLY=0 FORCE=0 INSTALL=0
 usage() {
@@ -32,7 +53,7 @@ Usage: scripts/setup-pi-agent.sh [--apply] [--force] [--install] [--dry-run]
 
   (no flags)   Dry run: show what would be copied. Writes nothing.
   --dry-run    Same as no flags (explicit).
-  --apply      Copy templates/pi/ into \${PI_HOME:-\$HOME/.pi}, skipping files
+  --apply      Copy the scaffold into \${PI_HOME:-\$HOME/.pi}, skipping files
                that already exist.
   --force      With --apply: overwrite existing files, backing each up first
                to <file>.bak.<timestamp>.
@@ -186,7 +207,7 @@ if [ "$INSTALL" = 1 ]; then
   exit 0
 fi
 
-[ -d "$SRC" ] || { echo "setup-pi-agent: scaffold not found: $SRC" >&2; exit 1; }
+require_scaffold
 
 ts="$(date +%Y%m%d-%H%M%S)"
 mode="DRY RUN (no changes)"; [ "$APPLY" = 1 ] && mode="APPLY"

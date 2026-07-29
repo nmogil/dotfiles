@@ -4,7 +4,7 @@
 @anthropic-ai/claude-code
 @openai/codex
 @earendil-works/pi-coding-agent@0.81.1
-hunkdiff
+hunkdiff              # Linux path for hunk; macOS gets it from the Brewfile
 obsidian-headless
 
 # Pi is installed by `./dot pi install`, pinned there to the version verified

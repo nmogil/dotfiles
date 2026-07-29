@@ -4,6 +4,20 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# The scaffold is not tracked in this public repo. Use the caller's configured
+# source (or a fork-local templates/pi) and skip cleanly when neither exists —
+# the profile installer cannot run without its source assets.
+# shellcheck source=../lib/local-env.sh
+. "$ROOT/scripts/lib/local-env.sh"
+load_local_env || true
+SCAFFOLD="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
+if [ ! -f "$SCAFFOLD/agent/cloak.json" ]; then
+  printf '%s\n' 'skip Pi profiles test (no scaffold source; set DOTFILES_PI_SCAFFOLD_DIR)'
+  exit 0
+fi
+export DOTFILES_PI_SCAFFOLD_DIR="$SCAFFOLD"
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -31,7 +45,7 @@ test -d "$WORK"
 test ! -e "$WORK/auth.json"
 test "$(readlink -f "$WORK/extensions")" = "$(readlink -f "$PERSONAL/extensions")"
 test "$(readlink -f "$WORK/skills")" = "$(readlink -f "$PERSONAL/skills")"
-cmp -s "$ROOT/templates/pi/agent/cloak.json" "$WORK/cloak.json"
+cmp -s "$SCAFFOLD/agent/cloak.json" "$WORK/cloak.json"
 
 python3 - "$WORK/settings.json" "$WORK/models.json" <<'PY'
 import json

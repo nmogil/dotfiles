@@ -1,6 +1,10 @@
 # VPS Memory Guardrails
 
-This directory contains the source templates for the personal agent/development VPS.
+This directory contains the source templates for the personal agent/development
+VPS. **These are one machine's tuned values, not a general template** — the
+service names, memory bounds, and OOM scores match the author's box. If you're
+adapting them, treat each drop-in as an example of the pattern, not a
+recommendation of the numbers.
 
 The main goals are:
 

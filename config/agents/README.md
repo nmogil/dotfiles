@@ -1,8 +1,12 @@
 # Agent capability cleanup policy
 
-This directory describes the intended skill and plugin surface for local AI
-agents. It contains no credentials, provider endpoints, private MCP assignments,
-or runtime state.
+This directory documents the *policy* for managing skill and plugin surfaces
+across local AI agents. The actual manifests (`skills.json`, `plugins.json`)
+are personal, machine-specific snapshots and are **not tracked here** — keep
+them in a private location and point `DOTFILES_AGENT_POLICY_DIR` (in
+`~/.config/dotfiles/local.env`) at that directory. Only the policy prose and
+`mcp-policy.example.json` are tracked. Nothing here contains credentials,
+provider endpoints, private MCP assignments, or runtime state.
 
 The cleanup is deliberately staged:
 
