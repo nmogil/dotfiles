@@ -173,3 +173,7 @@ fe() {
   [ -n "$file" ] && ${EDITOR:-micro} "$file"
 }
 # --- end Noah remote dev DX ---
+
+# Machine-local shell config. Untracked on purpose — keep private hostnames,
+# session names, and per-machine aliases here, not in this repo.
+[ -f ~/.zshrc.local ] && source ~/.zshrc.local

@@ -71,6 +71,11 @@ processes. Documented keys (see
 | `PI_MEMORY_COMPILER_DIR` | Consumed by the Pi memory-compiler extension **only when exported into the Pi process environment** (e.g. your shell rc) or set in `~/.pi/agent/memory-compiler.json`; putting it in `local.env` alone does not reach Pi | `~/github_repos/personal/claude-memory-compiler` |
 | `DOTFILES_PI_BLOCKLIST` | Extra private-string regexes `./dot pi doctor` rejects in the Pi scaffold | `~/.config/dotfiles/pi-scaffold-blocklist.txt` |
 
+**Shell-level machine locals.** `local.env` is read by the repo's scripts, not by
+your interactive shell. For per-machine *shell* config — private hostnames,
+session names, one-off aliases — the tracked `.zshrc` sources `~/.zshrc.local`
+at the end if it exists. That file is outside the repo and never committed.
+
 **Migrating from an earlier personal checkout.** The tracked `.gitconfig` no
 longer carries an identity. Recreate yours locally (values below are
 placeholders — use your own):
