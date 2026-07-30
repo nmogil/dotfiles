@@ -25,6 +25,10 @@ COMPILER_DIR="${PI_MEMORY_COMPILER_DIR:-$HOME/github_repos/personal/claude-memor
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 MARKER="claude-memory-compiler"
 MODE="dry-run"
+# Bake the absolute uv path into the hook commands: Claude Code runs hooks via
+# /bin/sh with the launch environment, not an interactive shell, so a bare `uv`
+# breaks whenever uv lives on a shell-rc-only PATH (e.g. a pip --user install).
+UV_BIN="$(command -v uv 2>/dev/null || echo uv)"
 
 usage() {
   cat <<EOF
@@ -58,10 +62,10 @@ command -v jq >/dev/null 2>&1 || { echo "setup-claude-memory-hooks: jq is requir
 merged_settings() {
   local existing="{}"
   [ -f "$SETTINGS" ] && existing="$(cat "$SETTINGS")"
-  jq --arg dir "$COMPILER_DIR" --arg marker "$MARKER" '
+  jq --arg dir "$COMPILER_DIR" --arg marker "$MARKER" --arg uv "$UV_BIN" '
     def hook($script; $t):
       [{matcher: "", hooks: [{type: "command",
-        command: ("uv --project \"" + $dir + "\" run python \"" + $dir + "/hooks/" + $script + "\""),
+        command: ($uv + " --project \"" + $dir + "\" run python \"" + $dir + "/hooks/" + $script + "\""),
         timeout: $t}]}];
     def is_ours:
       contains($marker) or contains($dir)
