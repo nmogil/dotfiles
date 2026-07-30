@@ -46,6 +46,9 @@ Usage: ./dot <command> [args]
   agents inventory     List capability names without printing config values
   agents plan          Compare current capabilities with the cleanup policy
   agents check         Validate policy; assignments remain report-only
+  claude hooks [flags] Wire claude-memory-compiler capture hooks into
+                       ~/.claude/settings.json (--apply/--check/--dry-run;
+                       see docs/claude-memory-compiler.md)
   pi doctor            Read-only checks for the opt-in Pi agent scaffold
   pi scaffold [flags]  Install the Pi scaffold -> ~/.pi (--apply/--force/--dry-run;
                       source: DOTFILES_PI_SCAFFOLD_DIR in local.env)
@@ -255,6 +258,11 @@ case "$cmd" in
     case "${1:-}" in
       inventory|plan|check) run scripts/manage-agents.sh "$@" ;;
       *) echo "dot: agents needs 'inventory', 'plan', or 'check'" >&2; usage; exit 1 ;;
+    esac ;;
+  claude)
+    case "${1:-}" in
+      hooks) shift; run scripts/setup-claude-memory-hooks.sh "$@" ;;
+      *) echo "dot: claude needs 'hooks'" >&2; usage; exit 1 ;;
     esac ;;
   pi)
     case "${1:-}" in

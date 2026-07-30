@@ -129,6 +129,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `packages/` | Package manifests split by role + `./dot packages check` |
 | `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
 | `scripts/setup-pi-agent.sh` | Opt-in Pi workspace installer (`./dot pi ...`, `docs/pi-agent-setup.md`); the scaffold itself lives outside this repo |
+| `scripts/setup-claude-memory-hooks.sh` | Opt-in Claude Code capture hooks for the memory compiler (`./dot claude hooks`, `docs/claude-memory-compiler.md`) |
 | `Brewfile` | Homebrew packages and casks (macOS) |
 | `.zshrc` | Zsh configuration with Oh My Zsh |
 | `.p10k.zsh` | Powerlevel10k theme configuration |
