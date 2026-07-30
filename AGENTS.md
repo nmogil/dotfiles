@@ -33,6 +33,7 @@ and dispatches to them.
 | Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
+| Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
 
 Package manifests under `packages/` are documentation + input for
@@ -68,10 +69,12 @@ Package manifests under `packages/` are documentation + input for
 
 ```bash
 bash -n dot scripts/doctor.sh scripts/setup-pi-agent.sh \
-  scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh setup.sh setup-linux.sh clone-repos.sh \
+  scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
+  setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh      # local override + portable defaults
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
+bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
 ./dot packages check                      # installed vs declared packages
