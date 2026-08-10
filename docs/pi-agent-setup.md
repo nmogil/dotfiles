@@ -51,7 +51,7 @@ an authoritative Pi schema.
 | `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
 | `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.2`; migrates legacy local stacks |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
-| `agent/settings.example.json` | Credential-free defaults with a reviewed, version-pinned Codex compaction package; real file is gitignored |
+| `agent/settings.example.json` | Credential-free defaults with reviewed, pinned web access and Codex compaction packages; real file is gitignored |
 | `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage and shows a notification when it runs |
 | `agent/models.work.example.json` | Credential-free work-profile detail-name template; model IDs and routing stay unchanged |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
@@ -131,6 +131,17 @@ PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
   pi install npm:@ogulcancelik/pi-codex-compaction@0.1.1
 cp "$DOTFILES_PI_SCAFFOLD_DIR/agent/pi-codex-compaction.json" \
   "$HOME/.pi/agent/pi-codex-compaction.json"
+```
+
+## Defuddle-backed web extraction
+
+The personal-profile settings example pins the reviewed `nmogil/pi-web-access` fork at commit `37e2ca20d194d8b8d7ee6b1538922684b2bf95ad`. The fork replaces the local HTML Readability + Turndown pipeline with Defuddle 0.19.2, while disabling Defuddle's asynchronous network extractors so outbound requests remain inside `fetch_content`'s SSRF-checked provider chain.
+
+Install the same immutable package in an existing profile with:
+
+```bash
+PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
+  pi install git:github.com/nmogil/pi-web-access@37e2ca20d194d8b8d7ee6b1538922684b2bf95ad
 ```
 
 ## Installing Pi subagents
