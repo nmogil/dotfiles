@@ -24,7 +24,8 @@ trap 'rm -rf "$TMP"' EXIT
 PERSONAL="$TMP/.pi/agent"
 WORK="$TMP/.pi/agent-clientx"
 mkdir -p "$PERSONAL/extensions" "$PERSONAL/skills" "$PERSONAL/themes" \
-  "$PERSONAL/npm" "$TMP/.config/dotfiles"
+  "$PERSONAL/npm" "$PERSONAL/pi-codex-subagents/agents" \
+  "$TMP/.config/dotfiles"
 
 cat > "$PERSONAL/settings.json" <<'JSON'
 {
@@ -35,6 +36,10 @@ cat > "$PERSONAL/settings.json" <<'JSON'
 JSON
 printf '%s\n' '{"privateMarker":"must-not-cross-profile-boundary"}' > "$PERSONAL/cloak.json"
 printf '%s\n' '{"anthropic":{"type":"api_key","key":"must-not-copy"}}' > "$PERSONAL/auth.json"
+printf '%s\n' '{"retentionDays":7}' > "$PERSONAL/pi-codex-subagents/config.json"
+printf '%s\n' 'child system prompt' > "$PERSONAL/pi-codex-subagents/SYSTEM.md"
+printf '%s\n' '---' 'name: engineer' '---' 'engineer' \
+  > "$PERSONAL/pi-codex-subagents/agents/engineer.md"
 printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' > "$TMP/.config/dotfiles/local.env"
 
 HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
@@ -45,6 +50,14 @@ test -d "$WORK"
 test ! -e "$WORK/auth.json"
 test "$(readlink -f "$WORK/extensions")" = "$(readlink -f "$PERSONAL/extensions")"
 test "$(readlink -f "$WORK/skills")" = "$(readlink -f "$PERSONAL/skills")"
+test ! -L "$WORK/pi-codex-subagents"
+test "$(readlink -f "$WORK/pi-codex-subagents/agents")" = \
+  "$(readlink -f "$PERSONAL/pi-codex-subagents/agents")"
+test "$(readlink -f "$WORK/pi-codex-subagents/SYSTEM.md")" = \
+  "$(readlink -f "$PERSONAL/pi-codex-subagents/SYSTEM.md")"
+test "$(readlink -f "$WORK/pi-codex-subagents/config.json")" = \
+  "$(readlink -f "$PERSONAL/pi-codex-subagents/config.json")"
+test ! -e "$WORK/pi-codex-subagents/runs"
 cmp -s "$SCAFFOLD/agent/cloak.json" "$WORK/cloak.json"
 
 python3 - "$WORK/settings.json" "$WORK/models.json" <<'PY'

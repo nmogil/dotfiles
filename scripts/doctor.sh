@@ -38,13 +38,15 @@ else
 fi
 
 required=(setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh \
-         Brewfile .zshrc .gitconfig .p10k.zsh .tmux.conf config/hunk/config.toml config/ghostty/config)
+         Brewfile .zshrc .gitconfig .p10k.zsh .tmux.conf config/hunk/config.toml config/ghostty/config \
+         templates/herdr/config.toml templates/herdr/plugins/config/persiyanov.reviewr/config.toml \
+         templates/hermes/config.portable.yaml)
 for f in "${required[@]}"; do
   if [ -e "$ROOT/$f" ]; then PASS "config present: $f"; else FAIL "missing required file: $f"; fi
 done
 
 # --- scripts executable ---
-for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/tests/local-env.test.sh scripts/tests/pi-profiles.test.sh; do
+for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
   [ -e "$ROOT/$s" ] || continue
   if [ -x "$ROOT/$s" ]; then PASS "executable: $s"; else WARN "not executable: $s (chmod +x $s)"; fi
 done
@@ -71,6 +73,26 @@ echo "-- agent & sync tooling (optional) --"
 for tool in chezmoi herdr claude codex hunk ob tailscale pi; do
   if have "$tool"; then PASS "$tool present"; else WARN "$tool missing"; fi
 done
+if [ "$DOTFILES_ENABLE_HERMES" = 1 ]; then
+  have hermes && PASS "hermes present (enabled VPS host)" || WARN "hermes missing on enabled VPS host"
+else
+  PASS "Hermes disabled for this non-VPS host"
+fi
+
+if "$ROOT/scripts/setup-herdr-config.sh" --check >/dev/null 2>&1; then
+  PASS "Herdr portable config matches"
+else
+  WARN "Herdr portable config drift (run: ./dot herdr config --apply)"
+fi
+if [ "$DOTFILES_ENABLE_HERMES" = 1 ]; then
+  if "$ROOT/scripts/setup-hermes-config.sh" --check >/dev/null 2>&1; then
+    PASS "Hermes portable config matches"
+  else
+    WARN "Hermes portable config drift (run: ./dot hermes config --apply)"
+  fi
+else
+  PASS "Hermes config check skipped (disabled for this host)"
+fi
 
 echo
 echo "-- repo buckets under \${GITHUB_REPOS_DIR:-\$HOME/github_repos} --"

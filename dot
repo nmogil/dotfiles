@@ -29,6 +29,16 @@ run() {  # run <script> [args...] — fail clearly if the script is missing
   exec bash "$script" "$@"
 }
 
+pi_uses_npm_layout() {
+  local pi_path="$1" resolved
+  command -v node >/dev/null 2>&1 || return 1
+  resolved="$(node -e 'const fs = require("node:fs"); try { process.stdout.write(fs.realpathSync(process.argv[1])); } catch { process.exit(1); }' "$pi_path" 2>/dev/null || true)"
+  case "$resolved" in
+    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 usage() {
   cat <<'EOF'
 dot — dotfiles control surface
@@ -49,11 +59,13 @@ Usage: ./dot <command> [args]
   claude hooks [flags] Wire claude-memory-compiler capture hooks into
                        ~/.claude/settings.json (--apply/--check/--dry-run;
                        see docs/claude-memory-compiler.md)
+  herdr config [flags] Apply/check portable Herdr + Reviewr preferences
+  hermes config [flags] Deep-merge/check credential-free Hermes preferences
   pi doctor            Read-only checks for the opt-in Pi agent scaffold
   pi scaffold [flags]  Install the Pi scaffold -> ~/.pi (--apply/--force/--dry-run;
                       source: DOTFILES_PI_SCAFFOLD_DIR in local.env)
   pi profiles [flags]  Prepare/check personal + work profiles (--apply/--check/--dry-run)
-  pi subagents [flags] Install/check pinned Pi subagents (--apply/--check/--dry-run)
+  pi subagents [flags] Install/check pinned Pi Codex subagents (--apply/--check/--dry-run)
   pi install           Install the pi CLI (opt-in; prompts before running)
   chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
                        read-only subcommands like `diff` are non-mutating.
@@ -85,15 +97,17 @@ packages_check() {
     any=1; echo "-- npm.global --"
     while read -r pkg; do
       pkg="${pkg%%#*}"; pkg="$(echo "$pkg" | tr -d '[:space:]')"; [ -n "$pkg" ] || continue
-      if [ "$pkg" = "@earendil-works/pi-coding-agent@0.81.1" ]; then
+      if [ "$pkg" = "@earendil-works/pi-coding-agent@0.84.1" ]; then
         pi_path="$(command -v pi 2>/dev/null || true)"
         pi_version="$(pi --version 2>/dev/null || true)"
         case "$pi_path" in
           *"/.vite-plus/"*) echo "  MISS $pkg (Pi still uses Vite+ layout)" ;;
           "") echo "  MISS $pkg" ;;
           *)
-            if [ "$pi_version" = "0.81.1" ]; then
+            if [ "$pi_version" = "0.84.1" ] && pi_uses_npm_layout "$pi_path"; then
               echo "  ok   $pkg ($pi_version)"
+            elif [ "$pi_version" = "0.84.1" ]; then
+              echo "  MISMATCH $pkg (Pi is not the required npm package layout: $pi_path)"
             else
               echo "  MISMATCH $pkg (active Pi: ${pi_version:-unknown} at $pi_path)"
             fi
@@ -122,10 +136,12 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     case "$pi_bin" in
       *"/.vite-plus/"*) echo "  WARN Pi uses Vite+ layout; run ./dot pi install before subagents" ;;
       *)
-        if [ "$pi_version" = "0.81.1" ]; then
+        if [ "$pi_version" = "0.84.1" ] && pi_uses_npm_layout "$pi_bin"; then
           echo "  ok   pinned Pi CLI present: $pi_bin ($pi_version)"
+        elif [ "$pi_version" = "0.84.1" ]; then
+          echo "  WARN Pi 0.84.1 is not the required npm package layout: $pi_bin"
         else
-          echo "  WARN Pi version mismatch: expected 0.81.1, found ${pi_version:-unknown} at $pi_bin"
+          echo "  WARN Pi version mismatch: expected 0.84.1, found ${pi_version:-unknown} at $pi_bin"
         fi
         ;;
     esac
@@ -137,23 +153,16 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     [ -f "$scaffold/agent/skills/subagent-routing/SKILL.md" ] \
       && echo "  ok   direct-first subagent routing policy present" \
       || echo "  MISS subagent routing policy missing"
-    [ -f "$scaffold/agent/agents/engineer.md" ] \
-      && [ -f "$scaffold/agent/agents/architect.md" ] \
-      && [ -f "$scaffold/agent/agents/analyst.md" ] \
-      && [ -f "$scaffold/agent/agents/sol-reviewer.md" ] \
-      && echo "  ok   task/model agent profiles present" \
-      || echo "  MISS task/model agent profiles missing"
-    [ -f "$scaffold/agent/subagents.json" ] \
-      && [ -f "$scaffold/agent/agent-tool-description.md" ] \
-      && echo "  ok   subagent defaults and tool guidance present" \
-      || echo "  MISS subagent defaults or tool guidance missing"
-  fi
-  [ -f "$DOT_ROOT/scripts/setup-pi-subagents.sh" ] \
-    && echo "  ok   pinned subagent installer present" \
-    || echo "  MISS pinned subagent installer missing"
-  if [ -f "$scaffold/package.json" ]; then
+    [ -f "$scaffold/agent/pi-codex-subagents/SYSTEM.md" ] \
+      && [ -f "$scaffold/agent/pi-codex-subagents/config.json" ] \
+      && [ -f "$scaffold/agent/pi-codex-subagents/agents/engineer.md" ] \
+      && [ -f "$scaffold/agent/pi-codex-subagents/agents/architect.md" ] \
+      && [ -f "$scaffold/agent/pi-codex-subagents/agents/analyst.md" ] \
+      && [ -f "$scaffold/agent/pi-codex-subagents/agents/sol-reviewer.md" ] \
+      && echo "  ok   Codex subagent prompt, config, and templates present" \
+      || echo "  MISS Codex subagent prompt, config, or templates missing"
     [ -f "$scaffold/agent/pi-codex-compaction.json" ] \
-      && grep -Fq 'npm:@ogulcancelik/pi-codex-compaction@0.1.0' \
+      && grep -Fq 'npm:@ogulcancelik/pi-codex-compaction@0.1.1' \
         "$scaffold/agent/settings.example.json" \
       && echo "  ok   pinned Codex compaction config present" \
       || echo "  MISS pinned Codex compaction config missing"
@@ -165,6 +174,9 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
       && echo "  ok   personal/work profile assets present" \
       || echo "  MISS personal/work profile assets missing"
   fi
+  [ -f "$DOT_ROOT/scripts/setup-pi-subagents.sh" ] \
+    && echo "  ok   pinned subagent installer present" \
+    || echo "  MISS pinned subagent installer missing"
   if [ -d "$dest" ]; then
     echo "  ok   \$PI_HOME exists: $dest"
     [ -f "$dest/package.json" ] && echo "  ok   ~/.pi/package.json present" \
@@ -201,7 +213,13 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     echo "  --   scaffold secret scan skipped (no scaffold source)"
     return "$rc"
   fi
-  offender=$(grep -rIlE "$pattern" "$scaffold" 2>/dev/null || true)
+  offender=$(find "$scaffold" -type f \
+    ! -path '*/.git/*' \
+    ! -path '*/node_modules/*' \
+    ! -path '*/npm/*' \
+    ! -path '*/.cache/*' \
+    ! -path '*/sessions/*' \
+    -exec grep -IlE "$pattern" {} + 2>/dev/null || true)
   if [ -z "$offender" ]; then
     echo "  ok   scaffold free of known private strings/live secrets"
   else
@@ -263,6 +281,16 @@ case "$cmd" in
     case "${1:-}" in
       hooks) shift; run scripts/setup-claude-memory-hooks.sh "$@" ;;
       *) echo "dot: claude needs 'hooks'" >&2; usage; exit 1 ;;
+    esac ;;
+  herdr)
+    case "${1:-}" in
+      config) shift; run scripts/setup-herdr-config.sh "$@" ;;
+      *) echo "dot: herdr needs 'config'" >&2; usage; exit 1 ;;
+    esac ;;
+  hermes)
+    case "${1:-}" in
+      config) shift; run scripts/setup-hermes-config.sh "$@" ;;
+      *) echo "dot: hermes needs 'config'" >&2; usage; exit 1 ;;
     esac ;;
   pi)
     case "${1:-}" in

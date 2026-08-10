@@ -190,5 +190,32 @@ check "local Pi work profile slug" "$(cat "$TMP/out14")" "clientx"
 ) > "$TMP/out15" 2>/dev/null
 check "invalid Pi work profile slug" "$(cat "$TMP/out15")" "work"
 
+# --- 16: Hermes is disabled by default and only accepts an explicit 1 -------
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/does-not-exist.env"
+  unset DOTFILES_ENABLE_HERMES 2>/dev/null || true
+  dotfiles_load_config
+  echo "$DOTFILES_ENABLE_HERMES"
+) > "$TMP/out16a" 2>/dev/null
+check "Hermes disabled by default" "$(cat "$TMP/out16a")" "0"
+printf '%s\n' 'DOTFILES_ENABLE_HERMES=1' > "$TMP/hermes-vps.env"
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/hermes-vps.env"
+  unset DOTFILES_ENABLE_HERMES 2>/dev/null || true
+  dotfiles_load_config
+  echo "$DOTFILES_ENABLE_HERMES"
+) > "$TMP/out16b" 2>/dev/null
+check "Hermes enabled only by VPS override" "$(cat "$TMP/out16b")" "1"
+(
+  . "$LIB"
+  export DOTFILES_LOCAL_ENV="$TMP/does-not-exist.env"
+  export DOTFILES_ENABLE_HERMES="yes"
+  dotfiles_load_config
+  echo "$DOTFILES_ENABLE_HERMES"
+) > "$TMP/out16c" 2>/dev/null
+check "invalid Hermes host flag falls back disabled" "$(cat "$TMP/out16c")" "0"
+
 echo "== local-env tests: $pass pass, $fail fail =="
 [ "$fail" -eq 0 ]
