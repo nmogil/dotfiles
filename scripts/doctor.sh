@@ -70,19 +70,28 @@ fi
 
 echo
 echo "-- agent & sync tooling (optional) --"
-for tool in chezmoi herdr hermes claude codex hunk ob tailscale pi; do
+for tool in chezmoi herdr claude codex hunk ob tailscale pi; do
   if have "$tool"; then PASS "$tool present"; else WARN "$tool missing"; fi
 done
+if [ "$DOTFILES_ENABLE_HERMES" = 1 ]; then
+  have hermes && PASS "hermes present (enabled VPS host)" || WARN "hermes missing on enabled VPS host"
+else
+  PASS "Hermes disabled for this non-VPS host"
+fi
 
 if "$ROOT/scripts/setup-herdr-config.sh" --check >/dev/null 2>&1; then
   PASS "Herdr portable config matches"
 else
   WARN "Herdr portable config drift (run: ./dot herdr config --apply)"
 fi
-if "$ROOT/scripts/setup-hermes-config.sh" --check >/dev/null 2>&1; then
-  PASS "Hermes portable config matches"
+if [ "$DOTFILES_ENABLE_HERMES" = 1 ]; then
+  if "$ROOT/scripts/setup-hermes-config.sh" --check >/dev/null 2>&1; then
+    PASS "Hermes portable config matches"
+  else
+    WARN "Hermes portable config drift (run: ./dot hermes config --apply)"
+  fi
 else
-  WARN "Hermes portable config drift (run: ./dot hermes config --apply)"
+  PASS "Hermes config check skipped (disabled for this host)"
 fi
 
 echo

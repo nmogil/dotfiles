@@ -218,8 +218,8 @@ Component groups (each is `[Y/n]` in Custom mode):
 11. **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
 12. **Codex CLI** — `npm install -g @openai/codex`
 13. **Herdr** — agent session cockpit, official installer (`curl -fsSL https://herdr.dev/install.sh | sh`)
-14. **Herdr integrations/config** — `herdr integration install pi|claude|codex|hermes` (skips agents not on PATH), Reviewr, the Codex detection patch, portable Herdr preferences, the Hermes `herdr` skill, and portable Hermes preferences when Hermes is present
-15. **Hunk** — `npm install -g hunkdiff` diff-review TUI, copies `config/hunk/config.toml`, symlinks the bundled `hunk-review` skill into `~/.claude/skills/`, and installs the Hermes skill (non-fatal)
+14. **Herdr integrations/config** — Pi/Claude/Codex integrations, Reviewr, the Codex detection patch, and portable Herdr preferences; Hermes integration/config is VPS-only behind `DOTFILES_ENABLE_HERMES=1`
+15. **Hunk** — `npm install -g hunkdiff` diff-review TUI, copies `config/hunk/config.toml`, symlinks the bundled `hunk-review` skill into `~/.claude/skills/`, and installs its Hermes skill only on an enabled Hermes VPS
 16. **lazygit** — latest release binary
 17. **flyctl**
 18. **ngrok** — official apt repo
@@ -272,7 +272,7 @@ scaffold checkout; a fork-local `templates/pi/` works as a fallback.
 ./dot pi subagents --apply    # install pinned @ogulcancelik/pi-codex-subagents
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ./dot herdr config --apply    # install exact Herdr + Reviewr preferences
-./dot hermes config --apply   # deep-merge portable Hermes preferences
+# VPS only (DOTFILES_ENABLE_HERMES=1): ./dot hermes config --apply
 ```
 
 Live config stays gitignored. Pi works

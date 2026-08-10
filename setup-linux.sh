@@ -279,11 +279,11 @@ if should_install "Herdr (agent session cockpit — https://herdr.dev)"; then
 fi
 
 # -----------------------------------------------------------------------------
-# Step 7e: Herdr integrations/config + Reviewr + Hermes portable config
-# Runs after Claude/Codex install; Hermes is installed separately, so its
-# integration, skill, and config are skipped (non-fatally) when hermes is absent.
+# Step 7e: Herdr integrations/config + Reviewr + optional VPS Hermes config
+# Runs after Claude/Codex install. Hermes is VPS-only and is touched only when
+# DOTFILES_ENABLE_HERMES=1; the default workstation role never invokes it.
 # -----------------------------------------------------------------------------
-if should_install "Herdr integrations (pi, claude, codex, hermes) + portable configs + Reviewr"; then
+if should_install "Herdr integrations (pi, claude, codex; optional VPS hermes) + portable configs + Reviewr"; then
     section "Herdr integrations"
     HERDR_BIN="$(command -v herdr || true)"
     [ -z "$HERDR_BIN" ] && [ -x "$HOME/.local/bin/herdr" ] && HERDR_BIN="$HOME/.local/bin/herdr"
@@ -291,7 +291,7 @@ if should_install "Herdr integrations (pi, claude, codex, hermes) + portable con
         log "herdr not found — skipping integrations (re-run after installing Herdr)"
     else
         # Herdr's installer is idempotent and preserves existing hooks/settings.
-        for agent in pi claude codex hermes; do
+        for agent in pi claude codex; do
             if command -v "$agent" &> /dev/null; then
                 run "$HERDR_BIN" integration install "$agent" \
                     || log "herdr integration install $agent failed — re-run manually later"
@@ -299,6 +299,10 @@ if should_install "Herdr integrations (pi, claude, codex, hermes) + portable con
                 log "$agent not on PATH — skipping its Herdr integration"
             fi
         done
+        if [ "$DOTFILES_ENABLE_HERMES" = 1 ] && command -v hermes &> /dev/null; then
+            run "$HERDR_BIN" integration install hermes \
+                || log "herdr integration install hermes failed — re-run manually later"
+        fi
         run bash "$DOTFILES_DIR/server/scripts/patch-herdr-codex-detection.sh" \
             || log "Codex detection patch failed — re-run server/scripts/patch-herdr-codex-detection.sh later"
 
@@ -312,7 +316,9 @@ if should_install "Herdr integrations (pi, claude, codex, hermes) + portable con
     fi
 
     HERDR_SKILL_URL="https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md"
-    if ! command -v hermes &> /dev/null; then
+    if [ "$DOTFILES_ENABLE_HERMES" != 1 ]; then
+        log "Hermes disabled for this host (VPS-only; set DOTFILES_ENABLE_HERMES=1 on a Hermes VPS)"
+    elif ! command -v hermes &> /dev/null; then
         log "hermes not installed — after installing it, run: hermes skills install $HERDR_SKILL_URL"
     elif hermes skills list 2>/dev/null | grep -qw herdr; then
         log "Hermes herdr skill already installed"
@@ -321,7 +327,7 @@ if should_install "Herdr integrations (pi, claude, codex, hermes) + portable con
             || log "Hermes herdr skill install failed (Hermes not authenticated yet?) — run manually: hermes skills install $HERDR_SKILL_URL"
     fi
 
-    if command -v hermes &> /dev/null; then
+    if [ "$DOTFILES_ENABLE_HERMES" = 1 ] && command -v hermes &> /dev/null; then
         run hermes config migrate \
             || log "Hermes config migration failed — run: hermes config migrate"
         run bash "$DOTFILES_DIR/scripts/setup-hermes-config.sh" --apply
@@ -365,7 +371,9 @@ if should_install "Hunk (npm install -g hunkdiff) + config + Claude/Hermes hunk-
 
         # Hermes skill — non-fatal, mirrors the Herdr skill pattern above
         HUNK_SKILL_URL="https://raw.githubusercontent.com/modem-dev/hunk/main/skills/hunk-review/SKILL.md"
-        if ! command -v hermes &> /dev/null; then
+        if [ "$DOTFILES_ENABLE_HERMES" != 1 ]; then
+            log "Hermes hunk-review skill skipped (Hermes disabled for this host)"
+        elif ! command -v hermes &> /dev/null; then
             log "hermes not installed — after installing it, run: hermes skills install $HUNK_SKILL_URL"
         elif hermes skills list 2>/dev/null | grep -qw hunk-review; then
             log "Hermes hunk-review skill already installed"

@@ -52,12 +52,20 @@ dotfiles_load_config() {
   load_local_env || true
   : "${DOTFILES_REPO_BUCKETS:=personal ventures external}"
   : "${DOTFILES_PI_WORK_PROFILE_SLUG:=work}"
+  : "${DOTFILES_ENABLE_HERMES:=0}"
+  case "$DOTFILES_ENABLE_HERMES" in
+    0|1) ;;
+    *)
+      printf 'local-env: invalid DOTFILES_ENABLE_HERMES; using 0\n' >&2
+      DOTFILES_ENABLE_HERMES=0
+      ;;
+  esac
   if ! dotfiles_is_valid_bucket_token "$DOTFILES_PI_WORK_PROFILE_SLUG" \
     || [ "$DOTFILES_PI_WORK_PROFILE_SLUG" = "personal" ]; then
     printf 'local-env: invalid Pi work profile slug; using work\n' >&2
     DOTFILES_PI_WORK_PROFILE_SLUG="work"
   fi
-  export DOTFILES_PI_WORK_PROFILE_SLUG
+  export DOTFILES_PI_WORK_PROFILE_SLUG DOTFILES_ENABLE_HERMES
   local cleaned="" tok had_noglob=0
   case "$-" in *f*) had_noglob=1 ;; esac
   set -f  # word-split only; never pathname-expand bucket tokens
