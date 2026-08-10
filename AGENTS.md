@@ -30,6 +30,8 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
+| Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
+| Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |
 | Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
@@ -61,18 +63,23 @@ Package manifests under `packages/` are documentation + input for
   public repo does not enumerate private strings. Real credential-bearing
   config is created locally and stays gitignored. Nothing installs into `~/.pi`
   or the Pi package list without an explicit `./dot pi ... --apply` command.
-- **Do not migrate agent/secret state into this repo:** `~/.hermes`, `~/.claude`,
-  `~/.codex`, `~/.ssh`, Obsidian vault internals, env/provider keys, generated
-  agent state. See `docs/chezmoi-plan.md` "Safe exclusions".
+- **Only migrate allowlisted agent preferences.** Herdr/Hermes portable templates
+  may contain credential-free UI/model/tool policy, but never copy whole
+  `~/.hermes`, `~/.config/herdr`, `~/.claude`, `~/.codex`, `~/.ssh`, Obsidian
+  vault internals, env/provider keys, private MCP endpoints, identities,
+  sessions, memories, caches, or generated agent state. See
+  `docs/agent-config-sync.md` and `docs/chezmoi-plan.md` "Safe exclusions".
 
 ## Verify changes
 
 ```bash
-bash -n dot scripts/doctor.sh scripts/setup-pi-agent.sh \
+bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh \
+  scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
-bash scripts/tests/local-env.test.sh      # local override + portable defaults
+bash scripts/tests/local-env.test.sh
+bash scripts/tests/agent-configs.test.sh      # local override + portable defaults
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
 ./dot doctor                              # read-only health check

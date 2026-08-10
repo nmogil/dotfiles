@@ -88,6 +88,15 @@ resolve_path() {
   printf '%s/%s\n' "$dir" "$(basename "$src")"
 }
 
+pi_uses_npm_layout() {
+  local resolved
+  resolved="$(resolve_path "$1" 2>/dev/null || true)"
+  case "$resolved" in
+    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 find_standalone_npm() {
   local dir node_bin npm_cli version
   if [ -n "${PI_NPM_NODE:-}" ] || [ -n "${PI_NPM_CLI:-}" ]; then
@@ -114,7 +123,7 @@ find_standalone_npm() {
 }
 
 install_cli() {
-  local package="@earendil-works/pi-coding-agent@0.81.1"
+  local package="@earendil-works/pi-coding-agent@0.84.1"
   local package_name="@earendil-works/pi-coding-agent"
   local current="" resolved="" npm_prefix="" npm_pi=""
   local NPM_NODE="" NPM_CLI=""
@@ -126,7 +135,7 @@ Pinned command:
   npm install -g $package
 
 The npm distribution is required for runtime-importing Pi extensions such as
-pi-subagents. The Vite+ global layout currently breaks those imports. This flow
+pi-codex-subagents. The Vite+ global layout currently breaks those imports. This flow
 uses Node.js >=22.19 and npm outside Vite+'s managed runtime. After a successful
 npm install, it removes only Vite+'s global Pi package; Vite+ itself and its
 project tooling remain installed.
@@ -139,11 +148,12 @@ EOF
     case "$current:$resolved" in
       *"/.vite-plus/"*) echo "Current Pi uses Vite+: $current (migration needed)" ;;
       *)
-        if [ "$(pi --version 2>/dev/null || true)" = "0.81.1" ]; then
-          echo "Pi npm installation already active: $current (0.81.1)"
+        if [ "$(pi --version 2>/dev/null || true)" = "0.84.1" ] \
+          && pi_uses_npm_layout "$current"; then
+          echo "Pi npm installation already active: $current (0.84.1)"
           return 0
         fi
-        echo "Current non-Vite+ Pi will be replaced: $current"
+        echo "Current Pi is not the pinned npm package and will be replaced: $current"
         ;;
     esac
   fi
@@ -168,8 +178,9 @@ EOF
         echo "setup-pi-agent: npm installed Pi but no executable was found at $npm_pi" >&2
         exit 1
       }
-      [ "$($npm_pi --version)" = "0.81.1" ] || {
-        echo "setup-pi-agent: npm Pi version verification failed" >&2
+      [ "$($npm_pi --version)" = "0.84.1" ] \
+        && pi_uses_npm_layout "$npm_pi" || {
+        echo "setup-pi-agent: npm Pi version/layout verification failed" >&2
         exit 1
       }
 
@@ -192,8 +203,9 @@ EOF
           exit 1
           ;;
       esac
-      [ "$(pi --version 2>/dev/null || true)" = "0.81.1" ] || {
-        echo "setup-pi-agent: active Pi is not the pinned npm version" >&2
+      [ "$(pi --version 2>/dev/null || true)" = "0.84.1" ] \
+        && pi_uses_npm_layout "$current" || {
+        echo "setup-pi-agent: active Pi is not the pinned npm version/layout" >&2
         exit 1
       }
       echo "Pi npm installation active: $(command -v pi) ($(pi --version))"
@@ -235,7 +247,9 @@ while IFS= read -r -d '' f; do
   else
     echo "  would  $rel"; copied=$((copied+1))
   fi
-done < <(find "$SRC" -type f -print0)
+done < <(find "$SRC" \
+  \( -type d \( -name .git -o -name node_modules -o -name .cache -o -name sessions -o -name npm \) -prune \) -o \
+  -type f -print0)
 
 echo
 if [ "$APPLY" = 1 ]; then

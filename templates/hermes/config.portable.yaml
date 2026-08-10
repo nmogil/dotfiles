@@ -1,0 +1,163 @@
+# Portable, credential-free Hermes preferences.
+# `./dot hermes config --apply` deep-merges these keys into ~/.hermes/config.yaml.
+# Secrets, gateway identities, MCP servers, auth, sessions, memories, and caches
+# remain machine-local and are never copied from this template.
+
+agent:
+  clarify_timeout: 600
+  coding_context: auto
+  max_turns: 90
+  reasoning_effort: medium
+  task_completion_guidance: true
+  tool_use_enforcement: auto
+
+approvals:
+  cron_mode: deny
+  destructive_slash_confirm: true
+  mcp_reload_confirm: true
+  mode: smart
+  timeout: 60
+
+compression:
+  abort_on_summary_failure: false
+  codex_gpt55_autoraise: true
+  enabled: true
+  hygiene_hard_message_limit: 400
+  protect_first_n: 3
+  protect_last_n: 20
+  target_ratio: 0.2
+  threshold: 0.5
+
+cron:
+  max_parallel_jobs: 2
+  wrap_response: true
+
+curator:
+  archive_after_days: 90
+  backup:
+    enabled: true
+    keep: 5
+  consolidate: false
+  enabled: true
+  interval_hours: 168
+  min_idle_hours: 2
+  prune_builtins: true
+  stale_after_days: 30
+
+delegation:
+  child_timeout_seconds: 600
+  inherit_mcp_toolsets: true
+  max_concurrent_children: 2
+  max_iterations: 50
+  max_spawn_depth: 1
+  orchestrator_enabled: true
+  subagent_auto_approve: false
+
+display:
+  background_process_notifications: all
+  bell_on_complete: false
+  busy_input_mode: interrupt
+  file_mutation_verifier: true
+  final_response_markdown: strip
+  inline_diffs: true
+  interface: tui
+  interim_assistant_messages: true
+  language: en
+  memory_notifications: "on"
+  persist_prompts: true
+  persistent_output: true
+  persistent_output_max_lines: 200
+  personality: kawaii
+  resume_display: full
+  resume_exchanges: 10
+  show_cost: false
+  show_reasoning: false
+  skin: pi-screenshot
+  streaming: true
+  timestamps: false
+  tool_preview_length: 0
+  tool_progress: all
+  tool_progress_grouping: accumulate
+  tui_agents_nudge: true
+  tui_auto_resume_recent: false
+  tui_compact: true
+  tui_status_indicator: unicode
+  tui_statusbar: bottom
+  turn_completion_explainer: true
+
+memory:
+  flush_min_turns: 6
+  memory_char_limit: 2200
+  memory_enabled: true
+  nudge_interval: 10
+  user_char_limit: 1375
+  user_profile_enabled: true
+  write_approval: false
+
+model:
+  default: gpt-5.6-sol
+  provider: openai-codex
+
+plugins:
+  enabled:
+    - herdr-agent-state
+    - spotify
+
+security:
+  allow_lazy_installs: true
+  allow_private_urls: false
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_fail_open: true
+  tirith_path: tirith
+  tirith_timeout: 5
+
+session_reset:
+  at_hour: 4
+  idle_minutes: 1440
+  mode: both
+
+sessions:
+  auto_prune: false
+  min_interval_hours: 24
+  retention_days: 90
+  vacuum_after_prune: true
+  write_json_snapshots: false
+
+skills:
+  creation_nudge_interval: 15
+  guard_agent_created: false
+  inline_shell: false
+  inline_shell_timeout: 10
+  template_vars: true
+  write_approval: false
+
+stt:
+  enabled: true
+  local:
+    language: ""
+    model: base
+  provider: local
+
+terminal:
+  auto_source_bashrc: true
+  backend: local
+  cwd: .
+  home_mode: auto
+  persistent_shell: true
+  timeout: 180
+
+timezone: Europe/London
+
+tool_output:
+  max_bytes: 50000
+  max_line_length: 2000
+  max_lines: 2000
+
+toolsets:
+  - hermes-cli
+
+tts:
+  edge:
+    voice: en-US-AriaNeural
+  provider: edge

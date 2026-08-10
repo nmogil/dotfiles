@@ -143,6 +143,9 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `config/dotfiles/local.env.example` | Template for machine-local overrides (copy to `~/.config/dotfiles/local.env`) |
 | `scripts/lib/local-env.sh` | Loader for the local config layer + portable defaults |
 | `scripts/tests/local-env.test.sh` | Focused test for override loading and defaults |
+| `templates/herdr/`, `scripts/setup-herdr-config.sh` | Portable Herdr/Reviewr preferences and drift-safe installer |
+| `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
+| `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -215,7 +218,7 @@ Component groups (each is `[Y/n]` in Custom mode):
 11. **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
 12. **Codex CLI** — `npm install -g @openai/codex`
 13. **Herdr** — agent session cockpit, official installer (`curl -fsSL https://herdr.dev/install.sh | sh`)
-14. **Herdr integrations** — `herdr integration install claude|codex|hermes` (skips agents not on PATH), plus the Codex detection manifest patch and the Hermes `herdr` skill (non-fatal if Hermes isn't installed/authenticated yet)
+14. **Herdr integrations/config** — `herdr integration install pi|claude|codex|hermes` (skips agents not on PATH), Reviewr, the Codex detection patch, portable Herdr preferences, the Hermes `herdr` skill, and portable Hermes preferences when Hermes is present
 15. **Hunk** — `npm install -g hunkdiff` diff-review TUI, copies `config/hunk/config.toml`, symlinks the bundled `hunk-review` skill into `~/.claude/skills/`, and installs the Hermes skill (non-fatal)
 16. **lazygit** — latest release binary
 17. **flyctl**
@@ -266,8 +269,10 @@ scaffold checkout; a fork-local `templates/pi/` works as a fallback.
 ./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
 ./dot pi profiles --apply     # prepare separate personal/work profiles
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package setup
-./dot pi subagents --apply    # install pi-subagents + pi-herdr (not pi-herd)
+./dot pi subagents --apply    # install pinned @ogulcancelik/pi-codex-subagents
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
+./dot herdr config --apply    # install exact Herdr + Reviewr preferences
+./dot hermes config --apply   # deep-merge portable Hermes preferences
 ```
 
 Live config stays gitignored. Pi works
@@ -335,14 +340,14 @@ or `ventures owner/some-app`. Herdr is the preferred project/session cockpit
 ## Herdr Agent Cockpit
 
 Herdr (<https://herdr.dev>) is the VPS session/agent orchestration layer —
-one persistent server hosting workspaces, panes, and agent sessions (Claude
+one persistent server hosting workspaces, panes, and agent sessions (Pi, Claude
 Code, Codex, Hermes), with agent state detection (idle/working/blocked).
 tmux remains installed as a fallback only.
 
 `setup-linux.sh` handles the full Herdr stack:
 
 1. **Herdr itself** — official stable installer, lands in `~/.local/bin/herdr`
-2. **Integrations** — `herdr integration install claude`, `codex`, and
+2. **Integrations** — `herdr integration install pi`, `claude`, `codex`, and
    `hermes` for whichever CLIs are on PATH. Herdr's installer is idempotent
    and preserves existing hooks/settings.
 3. **Codex detection patch** — `server/scripts/patch-herdr-codex-detection.sh`
@@ -351,7 +356,10 @@ tmux remains installed as a fallback only.
    "Update available" and "Hooks need review" screens classify as **blocked**
    instead of idle. Idempotent; re-run it if Herdr refreshes its remote
    manifests and the rules disappear.
-4. **Hermes `herdr` skill** — `hermes skills install
+4. **Reviewr and portable config** — installs `persiyanov/herdr-reviewr`, copies
+   the Vesper/keybinding profile from `templates/herdr/`, and deep-merges the
+   allowlisted Hermes preferences without copying secrets or runtime state.
+5. **Hermes `herdr` skill** — `hermes skills install
    https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md`,
    skipped with a log line if Hermes isn't installed or authenticated yet.
 

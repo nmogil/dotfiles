@@ -279,11 +279,11 @@ if should_install "Herdr (agent session cockpit — https://herdr.dev)"; then
 fi
 
 # -----------------------------------------------------------------------------
-# Step 7e: Herdr integrations + Hermes herdr skill + Codex detection patch
+# Step 7e: Herdr integrations/config + Reviewr + Hermes portable config
 # Runs after Claude/Codex install; Hermes is installed separately, so its
-# integration and skill are skipped (non-fatally) when hermes is absent.
+# integration, skill, and config are skipped (non-fatally) when hermes is absent.
 # -----------------------------------------------------------------------------
-if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr skill + Codex detection patch"; then
+if should_install "Herdr integrations (pi, claude, codex, hermes) + portable configs + Reviewr"; then
     section "Herdr integrations"
     HERDR_BIN="$(command -v herdr || true)"
     [ -z "$HERDR_BIN" ] && [ -x "$HOME/.local/bin/herdr" ] && HERDR_BIN="$HOME/.local/bin/herdr"
@@ -291,7 +291,7 @@ if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr ski
         log "herdr not found — skipping integrations (re-run after installing Herdr)"
     else
         # Herdr's installer is idempotent and preserves existing hooks/settings.
-        for agent in claude codex hermes; do
+        for agent in pi claude codex hermes; do
             if command -v "$agent" &> /dev/null; then
                 run "$HERDR_BIN" integration install "$agent" \
                     || log "herdr integration install $agent failed — re-run manually later"
@@ -301,6 +301,10 @@ if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr ski
         done
         run bash "$DOTFILES_DIR/server/scripts/patch-herdr-codex-detection.sh" \
             || log "Codex detection patch failed — re-run server/scripts/patch-herdr-codex-detection.sh later"
+
+        run "$HERDR_BIN" plugin install persiyanov/herdr-reviewr --yes \
+            || log "Reviewr plugin install failed — re-run: herdr plugin install persiyanov/herdr-reviewr --yes"
+        run bash "$DOTFILES_DIR/scripts/setup-herdr-config.sh" --apply
 
         mkdir -p "$HOME/.local/bin"
         run install -m 0755 "$DOTFILES_DIR/bin/reviewr" "$HOME/.local/bin/reviewr"
@@ -315,6 +319,12 @@ if should_install "Herdr integrations (claude, codex, hermes) + Hermes herdr ski
     else
         run hermes skills install --yes "$HERDR_SKILL_URL" \
             || log "Hermes herdr skill install failed (Hermes not authenticated yet?) — run manually: hermes skills install $HERDR_SKILL_URL"
+    fi
+
+    if command -v hermes &> /dev/null; then
+        run hermes config migrate \
+            || log "Hermes config migration failed — run: hermes config migrate"
+        run bash "$DOTFILES_DIR/scripts/setup-hermes-config.sh" --apply
     fi
 fi
 

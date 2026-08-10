@@ -173,7 +173,7 @@ check_profiles() {
     && echo "  ok     Pi account-routing skill" \
     || { echo "  MISS or stale Pi account-routing skill"; failed=1; }
 
-  for path in extensions skills themes npm agents; do
+  for path in extensions skills themes npm; do
     [ -e "$PERSONAL_DIR/$path" ] || continue
     if [ -L "$WORK_DIR/$path" ] \
       && [ "$(readlink -f "$WORK_DIR/$path")" = "$(readlink -f "$PERSONAL_DIR/$path")" ]; then
@@ -184,13 +184,17 @@ check_profiles() {
     fi
   done
 
-  for path in subagents.json agent-tool-description.md; do
-    [ -e "$PERSONAL_DIR/$path" ] || continue
-    if [ -L "$WORK_DIR/$path" ] \
-      && [ "$(readlink -f "$WORK_DIR/$path")" = "$(readlink -f "$PERSONAL_DIR/$path")" ]; then
-      echo "  ok     shared $path"
+  if [ -L "$WORK_DIR/pi-codex-subagents" ]; then
+    echo "  FAIL subagent runtime root must remain profile-local"
+    failed=1
+  fi
+  for path in agents SYSTEM.md config.json; do
+    [ -e "$PERSONAL_DIR/pi-codex-subagents/$path" ] || continue
+    if [ -L "$WORK_DIR/pi-codex-subagents/$path" ] \
+      && [ "$(readlink -f "$WORK_DIR/pi-codex-subagents/$path")" = "$(readlink -f "$PERSONAL_DIR/pi-codex-subagents/$path")" ]; then
+      echo "  ok     shared pi-codex-subagents/$path"
     else
-      echo "  MISS expected shared link: $WORK_DIR/$path"
+      echo "  MISS expected shared link: $WORK_DIR/pi-codex-subagents/$path"
       failed=1
     fi
   done
@@ -216,7 +220,7 @@ PY
 
   for path in .cache auth.json anthropic-oat-setup-token-state.json \
     anthropic-oauth-state.json mcp-cache.json mcp-oauth mcp-onboarding.json \
-    mcp.json sessions settings.json trust.json; do
+    mcp.json pi-codex-subagents/runs sessions settings.json trust.json; do
     if [ -L "$WORK_DIR/$path" ] \
       || { [ -e "$PERSONAL_DIR/$path" ] && [ -e "$WORK_DIR/$path" ] \
         && [ "$PERSONAL_DIR/$path" -ef "$WORK_DIR/$path" ]; }; then
@@ -253,11 +257,14 @@ case "$MODE" in
     install_file_if_safe "$PI_ACCOUNT_SKILL_SOURCE" \
       "$PERSONAL_DIR/skills/coding-agent-account-routing/SKILL.md" "Pi account-routing skill"
 
-    for path in extensions skills themes npm agents; do
+    for path in extensions skills themes npm; do
       share_path_if_present "$PERSONAL_DIR/$path" "$WORK_DIR/$path" "$path"
     done
-    for path in subagents.json agent-tool-description.md; do
-      share_path_if_present "$PERSONAL_DIR/$path" "$WORK_DIR/$path" "$path"
+    mkdir -p "$WORK_DIR/pi-codex-subagents"
+    chmod 700 "$WORK_DIR/pi-codex-subagents"
+    for path in agents SYSTEM.md config.json; do
+      share_path_if_present "$PERSONAL_DIR/pi-codex-subagents/$path" \
+        "$WORK_DIR/pi-codex-subagents/$path" "pi-codex-subagents/$path"
     done
 
     if [ ! -e "$WORK_DIR/settings.json" ] && [ ! -L "$WORK_DIR/settings.json" ]; then

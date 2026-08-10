@@ -20,7 +20,7 @@ fallback when the variable is unset.
 ./dot pi scaffold --apply     # copy scaffold (skips existing; --force backs up)
 ./dot pi profiles --apply     # prepare separate personal/work profiles
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package installation
-./dot pi subagents --apply    # install pi-subagents + pi-herdr from reviewed source
+./dot pi subagents --apply    # install the pinned Codex subagent package
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
@@ -48,9 +48,8 @@ an authoritative Pi schema.
 | `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
 | `agent/skills/coding-agent-account-routing/` | Personal/work inheritance and external-worker account boundary |
 | `agent/skills/subagent-routing/` | Direct-first delegation, model, placement, and fallback policy |
-| `agent/agents/` | Explicit Sol, Opus, Sonnet, and Fable worker profiles selected from the original user goal |
-| `agent/subagents.json`, `agent/agent-tool-description.md` | Deterministic subagent defaults and model-facing role guidance |
-| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `pi-subagents` and `pi-herdr` source; excludes incomplete mirrors |
+| `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
+| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.2`; migrates legacy local stacks |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Credential-free defaults with a reviewed, version-pinned Codex compaction package; real file is gitignored |
 | `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage and shows a notification when it runs |
@@ -118,7 +117,7 @@ selected Pi profile instead of launching bare `claude`.
 ## Codex native compaction
 
 The personal-profile settings example pins
-`@ogulcancelik/pi-codex-compaction@0.1.0`. The accompanying
+`@ogulcancelik/pi-codex-compaction@0.1.1`. The accompanying
 `agent/pi-codex-compaction.json` enables provider-native compaction at 90%
 context usage and displays a notification when it runs. It activates only for
 `openai-codex` models; the independent Anthropic work profile is unaffected.
@@ -129,19 +128,19 @@ Install it into an existing personal profile with:
 
 ```bash
 PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
-  pi install npm:@ogulcancelik/pi-codex-compaction@0.1.0
+  pi install npm:@ogulcancelik/pi-codex-compaction@0.1.1
 cp "$DOTFILES_PI_SCAFFOLD_DIR/agent/pi-codex-compaction.json" \
   "$HOME/.pi/agent/pi-codex-compaction.json"
 ```
 
 ## Installing Pi subagents
 
-The optional subagent stack is pinned to reviewed `WeShipWork/threeonefour`
-commit `7f86a2931f83b68f7915fd132a026bb8fa76ae97`. Apply the scaffold first; the
-package installer refuses to continue unless the routing policy, profiles, and
-subagent defaults are present. It keeps a commit-pinned, clean checkout under
-`~/.local/share/pi-packages`, installs production dependencies from the
-committed lockfile, and adds only `pi-subagents` and `pi-herdr` to Pi:
+The optional subagent stack is pinned to
+`@ogulcancelik/pi-codex-subagents@0.3.2`. Apply the private scaffold first; the
+installer refuses to continue unless the reviewed routing policy, `SYSTEM.md`,
+config, and worker templates are present. It migrates the superseded local
+`pi-subagents`/`pi-herdr` stack into `~/.pi/agent/migrations/`, removes stale
+package identities, and installs exactly one pinned Codex subagent package:
 
 ```bash
 ./dot pi subagents --dry-run
@@ -155,9 +154,8 @@ PI_CODING_AGENT_DIR="$HOME/.pi/agent-$DOTFILES_PI_WORK_PROFILE_SLUG" \
   ./dot pi subagents --check
 ```
 
-`PI_HOME` and `PI_CODING_AGENT_DIR` overrides are honored consistently by the
-scaffold and package checks. `pi-herd` is deliberately excluded until its
-transcript mirror is complete.
+`PI_HOME`, `PI_CODING_AGENT_DIR`, and `DOTFILES_PI_SCAFFOLD_DIR` overrides are
+honored consistently by the scaffold and package checks.
 The routing skill is the policy source of truth. Pi executes directly by
 default. It delegates only on explicit request or when parallelism, isolation,
 specialist context, or independent consequential review materially helps.
@@ -173,7 +171,7 @@ reviewed, not treated as runtime failure.
 Install the tested npm distribution:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@0.81.1
+npm install -g @earendil-works/pi-coding-agent@0.84.1
 ```
 
 `./dot pi install` prints the command and prompts before running it. It requires
@@ -185,7 +183,7 @@ with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
 available for project tooling.
 
 The npm layout is intentional. A Pi CLI installed globally through Vite+ was
-verified to fail runtime imports used by `pi-subagents` and other extensions,
+verified to fail runtime imports used by subagent and other extensions,
 while the npm-installed CLI loaded the pinned source stack.
 Pi is therefore listed in `packages/npm.global`.
 
@@ -197,5 +195,5 @@ is free of known private strings / live secret shapes. `./dot pi profiles
 --check` verifies sensitive/runtime paths are not shared, and
 `bash scripts/tests/pi-profiles.test.sh` exercises idempotence plus the
 settings/auth/Cloak boundary in a temporary home. `./dot pi subagents --check`
-verifies the commit-pinned, clean checkout and installed package entries. `git
+verifies the pinned package, exact routing assets, and installed package entries. `git
 diff --check` and `./dot doctor` also apply.

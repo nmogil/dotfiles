@@ -196,6 +196,20 @@ if [[ $apply_defaults =~ ^[Yy]$ ]]; then
     echo "macOS settings applied"
 fi
 
+# Apply portable agent preferences. Authentication, MCP servers, sessions, and
+# other runtime state remain local to this Mac.
+bash "$DOTFILES_DIR/scripts/setup-herdr-config.sh" --apply
+if command -v herdr >/dev/null 2>&1; then
+    for agent in pi claude codex hermes; do
+        command -v "$agent" >/dev/null 2>&1 && herdr integration install "$agent" || true
+    done
+    herdr plugin install persiyanov/herdr-reviewr --yes || true
+fi
+if command -v hermes >/dev/null 2>&1; then
+    hermes config migrate || true
+    bash "$DOTFILES_DIR/scripts/setup-hermes-config.sh" --apply
+fi
+
 echo ""
 echo "=== Setup Complete! ==="
 echo ""
