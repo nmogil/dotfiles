@@ -40,7 +40,10 @@ printf '%s\n' '{"retentionDays":7}' > "$PERSONAL/pi-codex-subagents/config.json"
 printf '%s\n' 'child system prompt' > "$PERSONAL/pi-codex-subagents/SYSTEM.md"
 printf '%s\n' '---' 'name: engineer' '---' 'engineer' \
   > "$PERSONAL/pi-codex-subagents/agents/engineer.md"
-printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' > "$TMP/.config/dotfiles/local.env"
+printf '%s\n' \
+  'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' \
+  'DOTFILES_ENABLE_HERMES=0' \
+  > "$TMP/.config/dotfiles/local.env"
 
 HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
 HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
@@ -58,6 +61,7 @@ test "$(readlink -f "$WORK/pi-codex-subagents/SYSTEM.md")" = \
 test "$(readlink -f "$WORK/pi-codex-subagents/config.json")" = \
   "$(readlink -f "$PERSONAL/pi-codex-subagents/config.json")"
 test ! -e "$WORK/pi-codex-subagents/runs"
+test ! -e "$TMP/.hermes"
 cmp -s "$SCAFFOLD/agent/cloak.json" "$WORK/cloak.json"
 
 python3 - "$WORK/settings.json" "$WORK/models.json" <<'PY'
@@ -76,5 +80,13 @@ assert overrides
 assert all(item["name"].startswith("Clientx · ") for item in overrides.values())
 assert "must-not-cross-profile-boundary" not in json.dumps({"settings": settings, "models": models})
 PY
+
+printf '%s\n' \
+  'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' \
+  'DOTFILES_ENABLE_HERMES=1' \
+  > "$TMP/.config/dotfiles/local.env"
+HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
+HOME="$TMP" "$ROOT/dot" pi profiles --check >/dev/null
+test -f "$TMP/.hermes/skills/software-development/coding-agent-account-routing/SKILL.md"
 
 printf '%s\n' 'ok   Pi profiles are idempotent and keep settings/auth/Cloak boundaries'
