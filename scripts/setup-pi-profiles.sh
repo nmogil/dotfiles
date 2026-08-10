@@ -27,6 +27,7 @@ WORK_LABEL="$(printf '%s' "$WORK_FIRST" | tr '[:lower:]' '[:upper:]')${WORK_SLUG
 WORK_DIR="$PI_ROOT/agent-$WORK_SLUG"
 HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_SKILL="$HERMES_HOME_DIR/skills/software-development/coding-agent-account-routing/SKILL.md"
+HERMES_ENABLED="$DOTFILES_ENABLE_HERMES"
 MODE="dry-run"
 
 usage() {
@@ -64,7 +65,7 @@ cat <<EOF
 mode:     $(printf '%s' "$MODE" | tr '[:lower:]' '[:upper:]')
 personal: $PERSONAL_DIR
 work:     $WORK_DIR
-Hermes:   $HERMES_SKILL
+Hermes:   $([ "$HERMES_ENABLED" = 1 ] && printf '%s' "$HERMES_SKILL" || printf 'disabled for this host')
 
 The profiles share credential-free resources but keep auth, sessions, MCP state,
 caches, settings, and trust decisions separate.
@@ -73,8 +74,9 @@ EOF
 if [ "$MODE" = "dry-run" ]; then
   cat <<EOF
 
-Would prepare the work profile and install the credential-free Hermes account
-routing skill. No credentials are copied or written.
+Would prepare the work profile. The credential-free Hermes account-routing
+skill is installed only when DOTFILES_ENABLE_HERMES=1. No credentials are
+copied or written.
 EOF
   exit 0
 fi
@@ -232,9 +234,13 @@ PY
   [ "$sensitive_failed" -eq 0 ] \
     && echo "  ok     sensitive/runtime paths are not shared"
 
-  cmp -s "$HERMES_SKILL_SOURCE" "$HERMES_SKILL" \
-    && echo "  ok     Hermes account-routing skill" \
-    || { echo "  MISS or stale Hermes account-routing skill: $HERMES_SKILL"; failed=1; }
+  if [ "$HERMES_ENABLED" = 1 ]; then
+    cmp -s "$HERMES_SKILL_SOURCE" "$HERMES_SKILL" \
+      && echo "  ok     Hermes account-routing skill" \
+      || { echo "  MISS or stale Hermes account-routing skill: $HERMES_SKILL"; failed=1; }
+  else
+    echo "  skip   Hermes account-routing skill (disabled for this host)"
+  fi
 
   return "$failed"
 }
@@ -246,9 +252,12 @@ case "$MODE" in
     ;;
   apply)
     [ -d "$PERSONAL_DIR" ] || fail "personal Pi profile not found: $PERSONAL_DIR"
-    for source in "$ACCOUNT_EXTENSION_SOURCE" "$PI_ACCOUNT_SKILL_SOURCE" "$WORK_MODELS_SOURCE" "$GENERIC_CLOAK_SOURCE" "$HERMES_SKILL_SOURCE"; do
+    for source in "$ACCOUNT_EXTENSION_SOURCE" "$PI_ACCOUNT_SKILL_SOURCE" "$WORK_MODELS_SOURCE" "$GENERIC_CLOAK_SOURCE"; do
       [ -f "$source" ] || fail "required template missing: $source"
     done
+    if [ "$HERMES_ENABLED" = 1 ]; then
+      [ -f "$HERMES_SKILL_SOURCE" ] || fail "required template missing: $HERMES_SKILL_SOURCE"
+    fi
 
     mkdir -p "$WORK_DIR"
     chmod 700 "$WORK_DIR"
@@ -296,8 +305,12 @@ case "$MODE" in
       fail "$WORK_DIR/models.json differs from the rendered template; reconcile it manually"
     fi
 
-    install_file_if_safe "$HERMES_SKILL_SOURCE" "$HERMES_SKILL" \
-      "Hermes account-routing skill"
+    if [ "$HERMES_ENABLED" = 1 ]; then
+      install_file_if_safe "$HERMES_SKILL_SOURCE" "$HERMES_SKILL" \
+        "Hermes account-routing skill"
+    else
+      echo "  skip   Hermes account-routing skill (disabled for this host)"
+    fi
 
     echo
     check_profiles
