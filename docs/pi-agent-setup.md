@@ -46,6 +46,7 @@ an authoritative Pi schema.
 | `agent/extensions/save-md/` | Utility command `/save-md <name>` |
 | `agent/skills/{code-review,coding-standards,diagnosing-bugs,domain-modeling,handoff,herdr,tdd,tech-spec}` | Selected relevant engineering skills |
 | `agent/skills/{improve-codebase-architecture,prototype,writing-great-skills,grilling}` | Selected personal/workflow skills: architecture scans, throwaway prototypes, skill authoring, and design stress-tests |
+| `agent/skills/adopt-anti-slop/` | User-invoked, commit-pinned workflow that audits anti-slop Oxlint rules before selectively enabling a validated subset; preserves the upstream MIT license |
 | `agent/skills/coding-agent-account-routing/` | Personal/work inheritance and external-worker account boundary |
 | `agent/skills/subagent-routing/` | Direct-first delegation, model, placement, and fallback policy |
 | `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
