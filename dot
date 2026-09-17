@@ -61,6 +61,9 @@ Usage: ./dot <command> [args]
                        see docs/claude-memory-compiler.md)
   herdr config [flags] Apply/check portable Herdr + Reviewr preferences
   hermes config [flags] Deep-merge/check credential-free Hermes preferences
+  git-identity check   Check identity/hooks in the current repository
+  git-identity install <policy.json>  Install opt-in remote-scoped Git guards
+  pi identity [flags]  Install/check Pi identity preflight (--apply/--check)
   pi doctor            Read-only checks for the opt-in Pi agent scaffold
   pi scaffold [flags]  Install the Pi scaffold -> ~/.pi (--apply/--force/--dry-run;
                       source: DOTFILES_PI_SCAFFOLD_DIR in local.env)
@@ -246,6 +249,7 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) usage ;;
   doctor)         run scripts/doctor.sh "$@" ;;
+  git-identity)   exec python3 "$DOT_ROOT/scripts/git-identity-guard.py" "$@" ;;
   setup)
     case "${1:-}" in
       mac)   run setup.sh ;;
@@ -295,6 +299,7 @@ case "$cmd" in
   pi)
     case "${1:-}" in
       doctor)    pi_doctor ;;
+      identity)  shift; run scripts/setup-pi-identity.sh "$@" ;;
       scaffold)  shift; run scripts/setup-pi-agent.sh "$@" ;;
       profiles)  shift; run scripts/setup-pi-profiles.sh "$@" ;;
       subagents) shift; run scripts/setup-pi-subagents.sh "$@" ;;

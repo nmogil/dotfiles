@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "example",
+      "name": "Your Name",
+      "email": "12345+your-login@users.noreply.github.com",
+      "patterns": [
+        "https://github.com/example-org/*",
+        "git@github.com:example-org/*",
+        "ssh://git@github.com/example-org/*"
+      ]
+    }
+  ]
+}
