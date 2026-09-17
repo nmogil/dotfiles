@@ -20,3 +20,6 @@
 	line-numbers = true
 [merge]
 	conflictstyle = zdiff3
+# Opt-in remote-scoped identity/hook rules; absent until explicitly installed.
+[include]
+	path = ~/.config/git/identity-guard.gitconfig

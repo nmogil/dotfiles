@@ -1,0 +1,34 @@
+name: Git identity guard
+on:
+  pull_request:
+    paths:
+      - '.gitconfig'
+      - 'dot'
+      - 'scripts/git-identity-guard.py'
+      - 'scripts/setup-pi-identity.sh'
+      - 'scripts/tests/git-identity-guard.test.py'
+      - 'templates/pi-identity/**'
+      - '.github/workflows/git-identity.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.gitconfig'
+      - 'dot'
+      - 'scripts/git-identity-guard.py'
+      - 'scripts/setup-pi-identity.sh'
+      - 'scripts/tests/git-identity-guard.test.py'
+      - 'templates/pi-identity/**'
+      - '.github/workflows/git-identity.yml'
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/tests/git-identity-guard.test.py -v
+      - run: bash -n dot scripts/setup-pi-identity.sh
