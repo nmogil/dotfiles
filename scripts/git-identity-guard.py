@@ -43,11 +43,19 @@ def load_policy(path=POLICY):
         if not re.fullmatch(r'[a-z0-9-]+', rule['id']) or rule['id'] in ids:
             raise ValueError('rule ids must be unique lowercase slugs')
         ids.add(rule['id'])
-        for key in ('name', 'email'):
+        if 'push_block_reason' in rule and (
+                not isinstance(rule['push_block_reason'], str) or
+                not rule['push_block_reason'].strip() or
+                any(ord(c) < 32 for c in rule['push_block_reason'])):
+            raise ValueError('push_block_reason must be nonempty printable text')
+        has_identity = 'name' in rule or 'email' in rule
+        if not has_identity and not rule.get('push_block_reason'):
+            raise ValueError('rule needs an identity or explicit push quarantine')
+        for key in (('name', 'email') if has_identity else ()):
             if not isinstance(rule[key], str) or not rule[key] or any(
                     ord(c) < 32 or c in '<>' for c in rule[key]):
                 raise ValueError(f'invalid {key}')
-        if not re.fullmatch(r'[^\s@]+@[^\s@]+', rule['email']):
+        if has_identity and not re.fullmatch(r'[^\s@]+@[^\s@]+', rule['email']):
             raise ValueError('invalid email')
         if not isinstance(rule['patterns'], list) or not rule['patterns']:
             raise ValueError('patterns must be a nonempty list')
@@ -74,11 +82,13 @@ def active_rule():
     return matches[0] if matches else None
 
 
-def check(rule):
+def check(rule, for_push=False):
     if not rule:
         return
-    expected = rule['email']
-    for variable in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
+    if for_push and rule.get('push_block_reason'):
+        raise ValueError(f'{rule["id"]}: push quarantined: {rule["push_block_reason"]}')
+    expected = rule.get('email')
+    for variable in (('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT') if expected else ()):
         value = git('var', variable)
         match = re.search(r'<([^<>]+)>', value)
         if not match or match.group(1) != expected:
@@ -95,7 +105,7 @@ def hook(name, args):
     data = sys.stdin.buffer.read() if name == 'pre-push' else None
     if name in ('pre-commit', 'pre-push', 'pre-merge-commit'):
         rule = active_rule()
-        check(rule)
+        check(rule, for_push=name == 'pre-push')
         if name == 'pre-push' and rule:
             for line in (data or b'').decode().splitlines():
                 local_ref, sha, remote_ref, remote_sha = line.split()
@@ -150,9 +160,11 @@ def install(source):
         includes = MARKER
         for rule in data['rules']:
             config = stage / f'{rule["id"]}.gitconfig'
-            for key, value in [('user.name', rule['name']), ('user.email', rule['email']),
-                               ('user.useConfigOnly', 'true'),
-                               ('core.hooksPath', str(BASE / 'hooks'))]:
+            values = [('core.hooksPath', str(BASE / 'hooks'))]
+            if 'email' in rule:
+                values += [('user.name', rule['name']), ('user.email', rule['email']),
+                           ('user.useConfigOnly', 'true')]
+            for key, value in values:
                 git('config', '--file', str(config), key, value)
             for pattern in rule['patterns']:
                 includes += (f'[includeIf "hasconfig:remote.*.url:{pattern}"]\n'
@@ -198,12 +210,12 @@ def install(source):
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == 'install':
         install(sys.argv[2])
-    elif len(sys.argv) == 2 and sys.argv[1] == 'check':
-        check(active_rule())
+    elif len(sys.argv) == 2 and sys.argv[1] in ('check', 'check-push'):
+        check(active_rule(), for_push=sys.argv[1] == 'check-push')
     elif len(sys.argv) >= 3 and sys.argv[1] == 'hook' and sys.argv[2] in HOOKS:
         return hook(sys.argv[2], sys.argv[3:])
     else:
-        raise ValueError('usage: guard.py install POLICY.json | check | hook NAME [args]')
+        raise ValueError('usage: guard.py install POLICY.json | check | check-push | hook NAME [args]')
     return 0
 
 

@@ -203,6 +203,69 @@ console.log(JSON.stringify({command, blocked: result?.block === true}));
         self.assertTrue(entry['existed'])
         self.assertEqual(before, (backup / entry['snapshot']).read_bytes())
 
+    def quarantine(self):
+        data = json.loads(self.policy.read_text())
+        rule = data['rules'][0]
+        rule.pop('name')
+        rule.pop('email')
+        rule['push_block_reason'] = 'Separate deployment identity has not been verified'
+        self.policy.write_text(json.dumps(data))
+        self.install()
+
+    def test_quarantine_preserves_identity_and_blocks_real_push(self):
+        self.quarantine()
+        self.assertEqual(self.cmd('git', 'config', 'user.email').stdout.strip(), BAD)
+        self.commit()
+        self.cmd(sys.executable, str(SCRIPT), 'check')
+        result = self.cmd(sys.executable, str(SCRIPT), 'check-push', ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Separate deployment identity', result.stderr)
+        sink = self.home / 'quarantined.git'
+        self.cmd('git', 'init', '--bare', '-q', str(sink))
+        result = self.cmd('git', 'push', str(sink), 'HEAD:refs/heads/main', ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Separate deployment identity', result.stderr)
+        self.assertEqual(self.cmd('git', '--git-dir', str(sink), 'show-ref',
+                                 'refs/heads/main', ok=False).returncode, 1)
+        self.cmd('git', 'remote', 'set-url', 'origin', 'https://github.com/unrelated/project.git')
+        self.cmd('git', 'push', '-q', str(sink), 'HEAD:refs/heads/main')
+
+    def test_quarantine_linked_worktree_and_reinstall(self):
+        self.quarantine()
+        self.install()
+        self.commit()
+        wt = self.home / 'quarantined-worktree'
+        self.cmd('git', 'worktree', 'add', '-qb', 'quarantined', str(wt))
+        self.cmd('git', 'commit', '--allow-empty', '-qm', 'local work', cwd=wt)
+        result = self.cmd(sys.executable, str(SCRIPT), 'check-push', cwd=wt, ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Separate deployment identity', result.stderr)
+
+    def test_missing_identity_without_quarantine_is_rejected(self):
+        data = json.loads(self.policy.read_text())
+        data['rules'][0].pop('name')
+        data['rules'][0].pop('email')
+        self.policy.write_text(json.dumps(data))
+        before = (self.home / '.gitconfig').read_bytes()
+        result = self.cmd(sys.executable, str(SCRIPT), 'install', str(self.policy), ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(before, (self.home / '.gitconfig').read_bytes())
+
+    def test_pi_quarantine_blocks_push_and_vercel_not_local_commits(self):
+        self.quarantine()
+        extension = ROOT / 'templates/pi-identity/git-identity-preflight.ts'
+        code = '''
+import { pathToFileURL } from 'node:url';
+const {default: extension} = await import(pathToFileURL(process.argv[1]).href);
+let handler;
+extension({on: (name, fn) => { if (name === 'tool_call') handler = fn; }, registerCommand: () => {}});
+const commands = ['git commit -m test', 'git push origin main', 'vercel deploy', 'git status'];
+console.log(JSON.stringify(commands.map(command => handler({toolName:'bash', input:{command}}, {cwd:process.cwd()})?.block === true)));
+'''
+        result = self.cmd('node', '--experimental-strip-types', '--input-type=module',
+                          '-e', code, str(extension))
+        self.assertEqual(json.loads(result.stdout), [False, True, True, False])
+
     def test_preflight_outside_repo_is_noop(self):
         self.cmd(sys.executable, str(SCRIPT), 'check', cwd=self.home)
 
