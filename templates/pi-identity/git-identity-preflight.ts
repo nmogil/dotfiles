@@ -5,10 +5,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-export function preflight(cwd: string): string | undefined {
+export function preflight(cwd: string, forPush = false): string | undefined {
   const guard = join(homedir(), ".local/share/git-identity-guard/guard.py");
   if (!existsSync(guard)) return undefined; // Explicitly opt-in installation.
-  const result = spawnSync("python3", [guard, "check"], {
+  const result = spawnSync("python3", [guard, forPush ? "check-push" : "check"], {
     cwd, encoding: "utf8", timeout: 5000,
   });
   if (result.error || result.status !== 0) {
@@ -19,19 +19,21 @@ export function preflight(cwd: string): string | undefined {
 
 export default function (pi: any) {
   pi.registerCommand("git-identity", {
-    description: "Check configured Git identity and hook routing (not Vercel membership)",
+    description: "Check Git identity, hooks, and push quarantine (not Vercel membership)",
     handler: async (_args: string, ctx: any) => {
-      const failure = preflight(ctx.cwd);
+      const failure = preflight(ctx.cwd, true);
       ctx.ui.notify(failure || "Git identity preflight passed (or repo not opted in).", failure ? "error" : "info");
     },
   });
   pi.on("tool_call", (event: any, ctx: any) => {
     if (event.toolName !== "bash") return;
     const command = String(event.input.command ?? "");
-    if (!/\bgit\b/.test(command) || !/\b(commit|push|merge|cherry-pick|rebase|am)\b/.test(command)) return;
+    const vercelCommand = /\bvercel\b/.test(command);
+    const gitMutation = /\bgit\b/.test(command) && /\b(commit|push|merge|cherry-pick|rebase|am)\b/.test(command);
+    if (!vercelCommand && !gitMutation) return;
     // Don't attempt to parse arbitrary shell. Hook-side checking covers cwd,
     // git -C, inline environment variables, -c user.email, and --author.
-    const failure = preflight(ctx.cwd);
+    const failure = preflight(ctx.cwd, vercelCommand || /\bpush\b/.test(command));
     if (failure) return { block: true, reason: failure };
   });
 }

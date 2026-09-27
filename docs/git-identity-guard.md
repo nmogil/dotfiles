@@ -77,10 +77,35 @@ Vercel bot comment, then verify the linked Vercel user's membership.
 
 If a correctly attributed GitHub author is denied membership, changing
 `vercel.json`, changing between that user's verified emails, or creating empty
-retry commits does not fix authorization. Have an authorized owner approve the
-appropriate membership, check any seat/billing consequences, then retry a
-**preview** deployment and verify its exact commit SHA. Do not move another
-workstream's GitHub Login Connection or bypass deployment security as a shortcut.
+retry commits does not fix authorization. Verify the intended account boundary
+first. Never grant cross-workstream membership or move another workstream's
+GitHub Login Connection to make a deployment pass. A shared GitHub login is
+still one identity even when commits use different verified emails. Separate
+accounts require a deliberate owner-confirmed mapping and scoped credentials.
+
+### Quarantine an unresolved deployment identity
+
+Set a rule's `push_block_reason` to a nonempty explanation. Omit **both** `name`
+and `email` to preserve the repository's existing identity instead of forcing an
+unverified one. Reinstall from the private policy: this replaces earlier generated
+identity overrides with hook-only routing. Restore any manually changed repo-local
+identity settings separately from their backups; never rewrite commit history.
+
+The `pre-push` hook then rejects all pushes from matching repositories (including
+tags/deletions) while local commits remain available. `guard.py check-push` and
+Pi's `/git-identity` expose that pause; Pi's Bash preflight also blocks commands
+mentioning Vercel in a quarantined cwd. This is a convenience guard, not a shell
+sandbox: direct API calls, another machine, `--no-verify`, and changing remotes can
+bypass it. Git-hosted deployments must remain paused operationally until mapping
+is resolved; this tool does not disable remote webhooks or existing CI jobs.
+
+Do not leave a work account as an ambient machine-wide Vercel login. Vercel CLI's
+`--global-config /private/workstream/path --scope <verified-team>` selects an
+explicit profile. Preserve tokens without printing them, remove the wrong ambient
+credential, verify the scoped profile with `whoami`/`teams ls`, and verify the
+default CLI is unauthenticated. Profile paths are not an OS-level security boundary.
+Clear the quarantine only after the owner confirms distinct identities and the
+correct target-team authorization; then verify an exact preview SHA.
 
 ## Verification
 
