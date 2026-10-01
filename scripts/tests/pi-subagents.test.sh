@@ -17,7 +17,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 AGENT_DIR="$TMP/.pi/agent"
 FAKE_PI="$TMP/bin/pi"
-FAKE_PI_TARGET="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+FAKE_PI_TARGET="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 CALLS="$TMP/pi-calls.log"
 mkdir -p "$TMP/bin" "$(dirname "$FAKE_PI_TARGET")" \
   "$AGENT_DIR/pi-codex-subagents" \
@@ -52,7 +52,7 @@ set -euo pipefail
 : "${PI_CODING_AGENT_DIR:?}"
 : "${PI_TEST_CALLS:?}"
 if [ "${1:-}" = "--version" ]; then
-  printf '%s\n' "${PI_TEST_VERSION:-0.84.1}"
+  printf '%s\n' "${PI_TEST_VERSION:-0.99.2}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$PI_TEST_CALLS"
@@ -79,7 +79,7 @@ path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 package_dir="$PI_CODING_AGENT_DIR/npm/node_modules/@ogulcancelik/pi-codex-subagents"
 mkdir -p "$package_dir"
-printf '%s\n' '{"name":"@ogulcancelik/pi-codex-subagents","version":"0.3.2"}' \
+printf '%s\n' '{"name":"@ogulcancelik/pi-codex-subagents","version":"0.3.5"}' \
   > "$package_dir/package.json"
 SH
 chmod +x "$FAKE_PI_TARGET"
@@ -94,7 +94,7 @@ HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
 
 test "$(wc -l < "$CALLS")" -eq 2
 test "$(sort -u "$CALLS")" = \
-  "install npm:@ogulcancelik/pi-codex-subagents@0.3.2"
+  "install npm:@ogulcancelik/pi-codex-subagents@0.3.5"
 test ! -e "$AGENT_DIR/subagents.json"
 test ! -e "$AGENT_DIR/agent-tool-description.md"
 test ! -e "$AGENT_DIR/agents"
@@ -112,7 +112,7 @@ settings = json.loads(Path(sys.argv[1]).read_text())
 backup = json.loads(Path(sys.argv[2]).read_text())
 assert settings["packages"] == [
     "npm:@acme/pi-subagents@1.0.0",
-    "npm:@ogulcancelik/pi-codex-subagents@0.3.2",
+    "npm:@ogulcancelik/pi-codex-subagents@0.3.5",
 ]
 assert "/tmp/threeonefour-7f86a2931f83b/packages/pi-subagents" in backup["packages"]
 assert "/opt/custom-delegator/packages/pi-herdr" in backup["packages"]
@@ -190,7 +190,7 @@ settings["packages"] = [
     if entry != "npm:@ogulcancelik/pi-codex-subagents@0.3.1"
 ]
 settings["packages"][-1] = {
-    "source": "npm:@ogulcancelik/pi-codex-subagents@0.3.2",
+    "source": "npm:@ogulcancelik/pi-codex-subagents@0.3.5",
     "extensions": [],
 }
 path.write_text(json.dumps(settings, indent=2) + "\n")
@@ -203,10 +203,10 @@ fi
 
 BAD_PI="$TMP/badbin/pi"
 mkdir -p "$(dirname "$BAD_PI")"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 0.84.1' > "$BAD_PI"
+printf '%s\n' '#!/usr/bin/env bash' 'echo 0.99.2' > "$BAD_PI"
 chmod +x "$BAD_PI"
 doctor_output="$(HOME="$TMP" PATH="$TMP/badbin:$PATH" "$ROOT/dot" pi doctor)"
 printf '%s\n' "$doctor_output" | grep -Fq \
-  'WARN Pi 0.84.1 is not the required npm package layout'
+  'WARN Pi 0.99.2 is not the required npm package layout'
 
 printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets/runtime'

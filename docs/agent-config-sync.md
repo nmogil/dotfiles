@@ -114,10 +114,15 @@ contains the full curated setup and is not suitable for public redistribution.
 
 Current pins:
 
-- `@earendil-works/pi-coding-agent@0.84.1`
-- `@ogulcancelik/pi-codex-subagents@0.3.2`
+- `@earendil-works/pi-coding-agent@0.99.2`
+- `@ogulcancelik/pi-codex-subagents@0.3.5`
 - the exact personal-profile package list in
   `dotfiles-private/pi-scaffold/agent/settings.example.json`
+
+Use `./dot pi extensions --apply` to update the reviewed core extension pins
+and migrate compaction timing without replacing unrelated live settings. Run
+it separately for each configured profile; work profiles do not receive the
+personal footer or personal compaction settings.
 
 The scaffold never includes `auth.json`, live `settings.json`, private MCP
 servers, sessions, package caches, or trust state.

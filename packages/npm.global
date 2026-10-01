@@ -3,7 +3,7 @@
 
 @anthropic-ai/claude-code
 @openai/codex
-@earendil-works/pi-coding-agent@0.84.1
+@earendil-works/pi-coding-agent@0.99.2
 hunkdiff              # Linux path for hunk; macOS gets it from the Brewfile
 obsidian-headless
 

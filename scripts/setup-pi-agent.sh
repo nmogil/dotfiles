@@ -92,7 +92,7 @@ pi_uses_npm_layout() {
   local resolved
   resolved="$(resolve_path "$1" 2>/dev/null || true)"
   case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js) return 0 ;;
+    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -123,7 +123,7 @@ find_standalone_npm() {
 }
 
 install_cli() {
-  local package="@earendil-works/pi-coding-agent@0.84.1"
+  local package="@earendil-works/pi-coding-agent@0.99.2"
   local package_name="@earendil-works/pi-coding-agent"
   local current="" resolved="" npm_prefix="" npm_pi=""
   local NPM_NODE="" NPM_CLI=""
@@ -132,7 +132,7 @@ install_cli() {
 == Install the Pi CLI (npm) ==
 Pinned command:
 
-  npm install -g $package
+  npm install -g --ignore-scripts $package
 
 The npm distribution is required for runtime-importing Pi extensions such as
 pi-codex-subagents. The Vite+ global layout currently breaks those imports. This flow
@@ -148,9 +148,9 @@ EOF
     case "$current:$resolved" in
       *"/.vite-plus/"*) echo "Current Pi uses Vite+: $current (migration needed)" ;;
       *)
-        if [ "$(pi --version 2>/dev/null || true)" = "0.84.1" ] \
+        if [ "$(pi --version 2>/dev/null || true)" = "0.99.2" ] \
           && pi_uses_npm_layout "$current"; then
-          echo "Pi npm installation already active: $current (0.84.1)"
+          echo "Pi npm installation already active: $current (0.99.2)"
           return 0
         fi
         echo "Current Pi is not the pinned npm package and will be replaced: $current"
@@ -172,13 +172,13 @@ EOF
         echo "Global npm prefix is not writable; using user prefix: $npm_prefix"
       fi
       mkdir -p "$npm_prefix"
-      "$NPM_NODE" "$NPM_CLI" install -g --prefix "$npm_prefix" "$package"
+      "$NPM_NODE" "$NPM_CLI" install -g --ignore-scripts --prefix "$npm_prefix" "$package"
       npm_pi="$npm_prefix/bin/pi"
       [ -x "$npm_pi" ] || {
         echo "setup-pi-agent: npm installed Pi but no executable was found at $npm_pi" >&2
         exit 1
       }
-      [ "$($npm_pi --version)" = "0.84.1" ] \
+      [ "$($npm_pi --version)" = "0.99.2" ] \
         && pi_uses_npm_layout "$npm_pi" || {
         echo "setup-pi-agent: npm Pi version/layout verification failed" >&2
         exit 1
@@ -203,14 +203,14 @@ EOF
           exit 1
           ;;
       esac
-      [ "$(pi --version 2>/dev/null || true)" = "0.84.1" ] \
+      [ "$(pi --version 2>/dev/null || true)" = "0.99.2" ] \
         && pi_uses_npm_layout "$current" || {
         echo "setup-pi-agent: active Pi is not the pinned npm version/layout" >&2
         exit 1
       }
       echo "Pi npm installation active: $(command -v pi) ($(pi --version))"
       ;;
-    *) echo "Skipped. Run 'npm install -g $package' when ready." ;;
+    *) echo "Skipped. Run 'npm install -g --ignore-scripts $package' when ready." ;;
   esac
 }
 

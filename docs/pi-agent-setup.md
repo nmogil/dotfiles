@@ -21,6 +21,7 @@ fallback when the variable is unset.
 ./dot pi profiles --apply     # prepare separate personal/work profiles
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package installation
 ./dot pi subagents --apply    # install the pinned Codex subagent package
+./dot pi extensions --apply   # update reviewed core pins and compaction settings
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
 ```
 
@@ -37,7 +38,7 @@ an authoritative Pi schema.
 |------|-------|
 | `.gitignore` | Ignores `node_modules`, runtime `settings.json`/`mcp.json`, auth/session state |
 | `README.md` | Rewritten for this repo; opt-in framing |
-| `package.json`, `tsconfig.json` | TS workspace for selected safe extensions; no lockfile vendored |
+| `package.json`, `tsconfig.json` | TS workspace for selected safe extensions with a reproducible dependency lockfile |
 | `agent/extensions/account-profile-indicator.ts` | Persistent footer badge derived from the active profile directory |
 | `agent/extensions/git-interceptor.ts` | Portable safety guard: prevents git editor hangs and blocks `--no-verify` |
 | `agent/extensions/worker-configuration-guard.ts` | Portable Cloudflare/Wrangler guard for generated `worker-configuration.d.ts` |
@@ -49,10 +50,11 @@ an authoritative Pi schema.
 | `agent/skills/coding-agent-account-routing/` | Personal/work inheritance and external-worker account boundary |
 | `agent/skills/subagent-routing/` | Direct-first delegation, model, placement, and fallback policy |
 | `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
-| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.2`; migrates legacy local stacks |
+| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.5`; migrates legacy local stacks |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Credential-free defaults with a reviewed, version-pinned Codex compaction package; real file is gitignored |
-| `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage and shows a notification when it runs |
+| `agent/settings.example.json` → `compaction` | Native Pi compaction timing: 27,200 reserve tokens, 20,000 recent tokens |
+| `agent/pi-codex-compaction.json` | Legacy fallback settings for Pi older than 0.84.4; ignored by current Pi |
 | `agent/models.work.example.json` | Credential-free work-profile detail-name template; model IDs and routing stay unchanged |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
 | `templates/hermes/.../coding-agent-account-routing/SKILL.md` | Separates Hermes-native delegation from external Pi/Claude account selection |
@@ -117,26 +119,52 @@ selected Pi profile instead of launching bare `claude`.
 ## Codex native compaction
 
 The personal-profile settings example pins
-`@ogulcancelik/pi-codex-compaction@0.1.1`. The accompanying
-`agent/pi-codex-compaction.json` enables provider-native compaction at 90%
-context usage and displays a notification when it runs. It activates only for
-`openai-codex` models; the independent Anthropic work profile is unaffected.
-Native checkpoints are model-specific, so return to the Codex model that
-created a checkpoint before continuing older compacted history.
+`@ogulcancelik/pi-codex-compaction@0.1.5`. Pi 0.84.4+ owns compaction timing
+through `settings.json` → `compaction`; the old `pi-codex-compaction.json` is
+legacy-only. The reviewed settings reserve 27,200 tokens (a 90% threshold for
+272k Codex models) and retain 20,000 recent tokens. Native compaction activates
+only for `openai-codex`; other providers use ordinary Pi compaction.
 
-Install it into an existing personal profile with:
+Native checkpoints are model-specific, so return to the Codex model that
+created a checkpoint before continuing older compacted history. Switching to
+Claude does not carry the opaque checkpoint across providers.
+
+### Updating the reviewed core extensions
 
 ```bash
-PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
-  pi install npm:@ogulcancelik/pi-codex-compaction@0.1.1
-cp "$DOTFILES_PI_SCAFFOLD_DIR/agent/pi-codex-compaction.json" \
-  "$HOME/.pi/agent/pi-codex-compaction.json"
+./dot pi extensions --dry-run
+./dot pi extensions --apply
+./dot pi extensions --check
 ```
+
+This reads exact pins from the private scaffold, refreshes the personal settings
+example, updates footer, session recall,
+subagents, compaction, and Anthropic image-cap, and merges only the reviewed
+compaction fields into personal settings. It backs up settings before applying,
+preserves unrelated settings and compaction overrides, and skips packages that
+already match. A failed install stops the update; inspect the printed backup
+and rerun after correcting the error. Permissions remains pinned at 0.1.3;
+0.1.4 removes `request_override` and needs a separate review.
+
+For a work profile, the same command updates only core packages already
+configured there and adds image-cap. It does not copy personal settings,
+credentials, or the personal footer:
+
+```bash
+PI_CODING_AGENT_DIR="$HOME/.pi/agent-$DOTFILES_PI_WORK_PROFILE_SLUG" \
+  ./dot pi extensions --apply
+```
+
+Image-cap removes old images only from outgoing Anthropic requests, not saved
+sessions. Session recall 1.0.7 removes `/session-recall`; configure an optional
+query model in the profile-local `session-recall.json`. Existing subagent
+routing/templates are unchanged; per-spawn model overrides remain opt-in.
+Restart Pi or run `/reload` after applying.
 
 ## Installing Pi subagents
 
 The optional subagent stack is pinned to
-`@ogulcancelik/pi-codex-subagents@0.3.2`. Apply the private scaffold first; the
+`@ogulcancelik/pi-codex-subagents@0.3.5`. Apply the private scaffold first; the
 installer refuses to continue unless the reviewed routing policy, `SYSTEM.md`,
 config, and worker templates are present. It migrates the superseded local
 `pi-subagents`/`pi-herdr` stack into `~/.pi/agent/migrations/`, removes stale
@@ -171,7 +199,7 @@ reviewed, not treated as runtime failure.
 Install the tested npm distribution:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@0.84.1
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.99.2
 ```
 
 `./dot pi install` prints the command and prompts before running it. It requires
@@ -195,5 +223,8 @@ is free of known private strings / live secret shapes. `./dot pi profiles
 --check` verifies sensitive/runtime paths are not shared, and
 `bash scripts/tests/pi-profiles.test.sh` exercises idempotence plus the
 settings/auth/Cloak boundary in a temporary home. `./dot pi subagents --check`
-verifies the pinned package, exact routing assets, and installed package entries. `git
+verifies the pinned package, exact routing assets, and installed package entries.
+`bash scripts/tests/pi-extensions.test.sh` checks dry-run, idempotence, config
+merging, and work-profile boundaries; `./dot pi extensions --check` checks the
+reviewed core package pins and compaction fields. `git
 diff --check` and `./dot doctor` also apply.

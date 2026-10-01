@@ -21,9 +21,9 @@ load_local_env || true
 PI_SCAFFOLD_DIR="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
 TEMPLATE_AGENT_DIR="$PI_SCAFFOLD_DIR/agent"
 PACKAGE_NAME="@ogulcancelik/pi-codex-subagents"
-PACKAGE_VERSION="0.3.2"
+PACKAGE_VERSION="0.3.5"
 PACKAGE_SOURCE="npm:$PACKAGE_NAME@$PACKAGE_VERSION"
-EXPECTED_PI_VERSION="0.84.1"
+EXPECTED_PI_VERSION="0.99.2"
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$PI_ROOT/agent}"
 PI_BIN="${PI_BIN:-pi}"
@@ -210,7 +210,7 @@ pi_runtime_matches() {
   [ -n "$pi_path" ] || return 1
   resolved="$(node -e 'const fs = require("node:fs"); try { process.stdout.write(fs.realpathSync(process.argv[1])); } catch { process.exit(1); }' "$pi_path" 2>/dev/null || true)"
   case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js) ;;
+    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) ;;
     *) return 1 ;;
   esac
   version="$("$PI_BIN" --version 2>/dev/null || true)"
