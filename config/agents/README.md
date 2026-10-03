@@ -21,6 +21,17 @@ agents can discover it directly. Skills needed by only one runtime remain in
 that runtime's own skill directory. Same-named skills with different contents
 must be reviewed and merged; they must never be overwritten automatically.
 
+Account-specific Google Workspace instructions live in the private companion
+repo, not public templates. Restore the shared skill for Pi, Claude Code, Codex,
+and Hermes with:
+
+```bash
+bash /path/to/dotfiles-private/agents/install-google-workspace-skill.sh
+```
+
+This installs instructions only. Account wrappers and OAuth credentials stay
+machine-local; configure them separately. See the private repo README.
+
 The `local` skill lists are intended keepers owned by one agent. The `review`
 lists are archive candidates, not deletion instructions. Plugin `review` lists
 mean “disable and soak before removal.”
