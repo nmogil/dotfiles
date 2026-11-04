@@ -165,10 +165,10 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
       && echo "  ok   Codex subagent prompt, config, and templates present" \
       || echo "  MISS Codex subagent prompt, config, or templates missing"
     [ -f "$scaffold/agent/pi-codex-compaction.json" ] \
-      && grep -Fq 'npm:@ogulcancelik/pi-codex-compaction@0.1.1' \
+      && grep -Fq '"npm:@ogulcancelik/pi-codex-compaction"' \
         "$scaffold/agent/settings.example.json" \
-      && echo "  ok   pinned Codex compaction config present" \
-      || echo "  MISS pinned Codex compaction config missing"
+      && echo "  ok   floating Codex compaction config present" \
+      || echo "  MISS floating Codex compaction config missing"
     [ -f "$DOT_ROOT/scripts/setup-pi-profiles.sh" ] \
       && [ -f "$scaffold/agent/extensions/account-profile-indicator.ts" ] \
       && [ -f "$scaffold/agent/skills/coding-agent-account-routing/SKILL.md" ] \

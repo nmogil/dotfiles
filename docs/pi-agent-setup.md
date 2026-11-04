@@ -52,8 +52,8 @@ an authoritative Pi schema.
 | `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
 | `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.2`; migrates legacy local stacks |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
-| `agent/settings.example.json` | Credential-free defaults with reviewed, pinned web access and Codex compaction packages; real file is gitignored |
-| `agent/pi-codex-compaction.json` | Enables native Codex compaction at 90% context usage and shows a notification when it runs |
+| `agent/settings.example.json` | Credential-free defaults with pinned web access and deliberately floating Codex compaction; real file is gitignored |
+| `agent/pi-codex-compaction.json` | Legacy timing settings for Pi older than 0.84.4; current Pi uses settings.json → compaction |
 | `agent/models.work.example.json` | Credential-free work-profile detail-name template; model IDs and routing stay unchanged |
 | `agent/mcp.example.json` | Local/disabled placeholder servers only |
 | `templates/hermes/.../coding-agent-account-routing/SKILL.md` | Separates Hermes-native delegation from external Pi/Claude account selection |
@@ -117,22 +117,40 @@ selected Pi profile instead of launching bare `claude`.
 
 ## Codex native compaction
 
-The personal-profile settings example pins
-`@ogulcancelik/pi-codex-compaction@0.1.1`. The accompanying
-`agent/pi-codex-compaction.json` enables provider-native compaction at 90%
-context usage and displays a notification when it runs. It activates only for
-`openai-codex` models; the independent Anthropic work profile is unaffected.
-Native checkpoints are model-specific, so return to the Codex model that
-created a checkpoint before continuing older compacted history.
+The personal-profile settings example deliberately leaves compaction unpinned:
+`npm:@ogulcancelik/pi-codex-compaction`. Other package pins and independent
+work-account profiles are unchanged. Version 0.1.7 was verified on Pi 1.5.0;
+older 0.1.1 replay code can drop the tool declarations after native compaction,
+even while Pi's UI still counts the registered tools.
 
 Install it into an existing personal profile with:
 
 ```bash
 PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
-  pi install npm:@ogulcancelik/pi-codex-compaction@0.1.1
-cp "$DOTFILES_PI_SCAFFOLD_DIR/agent/pi-codex-compaction.json" \
-  "$HOME/.pi/agent/pi-codex-compaction.json"
+  pi install npm:@ogulcancelik/pi-codex-compaction
+# Future explicit refreshes:
+PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
+  pi update --extension npm:@ogulcancelik/pi-codex-compaction
 ```
+
+Unpinning permits updates; it does not schedule them. Review upstream changes
+before refreshing because extensions run with your permissions. After updates,
+run the local SDK regression, then `/reload` every running Pi session:
+
+```bash
+node scripts/tests/pi-compaction-tools.test.mjs
+```
+
+The regression covers both legacy checkpoints and current Pi compaction entries
+through resume and reload, including Codemode's grammar input. It uses synthetic
+history, fabricated credentials, and a loopback endpoint, then aborts at the
+final-payload hook; it does not contact a model, load MCP, or touch live histories.
+It requires a current npm-installed Pi with the reviewed Codex model catalog.
+
+On Pi 0.84.4+, compaction timing belongs in `settings.json` → `compaction`;
+`agent/pi-codex-compaction.json` is a legacy fallback only. Native compaction
+activates only for `openai-codex`. Checkpoints are model-specific, so return to
+the Codex model that created one before continuing older compacted history.
 
 ## Defuddle-backed web extraction
 
