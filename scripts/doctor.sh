@@ -46,7 +46,7 @@ for f in "${required[@]}"; do
 done
 
 # --- scripts executable ---
-for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
+for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-rex-safe-upgrade.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
   [ -e "$ROOT/$s" ] || continue
   if [ -x "$ROOT/$s" ]; then PASS "executable: $s"; else WARN "not executable: $s (chmod +x $s)"; fi
 done
@@ -92,6 +92,24 @@ if [ "$DOTFILES_ENABLE_HERMES" = 1 ]; then
   fi
 else
   PASS "Hermes config check skipped (disabled for this host)"
+fi
+
+if have rex && [ "$(uname -s)" = Linux ]; then
+  if "$ROOT/scripts/setup-rex-safe-upgrade.sh" --check >/dev/null 2>&1; then
+    PASS "rex-safe-upgrade + Pi pane recorder match"
+  else
+    WARN "rex-safe-upgrade drift (run: ./dot rex install --apply)"
+  fi
+  # --autostart=false: never start a server from a read-only check.
+  rex_running=$(rex --autostart=false whoami --json 2>/dev/null | sed -n 's/.*"rex_version": *"\([^"]*\)".*/\1/p')
+  rex_installed=$(rex version 2>/dev/null | sed -n 's/^rex \([^ ]*\).*/\1/p')
+  if [ -z "$rex_running" ]; then
+    PASS "Rex server not running (nothing to upgrade)"
+  elif [ "$rex_running" = "$rex_installed" ]; then
+    PASS "Rex server runs the installed version ($rex_installed)"
+  else
+    WARN "Rex server runs $rex_running, installed $rex_installed (run: rex-safe-upgrade)"
+  fi
 fi
 
 echo

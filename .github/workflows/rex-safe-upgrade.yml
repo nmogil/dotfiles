@@ -1,0 +1,35 @@
+name: Rex safe upgrade
+on:
+  pull_request:
+    paths:
+      - 'dot'
+      - 'scripts/rex-safe-upgrade.py'
+      - 'scripts/setup-rex-safe-upgrade.sh'
+      - 'scripts/tests/rex-safe-upgrade.test.py'
+      - 'scripts/tests/rex-pane-session.test.mjs'
+      - 'templates/pi-rex/**'
+      - '.github/workflows/rex-safe-upgrade.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'dot'
+      - 'scripts/rex-safe-upgrade.py'
+      - 'scripts/setup-rex-safe-upgrade.sh'
+      - 'scripts/tests/rex-safe-upgrade.test.py'
+      - 'scripts/tests/rex-pane-session.test.mjs'
+      - 'templates/pi-rex/**'
+      - '.github/workflows/rex-safe-upgrade.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/tests/rex-safe-upgrade.test.py -v
+      - run: node scripts/tests/rex-pane-session.test.mjs
+      - run: bash -n dot scripts/setup-rex-safe-upgrade.sh scripts/doctor.sh

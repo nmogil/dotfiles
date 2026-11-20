@@ -146,6 +146,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `templates/herdr/`, `scripts/setup-herdr-config.sh` | Portable Herdr/Reviewr preferences and drift-safe installer |
 | `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
+| `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -386,6 +387,22 @@ skill is installed into Hermes when available.
 Aliases in `.zshrc`: `hk` Hunk CLI, `hkd` diff viewer, `hkr` session review,
 `hkl` comment list, `hka` JSON-batch comment apply. Config lives at `~/.config/hunk/config.toml`
 (conservative defaults: auto theme/mode, line numbers, agent notes on).
+
+## Rex Server Upgrades
+
+Rex updates itself, but a running Rex server keeps its old version until it
+restarts, and a restart stops every program in its panes. `rex-safe-upgrade`
+records which conversation each Pi or Hermes pane has open, restarts the
+server, and reopens each one in its pane:
+
+```bash
+./dot rex install --apply   # once per Linux machine; then /reload open Pi sessions
+rex-safe-upgrade            # see what would happen
+rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
+```
+
+`./dot doctor` warns when the running server is behind the installed Rex. See
+[`docs/rex-safe-upgrade.md`](docs/rex-safe-upgrade.md).
 
 ## Manual Steps After Setup
 
