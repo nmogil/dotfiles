@@ -82,7 +82,9 @@ FAKE_REX = textwrap.dedent('''\
             sfile = typed[typed.index("--session") + 1] if "--session" in typed else None
             if b["block_id"] in st["resume_wrong"]: sfile = "/elsewhere.jsonl"
             rec = Path(os.environ["HOME"], ".local/state/rex-safe-upgrade/panes", b["block_id"].removeprefix("block:") + ".json")
-            rec.write_text(json.dumps({"pid": pid, "sessionFile": sfile}))
+            ticks = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+            if b["block_id"] in st["resume_incomplete"]: ticks = None
+            rec.write_text(json.dumps({"v": 2, "pid": pid, "startTicks": ticks, "sessionFile": sfile, "hasMessages": True}))
             b["process"] = {"foreground": {"name": "node", "pid": pid, "cwd": cwd}}
         elif "hermes" in typed:
             pid = detached([sys.executable, "-c", "import time; time.sleep(60)", "hermes", *typed[typed.index("--tui"):]])
@@ -154,14 +156,14 @@ class Base(unittest.TestCase):
         return b
 
     def pi_pane(self, record=True, session_file=True, agent_dir=None, record_pid=None,
-                state='idle', has_messages=True, sfile=None, old_schema=False, ticks=None):
+                state='idle', has_messages=True, sfile=None, old_schema=False, ticks=None, version=2):
         pid = self.spawn(['bash', '-c', 'exec -a pi sleep 60'])
         b = self.pane('node', pid, state=state, app='pi')
         if record:
             if session_file and not sfile:
                 sfile = self.home / f'{b[-4:]}.jsonl'
                 sfile.write_text('{}\n')
-            rec = {'v': 2, 'kind': 'pi', 'block': b, 'pid': record_pid or pid, 'startTicks': ticks or start_ticks(pid),
+            rec = {'v': version, 'kind': 'pi', 'block': b, 'pid': record_pid or pid, 'startTicks': ticks or start_ticks(pid),
                    'cwd': '/tmp', 'agentDir': agent_dir, 'sessionFile': str(sfile) if sfile else None,
                    'hasMessages': has_messages}
             if old_schema:
@@ -174,12 +176,13 @@ class Base(unittest.TestCase):
         return self.pane('python3.12', pid, app='hermes')
 
     def write_state(self, running='1.0', installed='2.0', reconnect=True, start_works=True,
-                    fail_send=(), resume_wrong=(), on_second_ls=None, comes_back_as=None):
+                    fail_send=(), resume_wrong=(), resume_incomplete=(), on_second_ls=None, comes_back_as=None):
         self.server_pid = self.spawn(['sleep', '60'])
         self.state_file.write_text(json.dumps({
             'running': running, 'installed': installed, 'server_pid': self.server_pid,
             'instance': 'old', 'endpoint': ENDPOINT, 'reconnect': reconnect, 'start_works': start_works,
             'fail_send': list(fail_send), 'resume_wrong': list(resume_wrong),
+            'resume_incomplete': list(resume_incomplete),
             'on_second_ls': on_second_ls or {}, 'ls_count': 0, 'spawned': [], 'calls': [],
             'comes_back_as': comes_back_as or installed,
             'sessions': [{'session_id': S, 'label': 'work', 'blocks': self.blocks,
@@ -237,8 +240,9 @@ class PlanTest(Base):
         self.pi_pane(record_pid=1)  # record left by an earlier pi in this pane
         self.pi_pane(old_schema=True)  # record from an older recorder
         self.pi_pane(ticks='1')  # same pid, different process (pid reused)
+        self.pi_pane(version=1)  # unknown record format
         r = self.assert_blocked()
-        self.assertEqual(r.stdout.count('type /reload in that pane'), 4, r.stdout)
+        self.assertEqual(r.stdout.count('type /reload in that pane'), 5, r.stdout)
 
     def test_safety_problems_are_not_waivable(self):
         self.pi_pane()
@@ -251,6 +255,17 @@ class PlanTest(Base):
         self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = 1  # status from another process
         self.assert_blocked("couldn't read the pane's state", 'same conversation open in another pane',
                             "pi hasn't reported whether it's busy", extra=['--allow-unresumable'])
+
+    def test_unknown_busy_state_is_never_waived(self):
+        self.pi_pane(record=False)  # already a waivable problem...
+        self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = 1  # ...and no status of its own
+        self.assert_blocked("pi hasn't reported whether it's busy", extra=['--allow-unresumable'])
+
+    def test_status_from_another_process_is_ignored(self):
+        self.pi_pane(state='working')
+        recs = self.blocks[-1]['program_status']['records']
+        recs.insert(0, {'state': 'idle', 'owner': {'pid': 1}})  # left over from an earlier program
+        self.assert_blocked('pi is working')
 
     def test_lost_session_file_blocks_but_empty_session_does_not(self):
         self.pi_pane(sfile=self.home / 'deleted.jsonl', has_messages=True)
@@ -384,6 +399,12 @@ class RestartTest(Base):
     def test_wrong_conversation_is_caught_by_verification(self):
         self.write_state(resume_wrong=[self.pi])
         r, plan = self.run_tool()
+        self.assertEqual(r.returncode, 5)
+        self.assertIn('NOT RUNNING the expected session', self.log())
+
+    def test_record_that_does_not_prove_the_new_process_fails_verification(self):
+        self.write_state(resume_incomplete=[self.pi])
+        r, _ = self.run_tool()
         self.assertEqual(r.returncode, 5)
         self.assertIn('NOT RUNNING the expected session', self.log())
 

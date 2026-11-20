@@ -173,6 +173,9 @@ Rex app, then type the commands from `plan.json` into the panes.
 - **Child processes of an agent** (MCP servers, subagents) stop with it. Pi
   and Hermes start their MCP servers again on resume. A subagent that is
   still running usually means the agent is working, which blocks the run.
+- **Not a security boundary.** It runs with your own permissions and trusts
+  your own files: the Pi records, and the identity of the agent that started a
+  run. Anyone who can tamper with those can already run `rex server stop`.
 - **Panes that ran an agent directly** (`rex run -- pi`) rather than from a
   shell may not come back with a shell prompt. The log then shows the command
   to run by hand.

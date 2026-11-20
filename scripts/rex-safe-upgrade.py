@@ -60,6 +60,8 @@ def rex(*args: str, timeout: int = 30) -> str:
         p = subprocess.run(["rex", "--autostart=false", *args], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as e:
         raise RexError(f"rex {' '.join(args[:3])}: timed out") from e
+    except OSError as e:
+        raise RexError(f"rex {' '.join(args[:3])}: {e}") from e
     if p.returncode != 0:
         raise RexError(f"rex {' '.join(args[:3])}: {p.stderr.strip() or p.stdout.strip()}")
     return p.stdout
@@ -168,6 +170,7 @@ class Pane:
     block: str
     fg_name: str = "-"
     fg_pid: int | None = None
+    fg_ticks: str | None = None  # start time: tells a reused pid apart
     cwd: str = ""
     state: str = "-"  # program_status state of the foreground program
     kind: str = "shell"  # shell | pi | hermes | unknown
@@ -224,9 +227,10 @@ def inspect_pane(p: Pane) -> None:
     p.fg_name, p.fg_pid = fg.get("name", "?"), fg["pid"]
     p.cwd = fg.get("cwd") or proc.get("home") or str(HOME)
     # Use the status only when it belongs to the program that runs now.
-    recs = [r for r in status.get("records") or [] if (r.get("owner") or {}).get("pid") in (None, p.fg_pid)]
-    p.state = recs[0].get("state", "-") if recs else "-"
-    owned = any((r.get("owner") or {}).get("pid") == p.fg_pid for r in recs)
+    p.fg_ticks = proc_start_ticks(p.fg_pid)
+    # Only a status reported by the program running now says whether it's busy.
+    owned = [r for r in status.get("records") or [] if (r.get("owner") or {}).get("pid") == p.fg_pid]
+    p.state = owned[0].get("state", "-") if owned else "-"
 
     if top and proc_name(top) in SHELLS:  # jobs started from the pane's shell
         extra = [c for c in proc_children(top) if c != p.fg_pid and not proc_name(c).startswith(SHELL_HELPERS)]
@@ -247,8 +251,9 @@ def inspect_pane(p: Pane) -> None:
         p.kind = "unknown"
         p.problem = f"'{p.fg_name}' is running and can't be resumed automatically"
         return
-    if not owned and not p.problem:  # can't tell whether the agent is busy
-        p.problem, p.hard = f"{p.kind} hasn't reported whether it's busy", True
+    if not owned:  # an agent we can't see the state of might be mid-task
+        p.problem = "; ".join(filter(None, [p.problem, f"{p.kind} hasn't reported whether it's busy"]))
+        p.hard = True
 
 
 def read_record(block: str) -> dict | None:
@@ -258,11 +263,16 @@ def read_record(block: str) -> dict | None:
         return None
 
 
+def valid_record(rec: dict | None, pid: int, ticks: str | None) -> bool:
+    """A current-format record written by exactly this pi process."""
+    return bool(rec and rec.get("v") == 2 and rec.get("pid") == pid and ticks
+                and rec.get("startTicks") == ticks and isinstance(rec.get("hasMessages"), bool))
+
+
 def classify_pi(p: Pane) -> None:
     p.kind = "pi"
     rec = read_record(p.block)
-    if (not rec or rec.get("pid") != p.fg_pid or "hasMessages" not in rec
-            or rec.get("startTicks") != proc_start_ticks(p.fg_pid)):
+    if not valid_record(rec, p.fg_pid, p.fg_ticks):
         p.problem = "pi hasn't recorded its session (started before the current recorder); type /reload in that pane"
         return
     sfile = rec.get("sessionFile")
@@ -381,7 +391,7 @@ def acquire_lock():
 
 
 def plan_key(panes: list[Pane]) -> dict:
-    return {p.block: (p.kind, p.fg_pid, p.resume_cmd, p.problem) for p in panes}
+    return {p.block: (p.kind, p.fg_pid, p.fg_ticks, p.resume_cmd, p.problem) for p in panes}
 
 
 def new_run_name() -> str:
@@ -535,7 +545,8 @@ def resumed(p: Pane) -> bool:
         return False
     if p.kind == "pi":
         rec = read_record(p.block)
-        return bool(rec and rec.get("pid") == pid and (p.target is None or rec.get("sessionFile") == p.target))
+        return (valid_record(rec, pid, proc_start_ticks(pid)) and pid != p.fg_pid
+                and (p.target is None or rec.get("sessionFile") == p.target))
     if p.kind == "hermes":
         return hermes_session(pid, proc_cmdline(pid))[0] == p.target
     return False
