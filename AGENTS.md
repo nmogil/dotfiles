@@ -85,6 +85,7 @@ bash scripts/tests/agent-configs.test.sh      # local override + portable defaul
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
 python3 scripts/tests/rex-safe-upgrade.test.py  # Rex upgrade planning + installer
+node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
 ./dot packages check                      # installed vs declared packages

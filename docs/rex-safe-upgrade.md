@@ -38,9 +38,10 @@ This installs two things:
   `/resume`, forks and `/reload`) and after each agent run, it writes
   `~/.local/state/rex-safe-upgrade/panes/<rex block id>.json` with Pi's
   process id and start time, the session file open in that Rex pane, and
-  whether the session has any messages yet. It deletes the record when the
-  session ends, so a failed write can never leave a record naming the wrong
-  conversation. Outside Rex it does nothing.
+  whether the session has any messages yet. Before Pi switches conversation
+  (`/new`, `/resume`, `/fork`, `/clone`) it deletes the record, so a failed
+  write leaves no record rather than a wrong one. If it can't delete the
+  record, it cancels the switch and says why. Outside Rex it does nothing.
 
 Pi processes that were already running when the extension was installed or
 updated haven't written a current record. Type `/reload` in each of them, or
@@ -97,9 +98,11 @@ resumed. Only one run can be in progress at a time.
    - two panes have the same conversation open;
    - Rex doesn't answer for a pane.
 
-   `--allow-unresumable` waives only the "can't be resumed" cases (unknown
-   programs, background jobs, unrecorded Pi, unknown Hermes session). Busy
-   agents, unreadable panes and duplicate conversations always block.
+   `--allow-unresumable` waives only the "can't be resumed" cases: unknown
+   programs, background jobs, unrecorded Pi, a Pi session file that has
+   disappeared, and an unknown Hermes session. Those programs are stopped and
+   not resumed. Busy agents, agents that haven't reported their state,
+   unreadable panes and duplicate conversations always block.
 3. Saves each pane's screen and the plan. Right before stopping, it checks the
    server and every pane again; if anything changed, it stops without changing
    anything.
@@ -187,6 +190,7 @@ Rex app, then type the commands from `plan.json` into the panes.
 
 ```bash
 python3 scripts/tests/rex-safe-upgrade.test.py -v
+node scripts/tests/rex-pane-session.test.mjs
 ```
 
 The tests run the real tool against a stateful fake `rex` command on `PATH`
@@ -195,4 +199,6 @@ and real processes: planning and every blocker (including which ones
 full restart with resume and verification, the app not reconnecting, the
 server never returning, the server coming back on the old version, a pane that
 fails, the wrong conversation coming back, a change during preflight, a
-concurrent run, and the installer. They never contact a live Rex server.
+concurrent run, and the installer. The second drives the Pi extension's
+handlers against real files, including a record that can't be removed. They
+never contact a live Rex server or start Pi.

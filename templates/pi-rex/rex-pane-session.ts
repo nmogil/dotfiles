@@ -61,8 +61,26 @@ export default function (pi) {
     write(ctx, event.reason ?? null, hasMessages);
   });
   pi.on("agent_end", async (_event, ctx) => write(ctx, "agent_end", true));
-  // Before /new, /resume, fork, reload or quit: drop the record, so a failed
-  // write for the next session leaves no record rather than a wrong one.
+  // Before /new, /resume, /fork or /clone: drop this session's record first,
+  // so if the next write fails there is no record rather than a wrong one.
+  // If it can't be dropped, cancel the switch: otherwise rex-safe-upgrade
+  // could later reopen the previous conversation in this pane.
+  const invalidate = (ctx) => {
+    try {
+      rmSync(file, { force: true });
+      return undefined;
+    } catch (err) {
+      ctx.ui.notify(
+        `rex-pane-session: can't remove ${file} (${err?.code ?? err}); session switch cancelled. ` +
+          "Fix that path, or remove this extension.",
+        "error",
+      );
+      return { cancel: true };
+    }
+  };
+  pi.on("session_before_switch", async (_event, ctx) => invalidate(ctx));
+  pi.on("session_before_fork", async (_event, ctx) => invalidate(ctx));
+  // On quit the process ends, so its pid can't match a later record check.
   pi.on("session_shutdown", async () => {
     try {
       rmSync(file, { force: true });
