@@ -122,6 +122,13 @@ def proc_name(pid: int) -> str:
         return "?"
 
 
+def proc_start_ticks(pid: int) -> str | None:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
 def proc_parent(pid: int) -> int:
     try:
         return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
@@ -168,6 +175,7 @@ class Pane:
     target: str | None = None  # session file or Hermes id being resumed
     source: str = ""  # how the target was found
     problem: str | None = None
+    hard: bool = False  # problem can't be waived with --allow-unresumable
     self_pane: bool = False
 
     @property
@@ -175,7 +183,8 @@ class Pane:
         return f"{self.session_label} / {self.window_label}"
 
 
-def inventory(self_block: str | None) -> list[Pane]:
+def inventory(self_id: str | None) -> list[Pane]:
+    """self_id is "<block>:<pid>:<start ticks>" of the agent that started the run."""
     panes: list[Pane] = []
     for s in rex_json("ls", "--json").get("sessions", []):
         sid, slabel = s["session_id"], s.get("label", "")
@@ -186,25 +195,29 @@ def inventory(self_block: str | None) -> list[Pane]:
             if not b.get("flavor", "").startswith("com.superlogical.terminal"):
                 continue
             pane = Pane(session=sid, session_label=slabel, block=b["block_id"],
-                        window_label=wlabels.get(b.get("window_id"), b.get("window_id", "")[-8:]),
-                        self_pane=(b["block_id"] == self_block))
+                        window_label=wlabels.get(b.get("window_id"), b.get("window_id", "")[-8:]))
             inspect_pane(pane)
+            pane.self_pane = bool(pane.fg_pid) and self_id == pane_identity(pane.block, pane.fg_pid)
             panes.append(pane)
     flag_duplicates(panes)
     return panes
+
+
+def pane_identity(block: str, pid: int) -> str:
+    return f"{block}:{pid}:{proc_start_ticks(pid)}"
 
 
 def inspect_pane(p: Pane) -> None:
     proc = block_call(p.session, p.block, "process")
     status = block_call(p.session, p.block, "program_status")
     if proc is None or status is None:
-        p.kind, p.problem = "unknown", "couldn't read the pane's state from Rex"
+        p.kind, p.problem, p.hard = "unknown", "couldn't read the pane's state from Rex", True
         return
     fg = proc.get("foreground") or {}
     top = (proc.get("child") or {}).get("pid")
     if not fg.get("pid"):
         if top:
-            p.kind, p.problem = "unknown", "Rex reports no foreground program"
+            p.kind, p.problem, p.hard = "unknown", "Rex reports no foreground program", True
         else:
             p.kind = "shell"  # pane has exited; nothing runs in it
         return
@@ -213,6 +226,7 @@ def inspect_pane(p: Pane) -> None:
     # Use the status only when it belongs to the program that runs now.
     recs = [r for r in status.get("records") or [] if (r.get("owner") or {}).get("pid") in (None, p.fg_pid)]
     p.state = recs[0].get("state", "-") if recs else "-"
+    owned = any((r.get("owner") or {}).get("pid") == p.fg_pid for r in recs)
 
     if top and proc_name(top) in SHELLS:  # jobs started from the pane's shell
         extra = [c for c in proc_children(top) if c != p.fg_pid and not proc_name(c).startswith(SHELL_HELPERS)]
@@ -232,6 +246,9 @@ def inspect_pane(p: Pane) -> None:
     else:
         p.kind = "unknown"
         p.problem = f"'{p.fg_name}' is running and can't be resumed automatically"
+        return
+    if not owned and not p.problem:  # can't tell whether the agent is busy
+        p.problem, p.hard = f"{p.kind} hasn't reported whether it's busy", True
 
 
 def read_record(block: str) -> dict | None:
@@ -244,8 +261,9 @@ def read_record(block: str) -> dict | None:
 def classify_pi(p: Pane) -> None:
     p.kind = "pi"
     rec = read_record(p.block)
-    if not rec or rec.get("pid") != p.fg_pid:
-        p.problem = "pi hasn't recorded its session (it started before the recorder); type /reload in that pane"
+    if (not rec or rec.get("pid") != p.fg_pid or "hasMessages" not in rec
+            or rec.get("startTicks") != proc_start_ticks(p.fg_pid)):
+        p.problem = "pi hasn't recorded its session (started before the current recorder); type /reload in that pane"
         return
     sfile = rec.get("sessionFile")
     p.source = "pane record"
@@ -304,6 +322,7 @@ def flag_duplicates(panes: list[Pane]) -> None:
     for group in seen.values():
         if len(group) > 1:
             for p in group:
+                p.hard = True
                 p.problem = "same conversation open in another pane: " + ", ".join(o.label for o in group if o is not p)
 
 
@@ -312,7 +331,7 @@ def blockers(panes: list[Pane], allow_unresumable: bool) -> list[str]:
     for p in panes:
         if p.state not in IDLE_STATES and not p.self_pane:
             out.append(f"{p.label}: {p.kind} is {p.state}")
-        if p.problem and not allow_unresumable:
+        if p.problem and (p.hard or not allow_unresumable):
             out.append(f"{p.label}: {p.problem}")
     return out
 
@@ -365,13 +384,17 @@ def plan_key(panes: list[Pane]) -> dict:
     return {p.block: (p.kind, p.fg_pid, p.resume_cmd, p.problem) for p in panes}
 
 
+def new_run_name() -> str:
+    return f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+
+
 def do_run(args) -> int:
-    run_dir = Path(args.run_dir) if args.run_dir else RUNS / dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    r = Run(run_dir)
     lock = acquire_lock()
     if not lock:
-        r.log("ABORT: another rex-safe-upgrade run is in progress")
+        print("ABORT: another rex-safe-upgrade run is in progress; nothing changed", flush=True)
         return 6
+    run_dir = Path(args.run_dir) if args.run_dir else RUNS / new_run_name()
+    r = Run(run_dir)
     try:
         return run_locked(r, args)
     finally:
@@ -391,7 +414,7 @@ def run_locked(r: Run, args) -> int:
 
     deadline = time.time() + args.wait_idle * 60
     while True:
-        panes = inventory(args.self_block)
+        panes = inventory(args.self_id)
         problems = blockers(panes, args.allow_unresumable)
         if not problems or time.time() >= deadline:
             break
@@ -416,7 +439,7 @@ def run_locked(r: Run, args) -> int:
     if not now or (now.get("instance_id"), now.get("pid")) != (info.get("instance_id"), info.get("pid")):
         r.log("ABORT, nothing changed: the Rex server changed during preflight")
         return 3
-    final = inventory(args.self_block)
+    final = inventory(args.self_id)
     problems = blockers(final, args.allow_unresumable)
     if problems or plan_key(final) != plan_key(panes):
         r.log("ABORT, nothing changed: panes changed during preflight. " + "; ".join(problems))
@@ -437,10 +460,11 @@ def restart_and_resume(r: Run, panes: list[Pane], info: dict) -> int:
     r.log(f"stopping server pid {old_pid}")
     try:
         subprocess.run(["rex", "--autostart=false", "server", "stop"], capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        pass  # checked below
+    except (subprocess.TimeoutExpired, OSError) as e:
+        r.log(f"warning: rex server stop: {e}")  # outcome checked below
     if not wait_for(lambda: not Path(f"/proc/{old_pid}").exists(), 90):
-        r.log(f"ABORT: server pid {old_pid} still running 90s after stop; nothing else changed")
+        manual(f"FAIL: server pid {old_pid} still running 90s after stop. Pane programs may already "
+               "have stopped: check each pane, and where an agent is gone, type:")
         return 3
     r.log("old server stopped (sessions saved)")
 
@@ -456,13 +480,16 @@ def restart_and_resume(r: Run, panes: list[Pane], info: dict) -> int:
         r.log(f"no reconnect from the Rex app in {RECONNECT_WAIT:.0f}s; starting the server here")
         try:
             subprocess.run(["rex", "server", "start"], capture_output=True, text=True, timeout=60)
-        except subprocess.TimeoutExpired:
-            pass
+        except (subprocess.TimeoutExpired, OSError) as e:
+            r.log(f"warning: rex server start: {e}")
     new = server_info() if wait_for(lambda: server_info() is not None, START_WAIT) else None
     if not new:
         manual("FAIL: the server did not come back. Start it with `rex server start` or open the Rex app, then:")
         return 4
     r.log(f"server back: {new.get('rex_version')} pid {new.get('pid')}, {new.get('session_count')} sessions")
+    upgraded = new.get("instance_id") != info.get("instance_id") and new.get("rex_version") == installed_version()
+    if not upgraded:
+        r.log(f"warning: the server is not a new instance of {installed_version()}; resuming agents anyway")
 
     failed: list[Pane] = []
     sent: list[Pane] = []
@@ -492,6 +519,9 @@ def restart_and_resume(r: Run, panes: list[Pane], info: dict) -> int:
     if failed:
         manual(f"done with problems: {len(failed)} pane(s) need attention:")
         return 5
+    if not upgraded:
+        r.log(f"done: {len(sent)} agents resumed, but the server was NOT upgraded")
+        return 7
     r.log(f"done: {len(sent)} agents resumed")
     return 0
 
@@ -519,13 +549,16 @@ def prune_runs(keep: Path) -> None:
 
 # ----------------------------------------------------------------------- main
 
-def caller_block() -> str | None:
-    """The Rex pane this command runs in, if REX_BLOCK really is our pane."""
+def caller_identity() -> str | None:
+    """block:pid:start of the agent this command runs under, if REX_BLOCK really
+    is our pane. Only that exact process is exempt from the busy check."""
     block, session = os.environ.get("REX_BLOCK"), os.environ.get("REX_SESSION")
     if not block or not session:
         return None
     fg = (block_call(session, block, "process") or {}).get("foreground") or {}
-    return block if fg.get("pid") and is_ancestor(fg["pid"], os.getpid()) else None
+    if not fg.get("pid") or not is_ancestor(fg["pid"], os.getpid()):
+        return None
+    return pane_identity(block, fg["pid"])
 
 
 def main() -> int:
@@ -538,7 +571,7 @@ def main() -> int:
     ap.add_argument("--allow-unresumable", action="store_true",
                     help="restart even if some panes run programs that can't be resumed")
     ap.add_argument("--even-if-current", action="store_true", help="restart even if already up to date")
-    ap.add_argument("--self-block", help=argparse.SUPPRESS)  # set by the detaching parent
+    ap.add_argument("--self-id", help=argparse.SUPPRESS)  # block:pid:start of the calling agent
     ap.add_argument("--run-dir", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
@@ -547,11 +580,11 @@ def main() -> int:
         print("No Rex server is running; nothing to restart.")
         return 1
     running, installed = info.get("rex_version", "?"), installed_version()
-    if args.self_block is None:
-        args.self_block = caller_block()
+    if args.self_id is None:
+        args.self_id = caller_identity()
 
     if args.command == "plan":
-        panes = inventory(args.self_block)
+        panes = inventory(args.self_id)
         print_plan(panes, running, installed)
         problems = blockers(panes, args.allow_unresumable)
         print()
@@ -571,14 +604,14 @@ def main() -> int:
     if running == installed and not args.even_if_current:
         print(f"Server already runs {installed}; nothing to do.")
         return 0
-    problems = blockers(inventory(args.self_block), args.allow_unresumable)
+    problems = blockers(inventory(args.self_id), args.allow_unresumable)
     if problems and (args.dry_run or not args.wait_idle):
         print("Not safe right now, nothing changed:\n  " + "\n  ".join(problems))
         return 2
     if args.dry_run:
         print("Dry run: preflight ok.")
         return 0
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = new_run_name()
     run_dir = RUNS / stamp
     cmd = ["systemd-run", *([] if os.getuid() == 0 else ["--user"]),
            f"--unit=rex-safe-upgrade-{stamp}", "--collect", "-p", "Type=exec",
@@ -586,7 +619,7 @@ def main() -> int:
            f"--setenv=XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
            f"--setenv=PATH={os.environ.get('PATH', '/usr/bin:/bin')}",
            sys.executable, os.path.abspath(__file__), "run", f"--run-dir={run_dir}",
-           f"--wait-idle={args.wait_idle}", f"--self-block={args.self_block or ''}"]
+           f"--wait-idle={args.wait_idle}", f"--self-id={args.self_id or ''}"]
     cmd += [f for f, on in (("--allow-unresumable", args.allow_unresumable),
                             ("--even-if-current", args.even_if_current)) if on]
     subprocess.run(cmd, check=True)

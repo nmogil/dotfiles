@@ -9,8 +9,8 @@ tool_dst="$HOME/.local/bin/rex-safe-upgrade"
 ext_src="$ROOT/templates/pi-rex/rex-pane-session.ts"
 ext_dst="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/rex-pane-session.ts"
 
-# The exact "Managed by dotfiles: <path>" line from the source file.
-marker_of() { grep -m1 -o 'Managed by dotfiles: [^ ]*' "$1"; }
+# Line number and full text of the "Managed by dotfiles: <path>" header line.
+marker_of() { grep -n -m1 'Managed by dotfiles: ' "$1"; }
 
 # Replace a file only if it is missing, identical, or an earlier copy we
 # installed (same marker line). Anything else is left alone.

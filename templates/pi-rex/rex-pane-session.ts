@@ -6,12 +6,23 @@
 // No-op outside Rex. See docs/rex-safe-upgrade.md.
 // @ts-nocheck
 
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const block = process.env.REX_BLOCK;
 const dir = join(homedir(), ".local/state/rex-safe-upgrade/panes");
+const file = block ? join(dir, `${block.slice("block:".length)}.json`) : "";
+
+// Kernel start time of this process: with the pid, it identifies this exact
+// process even if the pid is reused later.
+function startTicks() {
+  try {
+    return readFileSync("/proc/self/stat", "utf8").split(")").pop().trim().split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default function (pi) {
   if (!block || !/^block:[0-9a-f-]+$/.test(block)) return;
@@ -20,10 +31,12 @@ export default function (pi) {
   // session file must exist. A missing file then means it was lost, not empty.
   const write = (ctx, reason, hasMessages) => {
     const record = {
+      v: 2,
       kind: "pi",
       block,
       session: process.env.REX_SESSION ?? null,
       pid: process.pid,
+      startTicks: startTicks(),
       cwd: ctx.cwd,
       agentDir: process.env.PI_CODING_AGENT_DIR ?? null,
       sessionFile: ctx.sessionManager.getSessionFile() ?? null,
@@ -34,7 +47,6 @@ export default function (pi) {
     };
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const file = join(dir, `${block.slice("block:".length)}.json`);
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(record, null, 2), { mode: 0o600 });
       renameSync(tmp, file);
@@ -49,4 +61,13 @@ export default function (pi) {
     write(ctx, event.reason ?? null, hasMessages);
   });
   pi.on("agent_end", async (_event, ctx) => write(ctx, "agent_end", true));
+  // Before /new, /resume, fork, reload or quit: drop the record, so a failed
+  // write for the next session leaves no record rather than a wrong one.
+  pi.on("session_shutdown", async () => {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // Best effort.
+    }
+  });
 }

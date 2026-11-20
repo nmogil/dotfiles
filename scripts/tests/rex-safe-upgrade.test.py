@@ -66,10 +66,10 @@ FAKE_REX = textwrap.dedent('''\
         for b in blocks():  # Rex restores every pane as a fresh shell
             b["process"] = {"foreground": {"name": "zsh", "pid": 1, "cwd": b["process"]["foreground"]["cwd"]}}
             b["program_status"] = {"records": []}
-        if st["reconnect"]: st.update(running=st["installed"], instance="new")
+        if st["reconnect"]: st.update(running=st["comes_back_as"], instance="new")
         out({})
     if cmd == ["server", "start"]:
-        if st["start_works"]: st.update(running=st["installed"], instance="new")
+        if st["start_works"]: st.update(running=st["comes_back_as"], instance="new")
         out({})
     if cmd[:1] == ["send"]:
         if opt("-b") in st["fail_send"]: save(); sys.exit(1)
@@ -94,6 +94,10 @@ FAKE_REX = textwrap.dedent('''\
 S = 'session:00000000-0000-0000-0000-000000000001'
 W = 'window:00000000-0000-0000-0000-000000000002'
 ENDPOINT = 'unix:///tmp/fake-rex.sock'
+
+
+def start_ticks(pid):
+    return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
 
 
 def detached_pid(argv):
@@ -150,16 +154,19 @@ class Base(unittest.TestCase):
         return b
 
     def pi_pane(self, record=True, session_file=True, agent_dir=None, record_pid=None,
-                state='idle', has_messages=True, sfile=None):
+                state='idle', has_messages=True, sfile=None, old_schema=False, ticks=None):
         pid = self.spawn(['bash', '-c', 'exec -a pi sleep 60'])
         b = self.pane('node', pid, state=state, app='pi')
         if record:
             if session_file and not sfile:
                 sfile = self.home / f'{b[-4:]}.jsonl'
                 sfile.write_text('{}\n')
-            self.records.joinpath(b.removeprefix('block:') + '.json').write_text(json.dumps({
-                'kind': 'pi', 'block': b, 'pid': record_pid or pid, 'cwd': '/tmp', 'agentDir': agent_dir,
-                'sessionFile': str(sfile) if sfile else None, 'hasMessages': has_messages}))
+            rec = {'v': 2, 'kind': 'pi', 'block': b, 'pid': record_pid or pid, 'startTicks': ticks or start_ticks(pid),
+                   'cwd': '/tmp', 'agentDir': agent_dir, 'sessionFile': str(sfile) if sfile else None,
+                   'hasMessages': has_messages}
+            if old_schema:
+                del rec['v'], rec['startTicks'], rec['hasMessages']
+            self.records.joinpath(b.removeprefix('block:') + '.json').write_text(json.dumps(rec))
         return b
 
     def hermes_pane(self, resume='H-42'):
@@ -167,13 +174,14 @@ class Base(unittest.TestCase):
         return self.pane('python3.12', pid, app='hermes')
 
     def write_state(self, running='1.0', installed='2.0', reconnect=True, start_works=True,
-                    fail_send=(), resume_wrong=(), on_second_ls=None):
+                    fail_send=(), resume_wrong=(), on_second_ls=None, comes_back_as=None):
         self.server_pid = self.spawn(['sleep', '60'])
         self.state_file.write_text(json.dumps({
             'running': running, 'installed': installed, 'server_pid': self.server_pid,
             'instance': 'old', 'endpoint': ENDPOINT, 'reconnect': reconnect, 'start_works': start_works,
             'fail_send': list(fail_send), 'resume_wrong': list(resume_wrong),
             'on_second_ls': on_second_ls or {}, 'ls_count': 0, 'spawned': [], 'calls': [],
+            'comes_back_as': comes_back_as or installed,
             'sessions': [{'session_id': S, 'label': 'work', 'blocks': self.blocks,
                           'windows': [{'window_id': W, 'label': 'tab'}]}]}))
 
@@ -227,8 +235,22 @@ class PlanTest(Base):
     def test_unrecorded_pi_blocks_with_reload_hint(self):
         self.pi_pane(record=False)
         self.pi_pane(record_pid=1)  # record left by an earlier pi in this pane
+        self.pi_pane(old_schema=True)  # record from an older recorder
+        self.pi_pane(ticks='1')  # same pid, different process (pid reused)
         r = self.assert_blocked()
-        self.assertEqual(r.stdout.count('type /reload in that pane'), 2, r.stdout)
+        self.assertEqual(r.stdout.count('type /reload in that pane'), 4, r.stdout)
+
+    def test_safety_problems_are_not_waivable(self):
+        self.pi_pane()
+        self.blocks[-1]['fail_calls'] = ['program_status']
+        shared = self.home / 'shared.jsonl'
+        shared.write_text('{}\n')
+        self.pi_pane(sfile=shared)
+        self.pi_pane(sfile=shared)
+        self.pi_pane()
+        self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = 1  # status from another process
+        self.assert_blocked("couldn't read the pane's state", 'same conversation open in another pane',
+                            "pi hasn't reported whether it's busy", extra=['--allow-unresumable'])
 
     def test_lost_session_file_blocks_but_empty_session_does_not(self):
         self.pi_pane(sfile=self.home / 'deleted.jsonl', has_messages=True)
@@ -261,8 +283,13 @@ class PlanTest(Base):
     def test_busy_agent_blocks_except_the_invoking_pane(self):
         busy = self.pi_pane(state='working')
         self.assert_blocked('pi is working')
-        r, _ = self.run_tool('--dry-run', f'--self-block={busy}')
+        pid = self.blocks[-1]['process']['foreground']['pid']
+        r, _ = self.run_tool('--dry-run', f'--self-id={busy}:{pid}:{start_ticks(pid)}')
         self.assertEqual(r.returncode, 0, r.stdout)
+        # Naming the pane alone, or a different process, exempts nothing.
+        for forged in (busy, f'{busy}:{pid}:1'):
+            r, _ = self.run_tool('--dry-run', f'--self-id={forged}')
+            self.assertEqual(r.returncode, 2, r.stdout)
 
     def test_waiting_for_input_counts_as_busy(self):
         self.pi_pane(state='blocked')
@@ -347,6 +374,13 @@ class RestartTest(Base):
         self.assertIn(f"type in that pane: {plan[self.pi]['resume_cmd']}", log)
         self.assertEqual(log.count('type in that pane'), 1)
 
+    def test_server_that_comes_back_on_the_old_version_is_reported(self):
+        self.write_state(comes_back_as='1.0')
+        r, _ = self.run_tool()
+        self.assertEqual(r.returncode, 7, r.stdout)
+        self.assertIn('the server was NOT upgraded', self.log())
+        self.assertIn('verify work / tab: ok', self.log())  # agents still resumed
+
     def test_wrong_conversation_is_caught_by_verification(self):
         self.write_state(resume_wrong=[self.pi])
         r, plan = self.run_tool()
@@ -408,6 +442,13 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('not installed by dotfiles', r.stderr)
         self.assertIn('hand-written', self.ext.read_text())
         self.assertFalse(self.tool.exists())
+
+    def test_marker_must_match_line_and_position(self):
+        self.ext.parent.mkdir(parents=True)
+        src = (ROOT / 'templates/pi-rex/rex-pane-session.ts').read_text().splitlines()[0]
+        self.ext.write_text(f'// someone else\n{src}\n')
+        self.assertNotEqual(self.setup('--apply').returncode, 0)
+        self.assertTrue(self.ext.read_text().startswith('// someone else'))
 
     def test_respects_pi_agent_dir(self):
         self.env['PI_CODING_AGENT_DIR'] = str(self.home / 'work-agent')

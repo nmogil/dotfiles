@@ -37,11 +37,14 @@ This installs two things:
   `PI_CODING_AGENT_DIR`). Whenever Pi starts a session (including `/new`,
   `/resume`, forks and `/reload`) and after each agent run, it writes
   `~/.local/state/rex-safe-upgrade/panes/<rex block id>.json` with Pi's
-  process id, the session file open in that Rex pane, and whether the session
-  has any messages yet. Outside Rex it does nothing.
+  process id and start time, the session file open in that Rex pane, and
+  whether the session has any messages yet. It deletes the record when the
+  session ends, so a failed write can never leave a record naming the wrong
+  conversation. Outside Rex it does nothing.
 
-Pi processes that were already running when the extension was installed haven't
-written a record yet. Type `/reload` in each of them, or restart them.
+Pi processes that were already running when the extension was installed or
+updated haven't written a current record. Type `/reload` in each of them, or
+restart them. The plan lists every pane that still needs it.
 
 `--apply` only replaces files it installed earlier (they carry the same
 `Managed by dotfiles: <path>` line as the repo copy). If either target is
@@ -84,8 +87,8 @@ resumed. Only one run can be in progress at a time.
 1. Does nothing if the server already runs the installed version
    (`--even-if-current` overrides).
 2. Checks every pane. It stops, changing nothing, if any of these is true:
-   - an agent is working or waiting for an answer (the pane that started the
-     run is exempt);
+   - an agent is working or waiting for an answer, or hasn't reported its
+     state (the agent process that started the run is exempt);
    - a pane runs a program it can't bring back, such as a dev server or an
      editor, or a shell has background jobs;
    - a Pi pane has no record from its current process (fix: `/reload` in that
@@ -93,6 +96,10 @@ resumed. Only one run can be in progress at a time.
    - Hermes's session can't be determined;
    - two panes have the same conversation open;
    - Rex doesn't answer for a pane.
+
+   `--allow-unresumable` waives only the "can't be resumed" cases (unknown
+   programs, background jobs, unrecorded Pi, unknown Hermes session). Busy
+   agents, unreadable panes and duplicate conversations always block.
 3. Saves each pane's screen and the plan. Right before stopping, it checks the
    server and every pane again; if anything changed, it stops without changing
    anything.
@@ -111,7 +118,8 @@ resumed. Only one run can be in progress at a time.
    A pane that fails doesn't stop the others.
 7. Checks that each pane runs the same conversation again: Pi's new record
    must name the same session file, and Hermes must have been resumed with the
-   same id.
+   same id. It also checks that the server that came back is a new instance
+   running the installed version.
 
 ### Options
 
@@ -121,6 +129,19 @@ resumed. Only one run can be in progress at a time.
 | `--wait-idle MIN` | Wait up to MIN minutes for busy agents to finish before giving up |
 | `--allow-unresumable` | Go ahead even though some programs can't be resumed. They stay stopped. |
 | `--even-if-current` | Restart even if the server is already up to date |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Done, or nothing to do |
+| 1 | No Rex server running |
+| 2 | Not safe right now; nothing changed |
+| 3 | Server changed during preflight (nothing changed), or the old server didn't stop |
+| 4 | Server didn't come back; the log lists the commands to resume each pane |
+| 5 | Some panes didn't resume; the log lists their commands |
+| 6 | Another run is in progress; nothing changed |
+| 7 | Agents resumed, but the server that came back isn't the installed version |
 
 ## Logs and recovery
 
@@ -166,7 +187,9 @@ python3 scripts/tests/rex-safe-upgrade.test.py -v
 ```
 
 The tests run the real tool against a stateful fake `rex` command on `PATH`
-and real processes: planning and every blocker, a full restart with resume and
-verification, the app not reconnecting, the server never returning, a pane
-that fails, the wrong conversation coming back, a change during preflight, a
+and real processes: planning and every blocker (including which ones
+`--allow-unresumable` can't waive, reused pids and forged self-exemptions), a
+full restart with resume and verification, the app not reconnecting, the
+server never returning, the server coming back on the old version, a pane that
+fails, the wrong conversation coming back, a change during preflight, a
 concurrent run, and the installer. They never contact a live Rex server.
