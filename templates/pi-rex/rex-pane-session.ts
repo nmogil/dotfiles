@@ -1,8 +1,9 @@
 // Managed by dotfiles: templates/pi-rex/rex-pane-session.ts. Install: ./dot rex install --apply
 // Records which pi session is open in which Rex pane, so `rex-safe-upgrade`
 // can resume every agent after a Rex server restart.
-// Writes ~/.local/state/rex-safe-upgrade/panes/<REX_BLOCK>.json on session start
-// and on /new, /resume and /fork. No-op outside Rex.
+// Writes ~/.local/state/rex-safe-upgrade/panes/<REX_BLOCK>.json when a session
+// starts (including /new, /resume, /fork and /reload) and after each agent run.
+// No-op outside Rex. See docs/rex-safe-upgrade.md.
 // @ts-nocheck
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -15,7 +16,9 @@ const dir = join(homedir(), ".local/state/rex-safe-upgrade/panes");
 export default function (pi) {
   if (!block || !/^block:[0-9a-f-]+$/.test(block)) return;
 
-  pi.on("session_start", async (event, ctx) => {
+  // hasMessages: the agent has run at least once in this session, so its
+  // session file must exist. A missing file then means it was lost, not empty.
+  const write = (ctx, reason, hasMessages) => {
     const record = {
       kind: "pi",
       block,
@@ -25,7 +28,8 @@ export default function (pi) {
       agentDir: process.env.PI_CODING_AGENT_DIR ?? null,
       sessionFile: ctx.sessionManager.getSessionFile() ?? null,
       sessionId: ctx.sessionManager.getSessionId() ?? null,
-      reason: event.reason ?? null,
+      hasMessages,
+      reason,
       updatedAt: new Date().toISOString(),
     };
     try {
@@ -35,7 +39,14 @@ export default function (pi) {
       writeFileSync(tmp, JSON.stringify(record, null, 2), { mode: 0o600 });
       renameSync(tmp, file);
     } catch {
-      // Best effort: rex-safe-upgrade falls back to transcript matching.
+      // Best effort. Without a current record, rex-safe-upgrade refuses to
+      // restart and asks for /reload in this pane.
     }
+  };
+
+  pi.on("session_start", async (event, ctx) => {
+    const hasMessages = ctx.sessionManager.getEntries().some((e) => e.type === "message" && e.message?.role === "user");
+    write(ctx, event.reason ?? null, hasMessages);
   });
+  pi.on("agent_end", async (_event, ctx) => write(ctx, "agent_end", true));
 }
