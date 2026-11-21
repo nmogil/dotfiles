@@ -79,7 +79,7 @@ path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 package_dir="$PI_CODING_AGENT_DIR/npm/node_modules/@ogulcancelik/pi-codex-subagents"
 mkdir -p "$package_dir"
-printf '%s\n' '{"name":"@ogulcancelik/pi-codex-subagents","version":"0.3.2"}' \
+printf '%s\n' '{"name":"@ogulcancelik/pi-codex-subagents","version":"0.3.5"}' \
   > "$package_dir/package.json"
 SH
 chmod +x "$FAKE_PI_TARGET"
@@ -94,7 +94,7 @@ HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
 
 test "$(wc -l < "$CALLS")" -eq 2
 test "$(sort -u "$CALLS")" = \
-  "install npm:@ogulcancelik/pi-codex-subagents@0.3.2"
+  "install npm:@ogulcancelik/pi-codex-subagents@0.3.5"
 test ! -e "$AGENT_DIR/subagents.json"
 test ! -e "$AGENT_DIR/agent-tool-description.md"
 test ! -e "$AGENT_DIR/agents"
@@ -112,7 +112,7 @@ settings = json.loads(Path(sys.argv[1]).read_text())
 backup = json.loads(Path(sys.argv[2]).read_text())
 assert settings["packages"] == [
     "npm:@acme/pi-subagents@1.0.0",
-    "npm:@ogulcancelik/pi-codex-subagents@0.3.2",
+    "npm:@ogulcancelik/pi-codex-subagents@0.3.5",
 ]
 assert "/tmp/threeonefour-7f86a2931f83b/packages/pi-subagents" in backup["packages"]
 assert "/opt/custom-delegator/packages/pi-herdr" in backup["packages"]
@@ -190,7 +190,7 @@ settings["packages"] = [
     if entry != "npm:@ogulcancelik/pi-codex-subagents@0.3.1"
 ]
 settings["packages"][-1] = {
-    "source": "npm:@ogulcancelik/pi-codex-subagents@0.3.2",
+    "source": "npm:@ogulcancelik/pi-codex-subagents@0.3.5",
     "extensions": [],
 }
 path.write_text(json.dumps(settings, indent=2) + "\n")

@@ -23,7 +23,7 @@ cp "$AGENT/settings.json" "$TMP/before.json"
 cat > "$PI_BIN" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "$1" = --version ]; then echo 0.99.2; exit 0; fi
+if [ "$1" = --version ]; then echo 1.6.0; exit 0; fi
 [ "$1" = install ] || exit 2
 [ "${PI_TEST_FAIL_INSTALL:-0}" != 1 ] || exit 42
 printf '%s\n' "$2" >> "$PI_TEST_CALLS"
@@ -90,7 +90,7 @@ from pathlib import Path
 settings = json.loads(Path(sys.argv[1]).read_text())
 assert settings == {"defaultProvider": "anthropic", "packages": [
     "npm:@ogulcancelik/pi-codex-subagents@0.3.5",
-    "npm:@ogulcancelik/pi-anthropic-image-cap@0.1.0",
+    "npm:@ogulcancelik/pi-anthropic-image-cap@0.2.0",
 ]}
 PY
 
@@ -116,7 +116,7 @@ fi
 test "$(wc -l < "$PI_TEST_CALLS")" -eq 7
 
 printf '%s\n' '{}' > "$FAIL/settings.json"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 0.99.2' > "$TMP/not-npm-pi"
+printf '%s\n' '#!/usr/bin/env bash' 'echo 1.6.0' > "$TMP/not-npm-pi"
 chmod +x "$TMP/not-npm-pi"
 if PI_CODING_AGENT_DIR="$FAIL" PI_BIN="$TMP/not-npm-pi" "$ROOT/dot" pi extensions --apply >/dev/null 2>&1; then
   echo 'expected non-npm Pi layout to be rejected' >&2; exit 1
