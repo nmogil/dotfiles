@@ -17,7 +17,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 AGENT_DIR="$TMP/.pi/agent"
 FAKE_PI="$TMP/bin/pi"
-FAKE_PI_TARGET="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+FAKE_PI_TARGET="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 CALLS="$TMP/pi-calls.log"
 mkdir -p "$TMP/bin" "$(dirname "$FAKE_PI_TARGET")" \
   "$AGENT_DIR/pi-codex-subagents" \
@@ -52,7 +52,7 @@ set -euo pipefail
 : "${PI_CODING_AGENT_DIR:?}"
 : "${PI_TEST_CALLS:?}"
 if [ "${1:-}" = "--version" ]; then
-  printf '%s\n' "${PI_TEST_VERSION:-0.84.1}"
+  printf '%s\n' "${PI_TEST_VERSION:-1.6.0}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$PI_TEST_CALLS"
@@ -203,10 +203,10 @@ fi
 
 BAD_PI="$TMP/badbin/pi"
 mkdir -p "$(dirname "$BAD_PI")"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 0.84.1' > "$BAD_PI"
+printf '%s\n' '#!/usr/bin/env bash' 'echo 1.6.0' > "$BAD_PI"
 chmod +x "$BAD_PI"
-doctor_output="$(HOME="$TMP" PATH="$TMP/badbin:$PATH" "$ROOT/dot" pi doctor)"
+doctor_output="$(HOME="$TMP" DOTFILES_PI_CONFIG_DIR="$TMP/no-pi-config" PATH="$TMP/badbin:$PATH" "$ROOT/dot" pi doctor)"
 printf '%s\n' "$doctor_output" | grep -Fq \
-  'WARN Pi 0.84.1 is not the required npm package layout'
+  'WARN Pi 1.6.0 is not the required npm package layout'
 
 printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets/runtime'
