@@ -279,11 +279,11 @@ if should_install "Herdr (agent session cockpit — https://herdr.dev)"; then
 fi
 
 # -----------------------------------------------------------------------------
-# Step 7e: Herdr integrations/config + Reviewr + optional VPS Hermes config
+# Step 7e: Herdr integrations/config + optional VPS Hermes config
 # Runs after Claude/Codex install. Hermes is VPS-only and is touched only when
 # DOTFILES_ENABLE_HERMES=1; the default workstation role never invokes it.
 # -----------------------------------------------------------------------------
-if should_install "Herdr integrations (pi, claude, codex; optional VPS hermes) + portable configs + Reviewr"; then
+if should_install "Herdr integrations (pi, claude, codex; optional VPS hermes) + portable configs"; then
     section "Herdr integrations"
     HERDR_BIN="$(command -v herdr || true)"
     [ -z "$HERDR_BIN" ] && [ -x "$HOME/.local/bin/herdr" ] && HERDR_BIN="$HOME/.local/bin/herdr"
@@ -306,13 +306,7 @@ if should_install "Herdr integrations (pi, claude, codex; optional VPS hermes) +
         run bash "$DOTFILES_DIR/server/scripts/patch-herdr-codex-detection.sh" \
             || log "Codex detection patch failed — re-run server/scripts/patch-herdr-codex-detection.sh later"
 
-        run "$HERDR_BIN" plugin install persiyanov/herdr-reviewr --yes \
-            || log "Reviewr plugin install failed — re-run: herdr plugin install persiyanov/herdr-reviewr --yes"
         run bash "$DOTFILES_DIR/scripts/setup-herdr-config.sh" --apply
-
-        mkdir -p "$HOME/.local/bin"
-        run install -m 0755 "$DOTFILES_DIR/bin/reviewr" "$HOME/.local/bin/reviewr"
-        log "Installed reviewr wrapper (opens Reviewr beside the active agent when possible)"
     fi
 
     HERDR_SKILL_URL="https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md"

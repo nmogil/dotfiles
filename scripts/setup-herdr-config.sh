@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply the portable Herdr profile and Reviewr plugin preferences.
+# Apply the portable Herdr profile preferences.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,8 +12,8 @@ usage() {
 Usage: scripts/setup-herdr-config.sh [--dry-run | --apply | --check]
 
   --dry-run  Report config drift; write nothing (default).
-  --apply    Install the portable Herdr and Reviewr configs with backups.
-  --check    Exit non-zero if either config is missing or differs.
+  --apply    Install the portable Herdr config with backups.
+  --check    Exit non-zero if the config is missing or differs.
 
 Plugin binaries and agent integrations are installed separately by setup-linux.sh.
 EOF
@@ -31,7 +31,6 @@ done
 
 sources=(
   "config.toml"
-  "plugins/config/persiyanov.reviewr/config.toml"
 )
 
 drift=0

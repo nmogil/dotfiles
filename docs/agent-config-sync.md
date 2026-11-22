@@ -34,7 +34,6 @@ cd ~/github_repos/personal/dotfiles
 for agent in pi claude codex; do
   command -v "$agent" >/dev/null 2>&1 && herdr integration install "$agent"
 done
-herdr plugin install persiyanov/herdr-reviewr --yes
 ./dot doctor
 ```
 
@@ -60,7 +59,6 @@ cd ~/github_repos/personal/dotfiles
 for agent in pi claude codex; do
   command -v "$agent" >/dev/null 2>&1 && herdr integration install "$agent"
 done
-herdr plugin install persiyanov/herdr-reviewr --yes
 
 ./dot pi doctor
 ./dot pi profiles --check
@@ -86,7 +84,7 @@ hermes config check
 
 `setup.sh` (macOS) and `setup-linux.sh` apply Herdr preferences everywhere and
 Hermes preferences only when `DOTFILES_ENABLE_HERMES=1`. Linux setup installs
-the Pi, Claude, and Codex Herdr integrations plus Reviewr; it installs the
+the Pi, Claude, and Codex Herdr integrations; it installs the
 Hermes integration only on an enabled VPS. Hermes itself continues to use its
 official installer/update flow.
 
@@ -99,12 +97,9 @@ official installer/update flow.
 - Vesper theme and pane-history preference
 - agent labels and panel sorting
 - sound disabled
-- Reviewr toggle bindings (`cmd+r` and `prefix+shift+v`)
-- Reviewr split/right placement and matching theme
 
 `./dot herdr config --apply` backs up differing files and installs exact copies.
-The Reviewr plugin binary and agent integrations are installed by the platform
-setup scripts, not stored in Git.
+Agent integrations are installed by the platform setup scripts, not stored in Git.
 
 ### Pi
 

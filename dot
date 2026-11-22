@@ -59,7 +59,7 @@ Usage: ./dot <command> [args]
   claude hooks [flags] Wire claude-memory-compiler capture hooks into
                        ~/.claude/settings.json (--apply/--check/--dry-run;
                        see docs/claude-memory-compiler.md)
-  herdr config [flags] Apply/check portable Herdr + Reviewr preferences
+  herdr config [flags] Apply/check portable Herdr preferences
   hermes config [flags] Deep-merge/check credential-free Hermes preferences
   git-identity check   Check identity/hooks in the current repository
   git-identity install <policy.json>  Install opt-in remote-scoped Git guards

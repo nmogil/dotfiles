@@ -143,7 +143,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `config/dotfiles/local.env.example` | Template for machine-local overrides (copy to `~/.config/dotfiles/local.env`) |
 | `scripts/lib/local-env.sh` | Loader for the local config layer + portable defaults |
 | `scripts/tests/local-env.test.sh` | Focused test for override loading and defaults |
-| `templates/herdr/`, `scripts/setup-herdr-config.sh` | Portable Herdr/Reviewr preferences and drift-safe installer |
+| `templates/herdr/`, `scripts/setup-herdr-config.sh` | Portable Herdr preferences and drift-safe installer |
 | `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
@@ -219,7 +219,7 @@ Component groups (each is `[Y/n]` in Custom mode):
 11. **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
 12. **Codex CLI** — `npm install -g @openai/codex`
 13. **Herdr** — agent session cockpit, official installer (`curl -fsSL https://herdr.dev/install.sh | sh`)
-14. **Herdr integrations/config** — Pi/Claude/Codex integrations, Reviewr, the Codex detection patch, and portable Herdr preferences; Hermes integration/config is VPS-only behind `DOTFILES_ENABLE_HERMES=1`
+14. **Herdr integrations/config** — Pi/Claude/Codex integrations, the Codex detection patch, and portable Herdr preferences; Hermes integration/config is VPS-only behind `DOTFILES_ENABLE_HERMES=1`
 15. **Hunk** — `npm install -g hunkdiff` diff-review TUI, copies `config/hunk/config.toml`, symlinks the bundled `hunk-review` skill into `~/.claude/skills/`, and installs its Hermes skill only on an enabled Hermes VPS
 16. **lazygit** — latest release binary
 17. **flyctl**
@@ -272,7 +272,7 @@ scaffold checkout; a fork-local `templates/pi/` works as a fallback.
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package setup
 ./dot pi subagents --apply    # install pinned @ogulcancelik/pi-codex-subagents
 ./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
-./dot herdr config --apply    # install exact Herdr + Reviewr preferences
+./dot herdr config --apply    # install exact Herdr preferences
 # VPS only (DOTFILES_ENABLE_HERMES=1): ./dot hermes config --apply
 ```
 
@@ -357,9 +357,9 @@ tmux remains installed as a fallback only.
    "Update available" and "Hooks need review" screens classify as **blocked**
    instead of idle. Idempotent; re-run it if Herdr refreshes its remote
    manifests and the rules disappear.
-4. **Reviewr and portable config** — installs `persiyanov/herdr-reviewr`, copies
-   the Vesper/keybinding profile from `templates/herdr/`, and deep-merges the
-   allowlisted Hermes preferences without copying secrets or runtime state.
+4. **Portable config** — copies the Vesper/keybinding profile from
+   `templates/herdr/`, and deep-merges the allowlisted Hermes preferences
+   without copying secrets or runtime state.
 5. **Hermes `herdr` skill** — `hermes skills install
    https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md`,
    skipped with a log line if Hermes isn't installed or authenticated yet.

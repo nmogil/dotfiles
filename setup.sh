@@ -206,7 +206,6 @@ if command -v herdr >/dev/null 2>&1; then
     if [ "$DOTFILES_ENABLE_HERMES" = 1 ] && command -v hermes >/dev/null 2>&1; then
         herdr integration install hermes || true
     fi
-    herdr plugin install persiyanov/herdr-reviewr --yes || true
 fi
 if [ "$DOTFILES_ENABLE_HERMES" = 1 ] && command -v hermes >/dev/null 2>&1; then
     hermes config migrate || true
