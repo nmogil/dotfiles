@@ -8,16 +8,6 @@ auto_switch = false
 show_agent_labels_on_pane_borders = true
 agent_panel_sort = "spaces"
 
-[[keys.command]]
-key = "cmd+r"
-type = "plugin_action"
-command = "persiyanov.reviewr.toggle"
-
-[[keys.command]]
-key = "prefix+shift+v"
-type = "plugin_action"
-command = "persiyanov.reviewr.toggle"
-
 [ui.sound]
 enabled = false
 

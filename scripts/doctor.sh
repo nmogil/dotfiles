@@ -39,7 +39,7 @@ fi
 
 required=(setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh \
          Brewfile .zshrc .gitconfig .p10k.zsh .tmux.conf config/hunk/config.toml config/ghostty/config \
-         templates/herdr/config.toml templates/herdr/plugins/config/persiyanov.reviewr/config.toml \
+         templates/herdr/config.toml \
          templates/hermes/config.portable.yaml)
 for f in "${required[@]}"; do
   if [ -e "$ROOT/$f" ]; then PASS "config present: $f"; else FAIL "missing required file: $f"; fi
