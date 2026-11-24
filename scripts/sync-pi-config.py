@@ -123,6 +123,44 @@ def checked(data: bytes, name: str) -> bytes:
     return data
 
 
+def extension_dependency_drift(home: Path, files: dict[str, bytes]) -> list[str]:
+    """Managed local extensions whose runtime npm dependencies do not resolve.
+
+    The baseline never carries node_modules, so an extension with runtime
+    `dependencies` needs `npm install` on each machine (`packages --apply`).
+    This is a read-only presence probe (an installed package.json in the
+    extension's node_modules or a parent's, up to home), not a module load.
+    npm workspace links are symlinks, so the probe follows them without
+    writing or reading their contents.
+    """
+    drift = []
+    for name in sorted(files):
+        parts = PurePosixPath(name).parts
+        if len(parts) != 5 or parts[:3] != (".pi", "agent", "extensions") or parts[4] != "package.json":
+            continue
+        try:
+            manifest = json.loads(files[name])
+        except ValueError:
+            manifest = None
+        if not isinstance(manifest, dict):
+            raise ValueError(f"invalid extension manifest: {name}")
+        dependencies = manifest.get("dependencies") or {}
+        # npm names never start with ".", which also rules out "."/".." traversal.
+        if not isinstance(dependencies, dict) or any(
+            not re.fullmatch(r"(?:@[\w-][\w.-]*/)?[\w-][\w.-]*", dependency) for dependency in dependencies
+        ):
+            raise ValueError(f"invalid extension dependencies: {name}")
+        directory = PurePosixPath(name).parent
+        for dependency in sorted(dependencies):
+            candidates = [directory.parents[up - 1] if up else directory for up in range(len(parts))]
+            if not any((home / str(base) / "node_modules" / dependency / "package.json").is_file()
+                       for base in candidates):
+                print(f"extension dependency drift: {directory} missing {dependency}")
+                drift.append(str(directory))
+                break
+    return drift
+
+
 def capture(home: Path) -> dict[str, bytes]:
     paths = set(FILES)
     for tree in TREES:
@@ -284,7 +322,20 @@ def main() -> int:
         if not installed or (expected is not None and actual != expected):
             package_drift.append(source)
             print(f"package drift: {name} installed={actual} expected={expected}")
+    dependency_drift = extension_dependency_drift(home, files) if args.command in ("check", "packages") else []
     if args.command == "packages":
+        for directory in dependency_drift:
+            print(f"{'npm install in' if args.apply else 'would npm install in'} {directory}")
+            if args.apply:
+                local = safe_path(home, directory + "/package.json")
+                # Never run npm (and its lifecycle scripts) against a manifest
+                # other than the reviewed baseline one.
+                if not local.is_file() or local.read_bytes() != files[directory + "/package.json"]:
+                    raise ValueError(f"run apply --apply before installing {directory} dependencies")
+                # npm may treat a parent package.json (e.g. an ~/.pi workspace)
+                # as the root and update that root's lockfile and node_modules.
+                subprocess.run(["npm", "install", "--no-audit", "--no-fund"],
+                               cwd=safe_path(home, directory), check=True)
         # Explicit refreshes also resolve the floating package again, even if
         # already installed. Read-only checks never query the npm registry.
         for source in package_sources:
@@ -324,7 +375,7 @@ def main() -> int:
     if backup:
         print(f"Backups: {backup}")
     print(f"{len(files)} managed files; {len(changes)} {'updated' if backup else 'differ'}; {len(removed)} retired. Unmanaged files preserved.")
-    return 1 if args.command == "check" and (changes or removed or package_drift) else 0
+    return 1 if args.command == "check" and (changes or removed or package_drift or dependency_drift) else 0
 
 
 if __name__ == "__main__":

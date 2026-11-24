@@ -127,6 +127,48 @@ class PiConfigTest(unittest.TestCase):
         self.put(self.vps, ".pi/agent/npm/node_modules/@example/pi-test/package.json", '{"version":"1.2.3"}')
         self.run_cli("check", self.vps)
 
+    def test_local_extension_runtime_dependencies_must_resolve(self):
+        extension = ".pi/agent/extensions/chart"
+        self.put(self.mac, extension + "/index.ts", "export default () => {};\n")
+        self.put(self.mac, extension + "/package.json", json.dumps({
+            "dependencies": {"chart-lib": "github:example/chart-lib#abc123"},
+            "devDependencies": {"typescript": "^5"},
+        }))
+        self.run_cli("capture", apply=True)
+        self.run_cli("apply", self.vps, apply=True)
+        result = self.run_cli("check", self.vps, expected=1)
+        self.assertIn(f"extension dependency drift: {extension} missing chart-lib", result.stdout)
+        result = self.run_cli("packages", self.vps)
+        self.assertIn("would npm install in " + extension, result.stdout)
+        # A fake npm records where it ran; packages --apply must use the extension dir.
+        npm = self.root / "bin/npm"
+        npm.write_text("#!/bin/sh\npwd > \"$(dirname \"$0\")/npm-cwd\"\n")
+        npm.chmod(0o755)
+        # Never run npm against a local manifest that differs from the baseline.
+        baseline = (self.vps / extension / "package.json").read_bytes()
+        self.put(self.vps, extension + "/package.json", '{"dependencies":{"chart-lib":"1"}}')
+        result = self.run_cli("packages", self.vps, apply=True, expected=2)
+        self.assertIn("run apply --apply before installing", result.stderr)
+        self.assertFalse((npm.parent / "npm-cwd").exists())
+        (self.vps / extension / "package.json").write_bytes(baseline)
+        self.run_cli("packages", self.vps, apply=True)
+        self.assertEqual((npm.parent / "npm-cwd").read_text().strip(), str(self.vps / extension))
+        # Dev-only dependencies are not required; a hoisted, symlinked workspace
+        # install resolves, and apply never probes dependencies.
+        self.put(self.vps, ".pi/workspace/chart-lib/package.json", "{}")
+        (self.vps / ".pi/node_modules").mkdir(parents=True)
+        (self.vps / ".pi/node_modules/chart-lib").symlink_to(self.vps / ".pi/workspace/chart-lib")
+        self.run_cli("check", self.vps)
+        self.run_cli("apply", self.vps, apply=True)
+        # Ancestor manifests must not satisfy traversal-shaped dependency names.
+        self.put(self.vps, ".pi/node_modules/package.json", "{}")
+        for invalid in ('{"dependencies":{"..":"1"}}', '{"dependencies":{"@scope/..":"1"}}',
+                        '{"dependencies":{"../escape":"1"}}', '{"dependencies":["x"]}', '[1]', 'not json'):
+            self.put(self.mac, extension + "/package.json", invalid)
+            self.run_cli("capture", apply=True)
+            result = self.run_cli("check", self.vps, expected=2)
+            self.assertIn("invalid extension", result.stderr)
+
     def test_compaction_can_float_without_weakening_other_package_pins(self):
         source = "npm:@ogulcancelik/pi-codex-compaction"
         self.put(self.mac, ".pi/agent/settings.json", json.dumps({"packages": [source]}))
