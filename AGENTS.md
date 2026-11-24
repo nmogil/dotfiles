@@ -20,6 +20,7 @@ and dispatches to them.
 | Git config | `.gitconfig` |
 | tmux | `.tmux.conf` |
 | Hunk / Ghostty | `config/hunk/config.toml`, `config/ghostty/config` |
+| Rex image paste | `config/rex/` + `scripts/setup-rex-config.sh` (Mac only; pinned MIT plugin; see `docs/rex-image-paste.md`) |
 | macOS setup steps | `setup.sh` |
 | Linux setup steps | `setup-linux.sh` |
 | Repo cloning | `clone-repos.sh` (list lives in gitignored `repos.txt`) |
@@ -77,7 +78,7 @@ Package manifests under `packages/` are documentation + input for
 bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh \
   scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
-  scripts/setup-rex-safe-upgrade.sh \
+  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
@@ -85,6 +86,7 @@ bash scripts/tests/agent-configs.test.sh      # local override + portable defaul
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
 python3 scripts/tests/rex-safe-upgrade.test.py  # Rex upgrade planning + installer
+python3 scripts/tests/rex-config.test.py   # Mac Rex image-paste installer + conflict/backup checks
 node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)

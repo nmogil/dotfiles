@@ -77,6 +77,8 @@ Usage: ./dot <command> [args]
                        (--apply/--check/--dry-run; see docs/rex-safe-upgrade.md)
   rex upgrade [args]   Restart Rex onto the installed version and resume agents
                        (no args: show the plan only; 'run' to do it)
+  rex config [flags]   Install/check Mac Rex image paste (--apply/--check/--force;
+                       see docs/rex-image-paste.md)
   chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
                        read-only subcommands like `diff` are non-mutating.
                        Warns if chezmoi is absent.
@@ -324,7 +326,8 @@ case "$cmd" in
     case "${1:-}" in
       install) shift; run scripts/setup-rex-safe-upgrade.sh "$@" ;;
       upgrade) shift; exec python3 "$DOT_ROOT/scripts/rex-safe-upgrade.py" "$@" ;;
-      *) echo "dot: rex needs 'install' or 'upgrade'" >&2; usage; exit 1 ;;
+      config)  shift; run scripts/setup-rex-config.sh "$@" ;;
+      *) echo "dot: rex needs 'install', 'upgrade', or 'config'" >&2; usage; exit 1 ;;
     esac ;;
   chezmoi) chezmoi_wrap "$@" ;;
   *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;

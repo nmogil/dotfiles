@@ -22,6 +22,15 @@ idioms; the install commands and snippets they wrap belong to their upstreams.
   hand-maintained, mostly conventional settings. No broad ownership claim is
   made over individual idiomatic lines.
 
+## Vendored third-party code
+
+- `config/rex/rex-image-paste/` is
+  [pablasso/rex-image-paste](https://github.com/pablasso/rex-image-paste),
+  MIT-licensed, copyright 2026 Pablo Ortiz. It is vendored unchanged at a pinned
+  revision with its `LICENSE` alongside; see `UPSTREAM.md` there for the
+  revision and checksums. The repository's MIT license does not relicense it;
+  its own notice governs those files.
+
 ## Material intentionally NOT in this repo
 
 The opt-in Pi agent scaffold (previously `templates/pi/`) was **adapted from
