@@ -66,6 +66,15 @@ settings. For floating compaction, `check` verifies installation, not registry
 freshness; `packages --apply` or `pi update --extension npm:@ogulcancelik/pi-codex-compaction`
 refreshes it. Unpinning alone does not schedule updates. Run
 `node scripts/tests/pi-compaction-tools.test.mjs` after updates.
+Local extensions in the baseline never carry `node_modules`. When a managed
+extension's `package.json` declares runtime `dependencies` (for example the
+`mpl` chart extension), `check` fails until each has an installed
+`node_modules/<name>/package.json` in the extension directory or a parent such
+as an `~/.pi` npm workspace (a presence check, not a module load). `packages
+--apply` then runs `npm install` in that extension directory, but only after
+`apply --apply` has made its `package.json` match the baseline. With an `~/.pi`
+workspace, npm installs at the workspace root and updates that root's lockfile.
+Dev dependencies are not checked.
 Removed declarations stop loading, but old cached packages are not
 deleted. Restart Pi after package changes; running sessions may still contain
 previously loaded extensions or skills.
