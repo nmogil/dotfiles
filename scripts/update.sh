@@ -8,7 +8,7 @@
 #      verified commit, then apply the Pi baseline — guarded so live files with
 #      local changes are never replaced — and its packages, and check it
 #   3. apply + check the Mac Rex image-paste config (Mac only)
-#   4. run cheap read-only checks (rex-safe-upgrade install)
+#   4. run cheap read-only checks (rex-safe-upgrade install, rexboard)
 #
 # Never stashes, resets, or forces; never passes --force to installers; never
 # restarts Rex, updates the Pi CLI, or touches running agent sessions. Live
@@ -822,6 +822,16 @@ if [ -e "$HOME/.local/bin/rex-safe-upgrade" ]; then
 else
   say_skip "rex-safe-upgrade: not installed (./dot rex install --apply to opt in)"
 fi
+# rexboard: read-only check only. Update never installs, upgrades, or replaces
+# it (Homebrew owns the Mac copy; ./dot rexboard --apply is opt-in on Linux).
+rexboard_rc=0
+capture in_home "$DOT" rexboard --check || rexboard_rc=$?
+case "$rexboard_rc" in
+  0) say_ok "rexboard check — $(summary '^rexboard')" ;;
+  3) say_skip "rexboard: not installed (./dot rexboard --apply to opt in)" ;;
+  *) say_warn "rexboard check failed (exit $rexboard_rc) — see ./dot rexboard and docs/rexboard.md"
+     log_lines | indent ;;
+esac
 
 # ---------------------------------------------------------------------- summary
 if [ "$N_FAIL" -gt 0 ]; then color="$C_FAIL"; elif [ "$N_WARN" -gt 0 ]; then color="$C_WARN"; else color="$C_OK"; fi

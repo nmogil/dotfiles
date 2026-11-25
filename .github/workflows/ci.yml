@@ -39,7 +39,7 @@ jobs:
 
       - name: shellcheck (dot update)
         if: runner.os == 'Linux'
-        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh
+        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh scripts/setup-rexboard.sh scripts/tests/rexboard.test.sh
 
       - name: Shell tests
         run: |

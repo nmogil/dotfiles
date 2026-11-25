@@ -150,6 +150,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
+| `config/rexboard/release.env`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -407,6 +408,13 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 `./dot doctor` warns when the running server is behind the installed Rex. See
 [`docs/rex-safe-upgrade.md`](docs/rex-safe-upgrade.md).
 
+## rexboard
+
+[rexboard](https://github.com/vanducng/rexboard) lists every agent pane across
+your Rex hosts by what needs you. The Mac gets it from the `Brewfile`; Linux
+installs a pinned, checksum-verified release with `./dot rexboard --apply`.
+Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
+
 ## Manual Steps After Setup
 
 1. Set terminal font to **MesloLGS NF** for proper icons
@@ -475,7 +483,9 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
    are reported as needing manual review (`./dot rex config`, then `--force`);
    update never passes `--force` and never restarts Rex (run `rex config
    reload` yourself). Linux reports "skipped (Mac only)". `./dot rex install
-   --check` runs wherever rex-safe-upgrade is installed.
+   --check` runs wherever rex-safe-upgrade is installed. `./dot rexboard
+   --check` runs everywhere and is read-only: not installed is a skip, a
+   differing binary a warning; update never installs or replaces rexboard.
 
 When a repo is skipped or not verified, or its fetch fails, the applies that
 depend on it are skipped with a `!` line; read-only checks still run.

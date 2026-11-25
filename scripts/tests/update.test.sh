@@ -139,6 +139,12 @@ case "$*" in
       || echo "would replace /x/init.lua (differs; --apply needs --force, which backs it up)"
     echo "No files changed. Use --apply to install; --check to validate the installed copy." ;;
   "rex install --check") echo "rex-safe-upgrade and Pi pane recorder match source." ;;
+  "rexboard --check")
+    case "${STUB_REXBOARD:-match}" in
+      missing) echo "rexboard is not installed at /x/rexboard (./dot rexboard --apply)"; exit 3 ;;
+      differs) echo "rexboard at /x/rexboard differs from the pinned 0.36.0 build (rexboard 0.37.0)" >&2; exit 1 ;;
+      *) echo "rexboard 0.37.0 installed with Homebrew (vanducng/tap/rexboard); Homebrew manages its version." ;;
+    esac ;;
 esac
 EOF
 chmod +x "$STUB_DOT" || die "chmod"
@@ -258,7 +264,8 @@ pi config check
 rex config --dry-run
 rex config --apply
 rex config --check
-rex install --check"
+rex install --check
+rexboard --check"
 if [ "$RC" = 0 ] && [ "$(head_of "$TMP/public")" = "$(upstream_of "$TMP/public")" ] \
   && [ "$(head_of "$TMP/private")" = "$(upstream_of "$TMP/private")" ] \
   && has "fast-forwarded 1 commit" && has "fast-forwarded 2 commits" \
@@ -282,7 +289,7 @@ fi
   && ok "every Pi command gets the one resolved, absolute baseline path" \
   || { bad "every Pi command gets the one resolved, absolute baseline path"; sed 's/^/       /' "$TMP/calls.bundle"; }
 has "✓" && has "Repos" && has "Pi config" && has "Rex" \
-  && grep -Eq '^Summary: 8 ok, 0 warnings, 0 failed, 0 skipped' "$OUT" \
+  && grep -Eq '^Summary: 9 ok, 0 warnings, 0 failed, 0 skipped' "$OUT" \
   && ok "one line per step with section headers and a summary line" \
   || bad "one line per step with section headers and a summary line"
 has "3 managed files; 1 differ" && has "    drift  .pi/agent/example.ts" && ! grep -q '^Pi CLI' "$OUT" \
@@ -530,7 +537,7 @@ run_update
 if [ "$RC" = 0 ] && has "NEW-UPDATER-RAN --internal-apply-phase" \
   && [ "$(grep -c 'fast-forwarded' "$OUT")" = 2 ] && [ "$(grep -c ' fetch' "$TMP/gitlog")" = 2 ] \
   && [ "$(count_calls "pi config apply --apply")" = 1 ] && called "rex config --apply" \
-  && [ "$(grep -c '^Pi config' "$OUT")" = 1 ] && grep -Eq '^Summary: 8 ok, 0 warnings' "$OUT"; then
+  && [ "$(grep -c '^Pi config' "$OUT")" = 1 ] && grep -Eq '^Summary: 9 ok, 0 warnings' "$OUT"; then
   ok "an upstream change to the updater re-execs the new updater for the apply phase only"
 else bad "an upstream change to the updater re-execs the new updater for the apply phase only"; show_calls; fi
 
@@ -946,9 +953,34 @@ else bad "Linux skips Rex config (Mac only) but still runs rex install --check";
 fresh
 rm "$HOME/.local/bin/rex-safe-upgrade" || die "rm"
 TEST_REX_BIN="" STUB_UNAME=Linux run_update
-! grep -q '^rex' "$TMP/calls" && has "not installed" \
+! grep -q '^rex ' "$TMP/calls" && has "not installed" \
   && ok "rex install check is skipped when rex-safe-upgrade is not installed" \
   || bad "rex install check is skipped when rex-safe-upgrade is not installed"
+
+# --- 9b: rexboard is checked read-only, never installed or replaced ---------------
+fresh
+run_update
+if [ "$RC" = 0 ] && has "✓ rexboard check — rexboard 0.37.0 installed with Homebrew" \
+  && [ "$(count_calls "rexboard --check")" = 1 ] && ! grep -q '^rexboard --apply' "$TMP/calls"; then
+  ok "rexboard: an installed board passes a read-only check (never --apply)"
+else bad "rexboard: an installed board passes a read-only check (never --apply)"; show_calls; fi
+fresh
+STUB_REXBOARD=missing run_update
+if [ "$RC" = 0 ] && has "- rexboard: not installed (./dot rexboard --apply to opt in)" \
+  && ! grep -q '^rexboard --apply' "$TMP/calls" && ! has "! rexboard"; then
+  ok "rexboard: not installed is a skip, not a warning, and installs nothing"
+else bad "rexboard: not installed is a skip, not a warning, and installs nothing"; fi
+fresh
+STUB_REXBOARD=differs run_update
+if [ "$RC" = 0 ] && has "! rexboard check failed (exit 1)" && has "differs from the pinned 0.36.0 build" \
+  && ! grep -q '^rexboard --apply' "$TMP/calls" && grep -Eq '^Summary: .*1 warning, 0 failed' "$OUT"; then
+  ok "rexboard: a differing binary is a warning and is left alone"
+else bad "rexboard: a differing binary is a warning and is left alone"; fi
+fresh
+STUB_REXBOARD=differs run_update --dry-run
+if [ "$RC" = 0 ] && has "! rexboard check failed (exit 1)" && [ "$(count_calls "rexboard --check")" = 1 ]; then
+  ok "rexboard: --dry-run runs the same read-only check"
+else bad "rexboard: --dry-run runs the same read-only check"; fi
 
 # --- 10: failures ------------------------------------------------------------------
 fresh

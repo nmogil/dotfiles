@@ -38,6 +38,7 @@ and dispatches to them.
 | Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
+| rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.env` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
 | Rex server upgrades (resume agents after restart) | `scripts/rex-safe-upgrade.py` + `templates/pi-rex/` + `scripts/setup-rex-safe-upgrade.sh` (see `docs/rex-safe-upgrade.md`) |
 | Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
@@ -83,7 +84,7 @@ Package manifests under `packages/` are documentation + input for
 bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh \
   scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
-  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/update.sh \
+  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/setup-rexboard.sh scripts/update.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
@@ -93,6 +94,7 @@ bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
 python3 scripts/tests/rex-safe-upgrade.test.py  # Rex upgrade planning + installer
 python3 scripts/tests/rex-config.test.py   # Mac Rex image-paste installer + conflict/backup checks
+bash scripts/tests/rexboard.test.sh        # rexboard installer: pins, checksums, Homebrew path
 node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
