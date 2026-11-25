@@ -38,7 +38,7 @@ and dispatches to them.
 | Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
-| rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.env` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
+| rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.pins` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
 | Rex server upgrades (resume agents after restart) | `scripts/rex-safe-upgrade.py` + `templates/pi-rex/` + `scripts/setup-rex-safe-upgrade.sh` (see `docs/rex-safe-upgrade.md`) |
 | Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
