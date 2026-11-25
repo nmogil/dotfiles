@@ -8,23 +8,34 @@
 # come back under the personal profile (docs/rexume.md). So:
 #   - `./dot rexume --apply` refuses while any work profile exists;
 #   - `./dot pi profiles --apply` refuses while rexume is installed;
-#   - both decide and write under one lock, <pi-root>/.dotfiles-profiles.lock
+#   - both decide and write under one lock, ~/.pi/.dotfiles-profiles.lock
 #     (an atomic mkdir holding its owner's pid), so they can't interleave.
+#     The lock is never taken over: one left by a dead owner must be removed
+#     by hand. rexume supports only the default Pi root (~/.pi), so the lock
+#     and rexume detection always use it, whatever PI_HOME says.
 # No heredocs or here-strings here: bash 3.2 writes those to temp files, and
 # `./dot rexume --dry-run` must write nothing.
 
 DOTFILES_PROFILES_LOCK=""
 
-# dotfiles_pi_work_profiles <pi-root>: every <pi-root>/agent-* entry that is,
-# or might be, a Pi profile, one per line. Fails closed: any directory,
-# symlink (dangling too) or file counts, except a plain agent-memory directory
-# (not a symlink) with neither settings.json nor extensions, which is the
-# VPS's memory data directory, not a profile.
+# dotfiles_pi_work_profiles <pi-root>: every <pi-root> entry that is, or might
+# be, a work Pi profile, one per line. Fails closed: names are matched
+# case-insensitively (macOS volumes usually are, so AGENT-WORK counts), and any
+# directory, symlink (dangling too) or file whose name starts with "agent"
+# counts, except "agent" itself (the personal profile) and a plain
+# agent-memory directory (not a symlink) with neither settings.json nor
+# extensions, which is the VPS's memory data directory, not a profile.
 dotfiles_pi_work_profiles() {
-  local p
-  for p in "$1"/agent-*; do
+  local p lower
+  for p in "$1"/*; do
     [ -e "$p" ] || [ -L "$p" ] || continue
-    if [ "${p##*/}" = agent-memory ] && [ -d "$p" ] && [ ! -L "$p" ] \
+    lower="$(printf '%s' "${p##*/}" | tr '[:upper:]' '[:lower:]')"
+    case "$lower" in
+      agent) continue ;;
+      agent*) ;;
+      *) continue ;;
+    esac
+    if [ "$lower" = agent-memory ] && [ -d "$p" ] && [ ! -L "$p" ] \
       && [ ! -e "$p/settings.json" ] && [ ! -L "$p/settings.json" ] \
       && [ ! -e "$p/extensions" ] && [ ! -L "$p/extensions" ]; then
       continue
@@ -55,15 +66,16 @@ _dotfiles_pid_alive() {
   ps -p "$1" >/dev/null 2>&1
 }
 
-_dotfiles_rename() { perl -e 'rename($ARGV[0], $ARGV[1]) or exit 1' "$1" "$2" 2>/dev/null; }
-
-# dotfiles_profiles_lock <pi-root> <who>: take the profiles lock, waiting up to
-# DOTFILES_PROFILES_LOCK_TIMEOUT seconds (default 10). Returns 0 when taken,
-# 1 otherwise (with the reason on stderr, prefixed by <who>). A lock whose
-# recorded pid is gone is taken over; one without a readable pid is not (its
-# owner may still be writing it). Release with dotfiles_profiles_unlock.
+# dotfiles_profiles_lock <who>: take ~/.pi/.dotfiles-profiles.lock, waiting up
+# to DOTFILES_PROFILES_LOCK_TIMEOUT seconds (default 10) while a live owner
+# holds it. Returns 0 when taken, 1 otherwise (with the reason on stderr,
+# prefixed by <who>). Never takes a lock over: one whose recorded owner is gone
+# is refused at once, for the user to remove by hand (two runs that both saw
+# the dead owner could otherwise move each other's live lock). A lock without a
+# readable pid may be mid-creation, so it is waited for, then refused.
+# Release with dotfiles_profiles_unlock.
 dotfiles_profiles_lock() {
-  local root="$1" who="$2" lock="$1/.dotfiles-profiles.lock" limit deadline pid stale
+  local who="$1" root="$HOME/.pi" lock="$HOME/.pi/.dotfiles-profiles.lock" limit deadline pid
   limit="${DOTFILES_PROFILES_LOCK_TIMEOUT:-10}"
   case "$limit" in ''|*[!0-9]*) limit=10 ;; esac
   mkdir -p "$root" || { printf '%s: could not create %s\n' "$who" "$root" >&2; return 1; }
@@ -83,18 +95,9 @@ dotfiles_profiles_lock() {
       ''|*[!0-9]*) ;;
       *)
         if ! _dotfiles_pid_alive "$pid"; then
-          # Move the stale lock aside atomically, and delete it only if it is
-          # still the dead owner's; otherwise put it back untouched.
-          stale="$lock.stale.$$"
-          if _dotfiles_rename "$lock" "$stale"; then
-            if [ "$(cat "$stale/pid" 2>/dev/null || true)" = "$pid" ]; then
-              rm -rf "$stale"
-              continue
-            fi
-            _dotfiles_rename "$stale" "$lock" \
-              || printf '%s: moved a live lock to %s and could not restore it; remove it once pid %s exits\n' \
-                "$who" "$stale" "$(cat "$stale/pid" 2>/dev/null || echo unknown)" >&2
-          fi
+          printf '%s: %s is stale: its owner (pid %s) is gone. Check that no ./dot rexume --apply or ./dot pi profiles --apply is running, then remove it by hand: rm -r %s. Nothing changed.\n' \
+            "$who" "$lock" "$pid" "$lock" >&2
+          return 1
         fi ;;
     esac
     if [ "$(date +%s)" -ge "$deadline" ]; then

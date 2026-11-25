@@ -268,7 +268,8 @@ case "$MODE" in
   apply)
     # Decide and write under the profiles lock, so ./dot rexume --apply can't
     # interleave; then refuse any work profile while rexume is installed.
-    dotfiles_profiles_lock "$PI_ROOT" setup-pi-profiles || exit 1
+    # Always ~/.pi/.dotfiles-profiles.lock, whatever PI_HOME says.
+    dotfiles_profiles_lock setup-pi-profiles || exit 1
     trap dotfiles_profiles_unlock EXIT
     if rexume_trace="$(dotfiles_rexume_trace "$PERSONAL_DIR")"; then
       fail "refusing to create or update a work Pi profile while rexume is installed ($rexume_trace): rexume's Pi extension would load in it through the shared extensions, and rexume reopens Pi without PI_CODING_AGENT_DIR. See docs/rexume.md (work profile)."

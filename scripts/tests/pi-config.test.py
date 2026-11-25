@@ -84,6 +84,31 @@ class PiConfigTest(unittest.TestCase):
         self.assertNotIn(self.REXUME, manifest["files"])
         self.assertFalse((self.bundle / "files" / self.REXUME).exists())
 
+    def test_rexume_exclusion_is_case_insensitive(self):
+        # macOS volumes are usually case-insensitive: REXUME.ts is the same file.
+        upper = ".pi/agent/extensions/REXUME.ts"
+        self.put(self.mac, upper, "// Written by `rexume install`\n")
+        self.run_cli("capture", apply=True)
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        self.assertFalse([name for name in manifest["files"] if name.lower().endswith("rexume.ts")])
+        # An older bundle and ownership record naming it in another case are ignored too.
+        import hashlib
+        data = b"// baseline copy\n"
+        self.put(self.bundle, "files/" + upper, data.decode())
+        manifest["files"][upper] = hashlib.sha256(data).hexdigest()
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        self.run_cli("apply", self.vps, apply=True)
+        self.assertFalse((self.vps / upper).exists())
+        live = self.put(self.vps, ".pi/agent/extensions/Rexume.ts", "// daemon copy\n")
+        ownership = self.vps / ".local/state/dotfiles/pi-config-files.json"
+        record = json.loads(ownership.read_text())
+        record["files"].append(".pi/agent/extensions/Rexume.ts")
+        ownership.write_text(json.dumps(record))
+        check = self.run_cli("check", self.vps)
+        self.assertNotIn("exume", check.stdout)
+        self.run_cli("apply", self.vps, apply=True)
+        self.assertEqual(live.read_text(), "// daemon copy\n")
+
     def test_live_rexume_extension_is_never_drift_replaced_or_retired(self):
         self.run_cli("capture", apply=True)
         self.run_cli("apply", self.vps, apply=True)

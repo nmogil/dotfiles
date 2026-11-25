@@ -135,7 +135,8 @@ Unmanaged files are never deleted.
 `.pi/agent/extensions/rexume.ts` is never part of the baseline. rexume's
 daemon owns it and rewrites it (`docs/rexume.md`). Capture skips it, and
 apply, check and retirement ignore it. That holds even when an older bundle
-or ownership record names it.
+or ownership record names it. The match ignores case (`REXUME.ts` is the same
+file on a case-insensitive volume).
 
 ## Intentional differences
 

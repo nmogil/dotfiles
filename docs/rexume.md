@@ -152,10 +152,12 @@ gets through, and so does a profile created while rexume installs. So the
 rule is at the profile level, and fails closed:
 
 - **`./dot rexume --apply` refuses on any machine with a work Pi profile.** A
-  work profile is any `~/.pi/agent-*` entry: a directory, a symlink (dangling
-  too) or a file. The only exception is `~/.pi/agent-memory` when it is a
-  plain directory with neither `settings.json` nor `extensions` (the VPS's
-  memory data directory). The message lists the profiles. rexume can't be
+  work profile is any `~/.pi` entry whose name starts with `agent`, other
+  than `agent` itself: a directory, a symlink (dangling too) or a file. Names
+  are matched case-insensitively, so `AGENT-WORK` counts (macOS volumes
+  usually ignore case). The only exception is `agent-memory` (in any case)
+  when it is a plain directory with neither `settings.json` nor `extensions`
+  (the VPS's memory data directory). The message lists the profiles. rexume can't be
   installed on such a machine until Pi profiles stop sharing `extensions`.
   That is Noah's decision, separate from this installer. The check runs again
   right before `rexume install`.
@@ -168,12 +170,25 @@ rule is at the profile level, and fails closed:
   atomic `mkdir`, holding the owner's pid) for their whole check-and-write, so
   neither can slip in between the other's check and its writes. A second run
   waits up to 10 seconds (`DOTFILES_PROFILES_LOCK_TIMEOUT`), then refuses and
-  names the holder. A lock whose pid is gone is taken over. A lock without a
-  pid is never taken over: remove it by hand once you're sure nothing is
-  running.
+  names the holder. A lock is never taken over. Two runs that both saw a dead
+  owner could otherwise move each other's live lock. A lock whose owner (the
+  recorded pid) is gone makes both commands refuse at once, printing that pid.
+  Check that no `./dot rexume --apply` or `./dot pi profiles --apply` is
+  running, then remove it by hand with `rm -r ~/.pi/.dotfiles-profiles.lock`.
+  A lock without a readable pid is waited for, then refused the same way.
+- **Only the default Pi root.** rexume writes `~/.pi/agent`, and the lock and
+  the work-profile check use `~/.pi`. So `./dot rexume` (every mode) refuses
+  when `PI_HOME`, resolved the way `./dot pi profiles` resolves it
+  (environment, then `local.env`), isn't `~/.pi` once both are made canonical.
+  `./dot pi profiles` always uses `~/.pi/.dotfiles-profiles.lock` and looks
+  for rexume under `~/.pi` too, whatever `PI_HOME` says.
 - `rexume install` always runs with `PI_CODING_AGENT_DIR` removed.
 - `./dot rexume --check` fails while rexume is installed and any work profile
   exists.
+- After `rexume install`, the readiness wait checks its remaining budget
+  before every `systemctl`/`launchctl`/`rexume status` call and caps the
+  call to it. If the daemon isn't ready in time, `--apply` reports the rest
+  without another status call and fails.
 
 **On this Mac today** (`~/.pi/agent-work`, sharing `extensions`),
 `./dot rexume --apply` refuses. Don't work around it by hand.

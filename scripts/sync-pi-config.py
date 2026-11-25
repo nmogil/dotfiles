@@ -42,8 +42,13 @@ TREES = (
 # Files another program owns and rewrites inside a managed tree. The baseline
 # never captures, applies, reports, or retires them, even when an older bundle
 # or ownership record names them. rexume's daemon rewrites its Pi extension
-# whenever it differs from its own version (docs/rexume.md).
+# whenever it differs from its own version (docs/rexume.md). Compared
+# case-insensitively: macOS volumes usually are, so REXUME.ts is the same file.
 DAEMON_OWNED = {".pi/agent/extensions/rexume.ts"}
+
+
+def daemon_owned(name: str) -> bool:
+    return name.casefold() in DAEMON_OWNED
 # Rex owns its generated skill/hook files; install those with rex skill setup.
 PREFERENCES = {
     "theme", "cloak", "defaultProvider", "defaultModel", "defaultThinkingLevel",
@@ -95,7 +100,7 @@ def encoded(value: dict) -> bytes:
 
 def allowed(name: str) -> bool:
     path = PurePosixPath(name)
-    if path.is_absolute() or ".." in path.parts or str(path) != name or name in DAEMON_OWNED:
+    if path.is_absolute() or ".." in path.parts or str(path) != name or daemon_owned(name):
         return False
     if any(part in SKIP or part.startswith(".env") or ".bak" in part for part in path.parts):
         return False
@@ -218,7 +223,7 @@ def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
         raise ValueError("baseline is missing its file manifest or settings")
     result = {}
     for name, digest in files.items():
-        if name in DAEMON_OWNED:
+        if daemon_owned(name):
             continue  # captured before it was excluded; never applied
         if not allowed(name):
             raise ValueError(f"non-portable baseline path: {name}")
@@ -310,7 +315,7 @@ def main() -> int:
     record = object_file(ownership) if ownership.exists() else {}
     previous = record.get("files", [])
     if isinstance(previous, list):
-        previous = [name for name in previous if name not in DAEMON_OWNED]  # never retired
+        previous = [name for name in previous if not (isinstance(name, str) and daemon_owned(name))]  # never retired
     if not isinstance(previous, list) or any(not isinstance(name, str) or not allowed(name) for name in previous):
         raise ValueError("invalid managed-file ownership record")
     exclusions = args.exclude if args.exclude is not None else record.get("excludes", [])

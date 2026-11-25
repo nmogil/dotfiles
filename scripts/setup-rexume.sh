@@ -69,6 +69,8 @@ esac
 . "$ROOT/scripts/lib/pinned-release.sh"
 # shellcheck source=scripts/lib/pi-profiles-lock.sh
 . "$ROOT/scripts/lib/pi-profiles-lock.sh"
+# shellcheck source=scripts/lib/local-env.sh
+. "$ROOT/scripts/lib/local-env.sh"
 PR_NAME=rexume PR_PINS="$PINS" PR_DOC=docs/rexume.md
 PR_VERIFY_NOTE="sha256- and GitHub-attestation-verified"
 RX_TMP=""
@@ -146,14 +148,22 @@ job_file() {
   printf '%s' "$cfg/systemd/user/rexume.service"
 }
 
-# bounded <cmd...>: run cmd for at most CALL_LIMIT seconds (macOS has no
+# call_limit: seconds a bounded call may take: CALL_LIMIT, or less when the
+# readiness wait caps it to its remaining budget (CALL_CAP).
+call_limit() {
+  if [ -n "${CALL_CAP:-}" ] && [ "$CALL_CAP" -lt "$CALL_LIMIT" ]; then printf '%s' "$CALL_CAP"
+  else printf '%s' "$CALL_LIMIT"; fi
+}
+
+# bounded <cmd...>: run cmd for at most $(call_limit) seconds (macOS has no
 # timeout(1)). Returns its status; one above 128 means it was killed.
 bounded() {
-  local pid watcher rc=0
+  local pid watcher rc=0 limit
+  limit="$(call_limit)"
   "$@" &
   pid=$!
   ( n=0
-    while [ "$n" -lt "$CALL_LIMIT" ]; do sleep 1; n=$((n + 1)); done
+    while [ "$n" -lt "$limit" ]; do sleep 1; n=$((n + 1)); done
     kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watcher=$!
   wait "$pid" 2>/dev/null || rc=$?
@@ -172,7 +182,7 @@ daemon_active() {
     fi
     out="$(bounded launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" || rc=$?
     if [ "$rc" -gt 128 ]; then
-      DAEMON_WHY="launchctl print gui/$(id -u)/$LABEL timed out after ${CALL_LIMIT}s"; return 1
+      DAEMON_WHY="launchctl print gui/$(id -u)/$LABEL timed out after $(call_limit)s"; return 1
     fi
     if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Eq '^[[:space:]]*state = running[[:space:]]*$'; then
       return 0
@@ -185,7 +195,7 @@ daemon_active() {
   bounded systemctl --user is-active --quiet rexume || rc=$?
   case "$rc" in
     0) return 0 ;;
-    1[3-9][0-9]|129|2[0-9][0-9]) DAEMON_WHY="systemctl --user is-active rexume timed out after ${CALL_LIMIT}s" ;;
+    1[3-9][0-9]|129|2[0-9][0-9]) DAEMON_WHY="systemctl --user is-active rexume timed out after $(call_limit)s" ;;
     *) DAEMON_WHY="the rexume daemon is not active (systemctl --user status rexume)" ;;
   esac
   return 1
@@ -198,7 +208,7 @@ status_call() {
   STATUS_WHY=""
   STATUS_OUT="$(bounded env -u PI_CODING_AGENT_DIR "$REXUME_BIN" status 2>&1)" || rc=$?
   [ "$rc" != 0 ] || return 0
-  if [ "$rc" -gt 128 ]; then STATUS_WHY="rexume status timed out after ${CALL_LIMIT}s"
+  if [ "$rc" -gt 128 ]; then STATUS_WHY="rexume status timed out after $(call_limit)s"
   else STATUS_WHY="rexume status failed: $(printf '%s\n' "$STATUS_OUT" | head -n 1)"
   fi
   return 1
@@ -415,20 +425,27 @@ path_conflict() {
 # DOTFILES_REXUME_READY_TIMEOUT seconds of elapsed time (default 20). Each
 # call is itself bounded.
 wait_ready() {
-  local limit="${DOTFILES_REXUME_READY_TIMEOUT:-20}" deadline
+  local limit="${DOTFILES_REXUME_READY_TIMEOUT:-20}" deadline rc=1
   case "$limit" in ''|*[!0-9]*) limit=20 ;; esac
   deadline=$(( $(date +%s) + limit ))
-  READY_WHY=""
+  READY_WHY="no time left to check"
   while :; do
-    if daemon_active; then
-      if status_call; then return 0; fi
-      READY_WHY="$STATUS_WHY"
-    else
+    # Before each call: stop when the budget is spent, else cap the call to it.
+    CALL_CAP=$(( deadline - $(date +%s) ))
+    [ "$CALL_CAP" -gt 0 ] || break
+    if ! daemon_active; then
       READY_WHY="$DAEMON_WHY"
+    else
+      CALL_CAP=$(( deadline - $(date +%s) ))
+      [ "$CALL_CAP" -gt 0 ] || break
+      if status_call; then rc=0; break; fi
+      READY_WHY="$STATUS_WHY"
     fi
-    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    [ "$(date +%s)" -lt "$deadline" ] || break
     sleep 1
   done
+  CALL_CAP=""
+  return "$rc"
 }
 
 do_apply() {
@@ -436,7 +453,7 @@ do_apply() {
   # 1. Take the profiles lock (shared with ./dot pi profiles --apply) for the
   #    whole check-and-write; --dry-run writes nothing, so it takes none.
   if [ "$MODE" = --apply ]; then
-    dotfiles_profiles_lock "$HOME/.pi" rexume || exit 1
+    dotfiles_profiles_lock rexume || exit 1
   fi
 
   # 2. No rexume on a machine with a work Pi profile (fail closed).
@@ -539,12 +556,29 @@ do_apply() {
   fi
   if ! wait_ready; then
     say "rexume: the rexume daemon is not ready after ${DOTFILES_REXUME_READY_TIMEOUT:-20}s: $READY_WHY" >&2
+    # Report the rest without another status call, and fail.
+    NO_STATUS=1; do_check || true
+    return 1
   fi
   rc=0; do_check || rc=$?
   return "$rc"
 }
 
 # ---------------------------------------------------------------- main
+# Only the default Pi root: rexume install writes ~/.pi/agent, and the profiles
+# lock and work-profile check use ~/.pi. Refuse when PI_HOME, as
+# setup-pi-profiles.sh resolves it (environment, then local.env), points
+# elsewhere. local.env is read in a subshell so it can't change this script.
+canonical_dir() {
+  local p="$1"
+  while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  if [ -d "$p" ]; then (cd -P -- "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
+}
+PI_HOME_SETTING="$(load_local_env >/dev/null 2>&1 || true; printf '%s' "${PI_HOME:-}")"
+if [ -n "$PI_HOME_SETTING" ] && [ "$(canonical_dir "$PI_HOME_SETTING")" != "$(canonical_dir "$HOME/.pi")" ]; then
+  die "PI_HOME is $PI_HOME_SETTING (environment or local.env), but rexume supports only the default Pi root $HOME/.pi: rexume install writes ~/.pi/agent, and the profiles lock and work-profile check use ~/.pi. Unset PI_HOME or point it at $HOME/.pi. Nothing changed."
+fi
+
 case "$OS" in
   Darwin) [ "$FORCE" = 0 ] || { usage >&2; exit 2; }; mac_setup ;;
   Linux) linux_setup ;;

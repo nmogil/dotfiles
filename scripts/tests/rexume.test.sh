@@ -22,7 +22,7 @@ OUT="$TMP/out"
 REPO="$TMP/repo"; STUB="$TMP/stub"; REL="$TMP/release"
 mkdir -p "$REPO/scripts/lib" "$REPO/config/rexume" "$STUB" "$REL" || die mkdir
 cp "$ROOT/scripts/setup-rexume.sh" "$REPO/scripts/" || die "copy installer"
-cp "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh" "$REPO/scripts/lib/" || die "copy libraries"
+cp "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh" "$ROOT/scripts/lib/local-env.sh" "$REPO/scripts/lib/" || die "copy libraries"
 
 # The fixture rexume. Only `install` and `status` are expected; anything else
 # is recorded as unexpected.
@@ -230,7 +230,7 @@ run() {
   local xdg="XDG_RUNTIME_DIR=$TMP/run"
   [ -z "${NO_XDG:-}" ] || xdg="NO_XDG=1"
   (cd "$TMP" && env -i HOME="$HOMEDIR" PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
-    PI_CODING_AGENT_DIR="$HOMEDIR/.pi/agent-work" \
+    PI_CODING_AGENT_DIR="$HOMEDIR/.pi/agent-work" ${RUN_PI_HOME:+PI_HOME="$RUN_PI_HOME"} \
     STUB_LOG="$TMP/calls" STUB_TMP="$TMP" STUB_UNEXPECTED="$UNEXPECTED" \
     STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_CELLAR="$CELLAR" STUB_BREWBIN="$BREWBIN" \
     STUB_KEG_SRC="$REXUME_SRC" STUB_REX="${STUB_REX:-ok}" STUB_GH_FAIL="${STUB_GH_FAIL:-}" \
@@ -408,8 +408,11 @@ fresh; mkdir "$LOCK" && echo "$HOLDER" > "$LOCK/pid"; (sleep 1; rm -rf "$LOCK") 
 [ "$RC" = 0 ] && installed; res "--apply waits for a lock that is released"
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
 sh -c 'exit 0' & DEAD=$!; wait "$DEAD"
-fresh; mkdir "$LOCK" && echo "$DEAD" > "$LOCK/pid"; LOCK_TIMEOUT=2 run --apply
-[ "$RC" = 0 ] && installed && [ ! -e "$LOCK" ]; res "a stale lock (dead pid) is taken over, and --apply releases its lock"
+fresh; mkdir "$LOCK" && echo "$DEAD" > "$LOCK/pid"; t0="$(date +%s)"; LOCK_TIMEOUT=5 run --apply; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "pid $DEAD" && has "rm -r $LOCK" && ! installed && ! called "rex " && [ "$(cat "$LOCK/pid")" = "$DEAD" ] \
+  && [ $((t1 - t0)) -lt 4 ]; res "a stale lock (dead owner) is never taken over: --apply refuses at once and leaves it for removal by hand"
+fresh; run --apply
+[ "$RC" = 0 ] && [ ! -e "$LOCK" ]; res "a successful --apply releases its lock"
 fresh; mkdir "$LOCK"; LOCK_TIMEOUT=1 run --apply
 [ "$RC" = 1 ] && has "holds $LOCK" && ! installed && [ -d "$LOCK" ]; res "a lock without a pid is not taken over (fail closed)"
 fresh; STUB_REX=old run --apply
@@ -555,6 +558,29 @@ fresh; run --apply --no-status
 fresh; run --no-status
 [ "$RC" = 2 ]; res "--no-status alone is a usage error"
 
+# --- only the default Pi root: PI_HOME (environment or local.env) must be ~/.pi ------------------------------
+fresh; RUN_PI_HOME="$HOMEDIR/custom-pi" run --apply
+[ "$RC" = 1 ] && has "PI_HOME" && has "$HOMEDIR/custom-pi" && ! installed && ! called "rex " && [ ! -e "$LOCK" ]
+res "--apply refuses a PI_HOME other than ~/.pi (environment)"
+fresh; RUN_PI_HOME="$HOMEDIR/custom-pi" run --check
+[ "$RC" = 1 ] && has "PI_HOME"; res "--check refuses a PI_HOME other than ~/.pi"
+fresh; mkdir -p "$HOMEDIR/.config/dotfiles"; printf 'PI_HOME=%s/elsewhere\n' "$HOMEDIR" > "$HOMEDIR/.config/dotfiles/local.env"; run --apply
+[ "$RC" = 1 ] && has "PI_HOME" && has "$HOMEDIR/elsewhere" && ! installed; res "--apply refuses a PI_HOME set in local.env (resolved as profile setup resolves it)"
+fresh; ln -s .pi "$HOMEDIR/pi-alias"; RUN_PI_HOME="$HOMEDIR/pi-alias/" run --apply
+[ "$RC" = 0 ] && installed; res "a PI_HOME that resolves to ~/.pi is the default root"
+
+# --- work profiles are matched case-insensitively (macOS volumes usually are) ------------------------------
+fresh; mkdir -p "$HOMEDIR/.pi/AGENT-WORK"; run --apply
+[ "$RC" = 1 ] && has "$WP_MSG" && has "AGENT-WORK" && ! installed; res "a mixed-case AGENT-WORK profile counts"
+fresh; mkdir -p "$HOMEDIR/.pi/Agent-Memory"; : > "$HOMEDIR/.pi/Agent-Memory/notes.db"; run --apply
+[ "$RC" = 0 ] && installed; res "the agent-memory data-directory exception is case-insensitive too"
+fresh; mkdir -p "$HOMEDIR/.pi/agentx"; run --apply
+[ "$RC" = 1 ] && has "agentx" && ! installed; res "any agent-prefixed entry but agent itself counts (fail closed)"
+
+# --- the readiness wait never starts a call longer than its remaining budget ------------------------------
+fresh; t0="$(date +%s)"; READY_TIMEOUT=2 CALL_TIMEOUT=30 STUB_STATUS_HANG=1 run --apply; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "not ready" && [ $((t1 - t0)) -lt 12 ]; res "each call in the readiness wait is capped to the remaining budget"
+
 # --- every daemon-manager and status call is bounded --------------------------------------------------------
 fresh; run --apply; t0="$(date +%s)"; CALL_TIMEOUT=1 STUB_SYSTEMCTL_HANG=1 run --check; t1="$(date +%s)"
 [ "$RC" = 1 ] && has "systemctl --user is-active rexume timed out" && [ $((t1 - t0)) -lt 10 ]; res "--check bounds a hanging systemctl"
@@ -566,7 +592,7 @@ fresh; t0="$(date +%s)"; READY_TIMEOUT=2 CALL_TIMEOUT=1 STUB_STATUS_HANG=1 run -
 # --- no heredocs or here-strings (bash 3.2 writes them to temp files; dry-run must write nothing) ------------
 [ "$(grep -c '<<' "$ROOT/scripts/setup-rexume.sh")" = 1 ] \
   && [ "$(grep -n '<<' "$ROOT/scripts/setup-rexume.sh" | cut -d: -f1)" = "$(( $(grep -n '^usage() {$' "$ROOT/scripts/setup-rexume.sh" | cut -d: -f1) + 1 ))" ] \
-  && ! grep -q '<<' "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh"
+  && ! grep -q '<<' "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh" "$ROOT/scripts/lib/local-env.sh"
 res "setup-rexume.sh and its libraries use a heredoc only in usage()"
 
 # --- never touch the Rex server, systemd, or launchd beyond read-only queries -------------------

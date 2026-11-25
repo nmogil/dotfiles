@@ -30,7 +30,8 @@ rx_home() {  # rx_home <dir>: a HOME with a personal profile (with extensions) a
   printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' 'DOTFILES_ENABLE_HERMES=0' > "$1/.config/dotfiles/local.env"
 }
 rx_profiles() {  # rx_profiles <home> <flag>: ./dot pi profiles pinned to the fixture HOME
-  HOME="$1" PI_HOME="$1/.pi" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" \
+  HOME="$1" PI_HOME="${RX_PI_HOME:-$1/.pi}" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" \
+    HERMES_HOME="$1/.hermes" \
     DOTFILES_PI_SCAFFOLD_DIR="$FIX" DOTFILES_PROFILES_LOCK_TIMEOUT="${RX_LOCK_TIMEOUT:-10}" PATH="$RX_PATH" \
     "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1
 }
@@ -76,6 +77,29 @@ kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null || true
 grep -Fq "holds $H/.pi/.dotfiles-profiles.lock (pid $HOLDER)" "$RX/out" || rx_fail "pi profiles --apply names the lock holder"
 [ ! -e "$H/.pi/agent-clientx" ] && [ $((t1 - t0)) -lt 8 ] || rx_fail "pi profiles --apply waited too long or wrote under the lock"
 printf '%s\n' 'ok   pi profiles --apply refuses (bounded) while ./dot rexume holds the profiles lock'
+
+# PI_HOME elsewhere: the lock is still ~/.pi's (rexume supports only the default
+# root), and rexume under the default root still blocks a work profile.
+H="$RX/override"; rx_home "$H"; mkdir -p "$H/custom-pi/agent/extensions"
+sleep 30 & HOLDER=$!
+mkdir "$H/.pi/.dotfiles-profiles.lock"; echo "$HOLDER" > "$H/.pi/.dotfiles-profiles.lock/pid"
+if RX_PI_HOME="$H/custom-pi" RX_LOCK_TIMEOUT=1 rx_profiles "$H" --apply; then rx_fail "PI_HOME override: --apply ignored the ~/.pi lock"; fi
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null || true
+grep -Fq "holds $H/.pi/.dotfiles-profiles.lock" "$RX/out" && [ ! -e "$H/custom-pi/.dotfiles-profiles.lock" ] \
+  && [ ! -e "$H/custom-pi/agent-clientx" ] || rx_fail "PI_HOME override: the lock is always ~/.pi/.dotfiles-profiles.lock"
+rm -rf "$H/.pi/.dotfiles-profiles.lock"
+printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
+if RX_PI_HOME="$H/custom-pi" rx_profiles "$H" --apply; then rx_fail "PI_HOME override: --apply ignored rexume under ~/.pi"; fi
+grep -Fq 'while rexume is installed' "$RX/out" && [ ! -e "$H/custom-pi/agent-clientx" ] \
+  || rx_fail "PI_HOME override: rexume under the default root blocks a work profile"
+printf '%s\n' 'ok   PI_HOME override: the lock and rexume detection stay on ~/.pi'
+
+# A mixed-case work profile still counts for --check.
+H="$RX/mixed"; rx_home "$H"; mkdir -p "$H/.pi/AGENT-OTHER" "$H/.local/bin"
+printf '#!/bin/sh\n' > "$H/.local/bin/rexume"; chmod 755 "$H/.local/bin/rexume"
+if rx_profiles "$H" --check; then rx_fail "mixed case: --check passed"; fi
+grep -Fq "AGENT-OTHER" "$RX/out" && grep -Fq 'rexume is installed' "$RX/out" || rx_fail "mixed case: --check flags rexume + AGENT-OTHER"
+printf '%s\n' 'ok   a mixed-case work profile (AGENT-OTHER) is flagged with rexume'
 rm -rf "$RX"; trap - EXIT
 
 # The scaffold is not tracked in this public repo. Use the caller's configured
@@ -118,9 +142,16 @@ printf '%s\n' \
   'DOTFILES_ENABLE_HERMES=0' \
   > "$TMP/.config/dotfiles/local.env"
 
-HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
-HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
-HOME="$TMP" "$ROOT/dot" pi profiles --check >/dev/null
+# Every run is pinned to the fixture HOME: an inherited PI_HOME, XDG_CONFIG_HOME,
+# DOTFILES_LOCAL_ENV or HERMES_HOME would point the installer at real files.
+profiles() {
+  HOME="$TMP" PI_HOME="$TMP/.pi" XDG_CONFIG_HOME="$TMP/.config" \
+    DOTFILES_LOCAL_ENV="$TMP/.config/dotfiles/local.env" HERMES_HOME="$TMP/.hermes" PATH="$RX_PATH" \
+    "$ROOT/dot" pi profiles "$1" >/dev/null
+}
+profiles --apply
+profiles --apply
+profiles --check
 
 test -d "$WORK"
 test ! -e "$WORK/auth.json"
@@ -158,8 +189,8 @@ printf '%s\n' \
   'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' \
   'DOTFILES_ENABLE_HERMES=1' \
   > "$TMP/.config/dotfiles/local.env"
-HOME="$TMP" "$ROOT/dot" pi profiles --apply >/dev/null
-HOME="$TMP" "$ROOT/dot" pi profiles --check >/dev/null
+profiles --apply
+profiles --check
 test -f "$TMP/.hermes/skills/software-development/coding-agent-account-routing/SKILL.md"
 
 printf '%s\n' 'ok   Pi profiles are idempotent and keep settings/auth/Cloak boundaries'
