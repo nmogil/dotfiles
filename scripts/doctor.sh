@@ -124,10 +124,11 @@ if have rex || have rexboard || [ -e "$HOME/.local/bin/rexboard" ]; then
 fi
 
 # rexume (opt-in): checked only where Rex or rexume is present. The check is
-# read-only (it runs rexume only as `rexume status`).
+# read-only and never runs rexume itself (--no-status: `rexume status` can
+# leave SQLite state.db-wal/-shm files behind).
 if have rex || have rexume || [ -e "$HOME/.local/bin/rexume" ]; then
   rexume_rc=0
-  rexume_msg="$("$ROOT/scripts/setup-rexume.sh" --check 2>&1)" || rexume_rc=$?
+  rexume_msg="$("$ROOT/scripts/setup-rexume.sh" --check --no-status 2>&1)" || rexume_rc=$?
   case "$rexume_rc" in
     0) PASS "rexume: $(printf '%s' "$rexume_msg" | tail -n 1)" ;;
     3) WARN "rexume not installed (optional; needs Rex preview.23+: ./dot rexume --apply)" ;;

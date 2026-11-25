@@ -580,6 +580,11 @@ if grep -Eq "^REXUME_LINUX_X86_64_ARCHIVE_SHA256=[0-9a-f]{64}$" "$P" && grep -Eq
    && grep -Eq "^REXUME_RELEASE_URL=https://github\.com/Entwining/rexume/releases/download/v[0-9.]+$" "$P" \
    && grep -Fxq "REXUME_ATTESTATION_SIGNER_WORKFLOW=Entwining/rexume/.github/workflows/publish.yml" "$P"; then
   ok "the committed release.pins pins https URLs, full sha256 checksums and the signer workflow"; else bad "the committed release.pins pins https URLs, full sha256 checksums and the signer workflow"; fi
+# ./dot doctor promises to change nothing, so it checks with --no-status:
+# `rexume status` can leave SQLite state.db-wal/-shm files behind.
+grep -Fq '"$ROOT/scripts/setup-rexume.sh" --check --no-status 2>&1' "$ROOT/scripts/doctor.sh" \
+  && ! grep -E 'setup-rexume\.sh"? --check' "$ROOT/scripts/doctor.sh" | grep -vq -- '--check --no-status'
+res "./dot doctor runs only ./dot rexume --check --no-status (never rexume itself)"
 if git -C "$ROOT" ls-files config/rexume | grep -iE '(^|/)\.env|\.env($|\.)|secret|credential|\.pem$|id_rsa' >/dev/null; then
   bad "no tracked rexume file looks secret-sensitive to ./dot doctor"
 else ok "no tracked rexume file looks secret-sensitive to ./dot doctor"; fi

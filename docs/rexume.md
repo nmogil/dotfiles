@@ -118,7 +118,7 @@ again if the daemon hasn't created its database yet. Every `systemctl`,
 nothing, not even a temp file: the installer and its libraries use no heredocs
 or here-strings, which bash 3.2 writes to temp files. A test enforces this. Checks never run the
 binary except the read-only `rexume status`, and only after the binary is
-verified (from Homebrew, or matching the pin). `./dot doctor` runs the check
+verified (from Homebrew, or matching the pin). `./dot doctor` runs the check (with `--no-status`)
 where Rex or rexume is present.
 
 ## Rex version requirement
@@ -194,7 +194,8 @@ If you run `rexume install` or `rexume uninstall` by hand, use
   runs rexume. `rexume status` opens `state.db` with SQLite's read-only flag
   and never migrates it, but SQLite can still create `state.db-wal`/`-shm`
   when the daemon isn't holding them open, and a dry run writes nothing.
-- `./dot doctor` runs `./dot rexume --check` where Rex or rexume is present.
+- `./dot doctor` runs `./dot rexume --check --no-status` where Rex or rexume is
+  present, so it never runs rexume itself (doctor changes nothing).
 - `./dot pi config` never captures, applies, reports or retires
   `~/.pi/agent/extensions/rexume.ts`, because rexume's daemon owns and
   rewrites it (`docs/pi-config-sync.md`).
