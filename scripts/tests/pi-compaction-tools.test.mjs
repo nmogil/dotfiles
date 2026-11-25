@@ -5,12 +5,18 @@
 // Optional: PI_COMPACTION_EXTENSION=/path/to/index.ts to check another release.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const executable = realpathSync(execFileSync('which', ['pi'], { encoding: 'utf8' }).trim());
+let piPath = '';
+try { piPath = execFileSync('which', ['pi'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+if (!piPath) {
+  console.log('SKIP pi-compaction-tools: needs an installed Pi CLI (pi not on PATH)');
+  process.exit(0);
+}
+const executable = realpathSync(piPath);
 let root = dirname(dirname(executable));
 if (root.endsWith('/dist')) root = dirname(root); // Bundled npm executable.
 const moduleAt = path => pathToFileURL(join(root, path)).href;
@@ -23,6 +29,10 @@ const jiti = createJiti(import.meta.url, { alias: {
 }});
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(process.env.HOME, '.pi/agent');
 const extensionPath = process.env.PI_COMPACTION_EXTENSION ?? join(agentDir, 'npm/node_modules/@ogulcancelik/pi-codex-compaction/index.ts');
+if (!existsSync(extensionPath)) {
+  console.log(`SKIP pi-compaction-tools: Codex compaction extension not installed (${extensionPath})`);
+  process.exit(0);
+}
 const extension = await jiti.import(extensionPath, { default: true });
 const cwd = mkdtempSync(join(tmpdir(), 'pi-compaction-tools-'));
 const stop = 'TEST_STOP_BEFORE_NETWORK';

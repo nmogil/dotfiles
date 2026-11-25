@@ -47,6 +47,8 @@ Usage: ./dot <command> [args]
 
   help                 Show this help
   doctor               Read-only environment health check
+  update [--dry-run]   Pull public+private repos (ff-only), apply Pi baseline +
+                       packages, apply Mac Rex config, run checks (one line/step)
   setup mac            Run macOS setup (setup.sh)
   setup linux          Run Linux/VPS setup (setup-linux.sh)
   repos clone [file]   Bulk-clone repos from repos.txt (clone-repos.sh)
@@ -263,6 +265,7 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   help|-h|--help) usage ;;
   doctor)         run scripts/doctor.sh "$@" ;;
+  update)         run scripts/update.sh "$@" ;;
   git-identity)   exec python3 "$DOT_ROOT/scripts/git-identity-guard.py" "$@" ;;
   setup)
     case "${1:-}" in

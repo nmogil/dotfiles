@@ -7,6 +7,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// The recorder identifies its process by /proc start time (Linux only).
+if (!existsSync('/proc/self/stat')) {
+  console.log('SKIP rex-pane-session: needs Linux /proc (the recorder reads /proc/self/stat); not available on this OS');
+  process.exit(0);
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const work = mkdtempSync(join(tmpdir(), 'rex-pane-session-'));
 const block = 'block:00000000-0000-0000-0000-0000000000aa';

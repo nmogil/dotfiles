@@ -152,7 +152,9 @@ class PiConfigTest(unittest.TestCase):
         self.assertFalse((npm.parent / "npm-cwd").exists())
         (self.vps / extension / "package.json").write_bytes(baseline)
         self.run_cli("packages", self.vps, apply=True)
-        self.assertEqual((npm.parent / "npm-cwd").read_text().strip(), str(self.vps / extension))
+        # Compare resolved paths: macOS temp dirs live behind the /var -> /private/var symlink.
+        self.assertEqual(Path((npm.parent / "npm-cwd").read_text().strip()).resolve(),
+                         (self.vps / extension).resolve())
         # Dev-only dependencies are not required; a hoisted, symlinked workspace
         # install resolves, and apply never probes dependencies.
         self.put(self.vps, ".pi/workspace/chart-lib/package.json", "{}")

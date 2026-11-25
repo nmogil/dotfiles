@@ -125,6 +125,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 |------|-------------|
 | `dot` | Control surface — thin wrapper over the setup scripts (`./dot help`) |
 | `scripts/doctor.sh` | Read-only environment health check (`./dot doctor`) |
+| `scripts/update.sh` | One-command machine update (`./dot update [--dry-run]`; see [Updating](#updating)) |
 | `AGENTS.md` | Where to edit things + safety rules for agents/humans |
 | `packages/` | Package manifests split by role + `./dot packages check` |
 | `docs/chezmoi-plan.md` | Planned (not yet applied) chezmoi migration |
@@ -411,7 +412,30 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 
 ## Updating
 
-To update packages after cloning on a new machine:
+`./dot update` brings a machine up to date in one command, one line per step:
+
+```bash
+./dot update --dry-run   # fetch, show behind/ahead counts and apply previews; changes nothing
+./dot update             # do it; exits 1 if any step failed
+```
+
+1. **Repos** — `git pull --ff-only` for this repo and the private companion
+   (the parent of `DOTFILES_PI_SCAFFOLD_DIR`). A repo that is dirty, detached,
+   diverged, or missing is skipped with a warning — never stashed, reset, or forced.
+2. **Pi config** — when a `pi-config` baseline exists: `./dot pi config apply
+   --apply`, `packages --apply`, then `check` (see
+   [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). It never updates the Pi
+   CLI itself; restart Pi sessions to load package changes.
+3. **Rex** — Mac only: `./dot rex config --apply` then `--check` (never
+   `--force`, never restarts Rex; run `rex config reload` yourself). Linux
+   reports "skipped (Mac only)". `./dot rex install --check` runs wherever
+   rex-safe-upgrade is installed.
+
+Output is ✓ / ! / ✗ per step under a header per section, with command output
+summarized and indented, then a `Summary:` line with counts. Color appears only
+on a terminal and never when `NO_COLOR` is set.
+
+`./dot update` does not upgrade system packages. On a Mac, refresh those with:
 
 ```bash
 brew bundle --file=~/dotfiles/Brewfile

@@ -21,6 +21,9 @@ fi
 "$ROOT/scripts/setup-herdr-config.sh" --check >/dev/null
 
 # Hermes: preserve local-only MCP/auth-shaped content while applying preferences.
+# setup-hermes-config.sh needs PyYAML (python3-yaml on the VPS); skip only this
+# half where it is not installed (for example macOS system Python).
+if python3 -c 'import yaml' 2>/dev/null; then
 mkdir -p "$HERMES_HOME"
 cat > "$HERMES_HOME/config.yaml" <<'YAML'
 _config_version: 34
@@ -54,6 +57,9 @@ assert config["delegation"]["max_concurrent_children"] == 2
 assert config["display"]["skin"] == "pi-screenshot"
 assert stat.S_IMODE(p.stat().st_mode) == 0o600
 PY
+else
+  printf '%s\n' 'skip Hermes config test (PyYAML not installed for python3; install python3-yaml)'
+fi
 
 # Public templates must remain endpoint/credential free.
 if grep -rIlE 'sk-ant-[A-Za-z0-9]|AKIA[0-9A-Z]{16}|xox[baprs]-|-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://' \
