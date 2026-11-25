@@ -110,6 +110,9 @@ case "$*" in "${STUB_FAIL:-<none>}"*)
   echo "stub failure for: $*" >&2
   exit 1 ;;
 esac
+if [ -n "${STUB_LOCAL_CHANGE:-}" ] && [ "$*" = "pi config check" ]; then
+  echo "drift  .pi/agent/local-edit.ts"; echo "3 managed files; 1 differ; 0 retired."; exit 1
+fi
 if [ -n "${STUB_LOCAL_CHANGE:-}" ] && [ "${guard%% *}" = protect ]; then
   echo "local change  .pi/agent/local-edit.ts"
   echo "pi-config: 1 live file(s) differ from the previous baseline" >&2
@@ -221,6 +224,10 @@ head_of() { git -C "$1" rev-parse HEAD; }
 upstream_of() { git -C "$1" rev-parse '@{u}'; }
 remote_head() { git --git-dir="$1" rev-parse main; }
 show_calls() { printf '     calls:\n'; sed 's/^/       /' "$TMP/calls"; }
+TAB="$(printf '\t')"
+reset_calls() { : > "$TMP/calls" && : > "$TMP/gitlog" && rm -f "$TMP"/calls.* || die "reset calls"; }
+APPLIED_STATE_REL=".local/state/dotfiles/pi-config-applied"
+applied_state() { cat "$HOME/$APPLIED_STATE_REL" 2>/dev/null; }
 # snapshot <repo>: checksum of every file under .git (objects, refs, index,
 # FETCH_HEAD, logs) so a test can prove a run wrote nothing to the repo.
 snapshot() { (cd "$1/.git" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do cksum "$f"; done); }
@@ -529,23 +536,59 @@ else bad "an upstream change to the updater re-execs the new updater for the app
 
 # --- 7: uncaptured live Pi changes are protected ----------------------------------
 # Apply runs guarded (--protect-local) against the PREVIOUS baseline: the
-# private repo's pre-update commit, copied out of git (not the working tree).
+# private commit this machine last applied successfully (machine-local state
+# written only after apply AND packages succeed), copied out of git.
 new_manifest() { echo '{"piVersion":"1.6.0","rev":2}' > pi-config/manifest.json; }
-fresh; commit_upstream private new_manifest
+fresh
+run_update
+if [ "$RC" = 0 ] && [ "$(applied_state)" = "$(head_of "$TMP/private")${TAB}pi-config" ] \
+  && [ "$(cat "$TMP/calls.guard")" = "protect none" ]; then
+  ok "a successful apply + packages records the applied private commit (first run: no previous baseline)"
+else bad "a successful apply + packages records the applied private commit (first run: no previous baseline)"; fi
+
+fresh
+STUB_FAIL="pi config packages --apply" run_update
+[ -z "$(applied_state)" ] && called "pi config apply --apply" \
+  && ok "a failed packages step does not record the baseline as applied" \
+  || bad "a failed packages step does not record the baseline as applied"
+fresh
+STUB_LOCAL_CHANGE=1 run_update
+[ -z "$(applied_state)" ] && ok "a refused (guarded) apply does not record the baseline as applied" \
+  || bad "a refused (guarded) apply does not record the baseline as applied"
+
+fresh; run_update; applied_a="$(head_of "$TMP/private")"
+commit_upstream private new_manifest; reset_calls
 run_update
 prev_path="$(cat "$TMP/calls.prevpath" 2>/dev/null)"
 if [ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] && called "pi config apply --apply" \
   && grep -q '"rev":2' "$TMP/private/pi-config/manifest.json" \
-  && [ -n "$prev_path" ] && [ "$prev_path" != "$TMP/private/pi-config" ] && [ ! -e "$prev_path" ]; then
-  ok "apply is guarded against the pre-update baseline (exported from git, then removed)"
-else bad "apply is guarded against the pre-update baseline (exported from git, then removed)"; cat "$TMP/calls.guard"; fi
+  && [ -n "$prev_path" ] && [ "$prev_path" != "$TMP/private/pi-config" ] && [ ! -e "$prev_path" ] \
+  && [ "$(applied_state)" = "$(head_of "$TMP/private")${TAB}pi-config" ] && [ "$applied_a" != "$(head_of "$TMP/private")" ]; then
+  ok "apply is guarded against the last applied baseline (exported from git, then removed)"
+else bad "apply is guarded against the last applied baseline (exported from git, then removed)"; cat "$TMP/calls.guard"; fi
 
-fresh; push_upstream public
+# Regression: the private repo moves A -> B while Pi apply is gated off (the
+# public fetch failed). The retry must compare against A (what was applied),
+# not B (the private repo's pre-run HEAD).
+fresh; run_update
+commit_upstream private new_manifest; reset_calls
+git -C "$TMP/public" remote set-url origin "$TMP/remotes/owner/missing.git" || die "set-url"
+run_update
+[ "$RC" = 1 ] && ! called "pi config apply --apply" && grep -q '"rev":2' "$TMP/private/pi-config/manifest.json" \
+  || die "gated run did not behave as expected"
+git -C "$TMP/public" remote set-url origin "$PUB_URL" || die "set-url"
+reset_calls
+run_update
+[ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] && called "pi config apply --apply" \
+  && ok "retry after a gated apply compares against the last applied baseline, not the pre-run HEAD" \
+  || { bad "retry after a gated apply compares against the last applied baseline, not the pre-run HEAD"; cat "$TMP/calls.guard"; }
+
+fresh; run_update; push_upstream public; reset_calls
 run_update
 [ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] \
   && [ "$(cat "$TMP/calls.prevpath")" = "$TMP/private/pi-config" ] \
-  && ok "private repo unchanged: the verified live bundle is the previous baseline" \
-  || bad "private repo unchanged: the verified live bundle is the previous baseline"
+  && ok "last applied baseline is the current commit: the verified live bundle is the previous baseline" \
+  || bad "last applied baseline is the current commit: the verified live bundle is the previous baseline"
 
 fresh; push_upstream private
 STUB_LOCAL_CHANGE=1 run_update
@@ -570,13 +613,13 @@ run_update
   && ok "no previous baseline: guarded with no previous bundle (every differing live file is protected)" \
   || bad "no previous baseline: guarded with no previous bundle (every differing live file is protected)"
 
-fresh
+fresh; run_update; reset_calls
 STUB_LOCAL_CHANGE=1 run_update --dry-run
 [ "$RC" = 0 ] && has "a real update would skip apply" && has "    local change  .pi/agent/local-edit.ts" \
-  && ! grep -q -- '--apply' "$TMP/calls" \
+  && ! grep -q -- '--apply' "$TMP/calls" && ! has "would apply it" \
   && [ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] \
-  && ok "dry-run previews the guard against the current baseline" \
-  || bad "dry-run previews the guard against the current baseline"
+  && ok "dry-run previews the guard against the last applied baseline (and does not also say it would apply)" \
+  || bad "dry-run previews the guard against the last applied baseline (and does not also say it would apply)"
 
 # End to end with the real Pi tool: a file the incoming baseline starts
 # managing, already present on this machine with different content, is a
@@ -592,8 +635,11 @@ real_pi_fixture() {
   echo 'export default () => 1;' > "$SOURCE_HOME/.pi/agent/extensions/a.ts" || die "a.ts"
   commit_upstream private capture_source
   git_q -C "$TMP/private" pull --ff-only
+  # This machine applied that commit (as a successful ./dot update records it).
   python3 "$TMP/public/scripts/sync-pi-config.py" apply --apply --home "$HOME" \
     --bundle "$TMP/private/pi-config" >/dev/null 2>&1 || die "initial apply"
+  mkdir -p "$(dirname "$HOME/$APPLIED_STATE_REL")" \
+    && printf '%s\t%s\n' "$(head_of "$TMP/private")" pi-config > "$HOME/$APPLIED_STATE_REL" || die "state"
   echo 'export const fromSource = 1;' > "$SOURCE_HOME/.pi/agent/extensions/new.ts" || die "new.ts"
   commit_upstream private capture_source
 }
@@ -612,6 +658,20 @@ if [ "$RC" = 0 ] && [ "$(cat "$HOME/.pi/agent/extensions/new.ts")" = 'export con
   && has "✓ apply" && has "✓ check"; then
   ok "real Pi tool: the same update without a local copy installs the new file"
 else bad "real Pi tool: the same update without a local copy installs the new file"; fi
+
+# Real Pi tool: a clean update whose apply was gated off once still applies on
+# the retry (live = A, incoming = B, last applied = A).
+fresh; real_pi_fixture
+git -C "$TMP/public" remote set-url origin "$TMP/remotes/owner/missing.git" || die "set-url"
+STUB_REAL_PI=1 run_update
+[ "$RC" = 1 ] && [ ! -e "$HOME/.pi/agent/extensions/new.ts" ] || die "gated real run"
+git -C "$TMP/public" remote set-url origin "$PUB_URL" || die "set-url"
+reset_calls
+STUB_REAL_PI=1 run_update
+if [ "$RC" = 0 ] && [ "$(cat "$HOME/.pi/agent/extensions/new.ts")" = 'export const fromSource = 1;' ] \
+  && ! has "local change"; then
+  ok "real Pi tool: retry after a gated apply installs the clean update"
+else bad "real Pi tool: retry after a gated apply installs the clean update"; fi
 
 # --- 8: Rex replacements need manual review ----------------------------------------
 fresh
@@ -805,6 +865,20 @@ for flag in assume-unchanged skip-worktree; do
     ok "a tracked baseline edit hidden by $flag blocks Pi apply"
   else bad "a tracked baseline edit hidden by $flag blocks Pi apply"; fi
 done
+
+# A FIFO (git status ignores it) inside the baseline must be rejected without
+# being opened; the watchdog unblocks a reader so a regression fails, not hangs.
+fresh; push_upstream private
+mkfifo "$TMP/private/pi-config/pipe" || die "mkfifo"
+( sleep 15; exec 3<>"$TMP/private/pi-config/pipe" ) & watchdog=$!
+started="$(date +%s)"
+run_update
+elapsed=$(( $(date +%s) - started ))
+kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
+if [ "$elapsed" -lt 15 ] && ! called "pi config apply --apply" \
+  && has "contains a non-regular file (pi-config/pipe)"; then
+  ok "a FIFO inside the baseline is rejected as non-regular without hashing it"
+else bad "a FIFO inside the baseline is rejected as non-regular without hashing it"; fi
 
 # --- 8f: Rex overlay provenance ---------------------------------------------------------
 fresh; commit_upstream private add_overlay

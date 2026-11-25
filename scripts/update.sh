@@ -48,9 +48,10 @@ Bring this machine up to date:
   Pi config  ./dot pi config apply --apply, packages --apply, then check
              (needs both repos, and baseline files identical to the verified
              private commit). Apply is skipped, unless --yes, when it would
-             replace or archive a live file that differs from the previous
-             baseline (or that baseline did not manage): it may hold
-             uncaptured local changes
+             replace or archive a live file that differs from the last
+             successfully applied baseline (or that baseline did not manage),
+             or restore a managed file deleted here: it may hold uncaptured
+             local changes
   Rex        Mac only: ./dot rex config --apply, then --check (needs the public
              repo, plus the private one when a private overlay exists); files
              that differ need manual review. ./dot rex install --check when
@@ -395,7 +396,7 @@ NL='
 # commit's tree, so index flags (assume-unchanged, skip-worktree) cannot hide
 # a modification; extra, missing, symlinked, or submodule entries fail.
 tree_problem() {
-  local path="$1" what="$2" commit="$3" real rel expected actual names hashes first
+  local path="$1" what="$2" commit="$3" real rel expected actual names hashes first odd
   real="$(cd "$path" 2>/dev/null && pwd -P)" || { printf '%s %s is missing' "$what" "$path"; return; }
   [ "$real" = "$path" ] || { printf '%s %s is not a canonical path' "$what" "$path"; return; }
   case "$path/" in
@@ -407,10 +408,22 @@ tree_problem() {
     printf '%s %s %s' "$what" "$path" "$(printf '%s\n' "$expected" | grep '^ERROR ' | head -n 1 | cut -c 7-)"
     return
   fi
-  if [ -n "$(cd "$PRIVATE" && find "$rel" \( -type l -o -name "*$NL*" \) -print | head -n 1)" ]; then
-    printf '%s %s contains a symlink or an unsupported file name' "$what" "$path"; return
+  # Only directories and regular files (types checked without following
+  # symlinks); a FIFO or device would block or mislead git hash-object.
+  # Traversal errors (e.g. unreadable directories) fail closed.
+  if ! odd="$(cd "$PRIVATE" && find "$rel" ! -type d ! -type f -print 2>/dev/null)"; then
+    printf 'could not traverse %s %s' "$what" "$path"; return
   fi
-  names="$(cd "$PRIVATE" && find "$rel" ! -type d -print | LC_ALL=C sort)"
+  if [ -n "$odd" ]; then
+    printf '%s %s contains a non-regular file (%s)' "$what" "$path" "$(printf '%s\n' "$odd" | head -n 1)"; return
+  fi
+  if ! names="$(cd "$PRIVATE" && find "$rel" -type f -print 2>/dev/null)"; then
+    printf 'could not traverse %s %s' "$what" "$path"; return
+  fi
+  if [ -n "$(cd "$PRIVATE" && find "$rel" -name "*$NL*" -print 2>/dev/null | head -n 1)" ]; then
+    printf '%s %s contains an unsupported file name' "$what" "$path"; return
+  fi
+  names="$(printf '%s\n' "$names" | LC_ALL=C sort)"
   hashes=""
   if [ -n "$names" ] && ! hashes="$(printf '%s\n' "$names" \
     | git -C "$PRIVATE" hash-object --no-filters --stdin-paths 2>/dev/null)"; then
@@ -596,28 +609,60 @@ gate_reason() {
 
 # -------------------------------------------------------------------- Pi config
 # Apply runs with --protect-local: the Pi tool itself, immediately before
-# writing, refuses (exit 3) to replace or archive any live file that differs
-# from the incoming baseline unless it matched the PREVIOUS baseline (the
-# private repo's pre-update commit). That covers local edits to managed files
-# and pre-existing files the new baseline starts managing. --yes drops it.
+# writing, refuses (exit 3) to replace, archive, or restore any live file that
+# differs from the incoming baseline unless it matched the PREVIOUS baseline:
+# the private commit this machine last applied successfully (machine-local
+# state, written only after apply AND packages succeed). That covers local
+# edits and deletions of managed files and pre-existing files the new baseline
+# starts managing. No record means no previous baseline: every differing live
+# file is protected. --yes drops the guard.
 section "Pi config"
 REVIEW_HINT="review with ./dot pi config apply (preview) or, on the Mac, ./dot pi config capture; --yes applies anyway (with backups)"
+APPLIED_STATE="$HOME/.local/state/dotfiles/pi-config-applied"
+BUNDLE_REL="${BUNDLE#"$PRIVATE"/}"
 PREVIOUS_DIR=""
 cleanup_previous() { [ -z "$PREVIOUS_DIR" ] || rm -rf "$PREVIOUS_DIR"; }
 trap cleanup_previous EXIT
 
-# previous_bundle_args: sets PREVIOUS_ARGS to the guard flags for apply. The
-# previous baseline is the bundle at PRIVATE_BEFORE: the live bundle itself when
-# the private repo did not move (already verified against that commit), or a
-# copy of that commit's tree; none when it did not exist (then every differing
-# live file counts as a local change). Real runs only (temp files).
+# applied_commit: the private commit last applied for this same bundle path
+# (empty when unrecorded, malformed, for another path, or not in the repo).
+applied_commit() {
+  local line commit rel
+  [ -f "$APPLIED_STATE" ] && [ ! -L "$APPLIED_STATE" ] || return 0
+  line="$(head -n 1 "$APPLIED_STATE" 2>/dev/null)" || return 0
+  commit="${line%%"$TAB"*}" rel="${line#*"$TAB"}"
+  case "$commit" in ''|*[!0-9a-f]*) return 0 ;; esac
+  [ "${#commit}" -ge 40 ] && [ "$rel" = "$BUNDLE_REL" ] || return 0
+  git -C "$PRIVATE" cat-file -e "$commit^{commit}" 2>/dev/null || return 0
+  printf '%s\n' "$commit"
+}
+
+# record_applied: after apply AND packages succeeded for PRIVATE_COMMIT.
+record_applied() {
+  local dir tmp
+  dir="$(dirname "$APPLIED_STATE")"
+  (umask 077 && mkdir -p "$dir") || return 1
+  tmp="$(mktemp "$dir/.pi-config-applied.XXXXXX")" || return 1
+  printf '%s\t%s\n' "$PRIVATE_COMMIT" "$BUNDLE_REL" > "$tmp" && mv -f "$tmp" "$APPLIED_STATE" \
+    || { rm -f "$tmp"; return 1; }
+}
+
+# previous_bundle_args: sets PREVIOUS_ARGS to the guard flags for apply, with
+# the bundle as of the last applied commit as --previous-bundle: the verified
+# live bundle when that is the current commit, otherwise a copy of that
+# commit's tree (temp dir; real runs only). Nothing recorded, or no bundle at
+# that commit: no --previous-bundle.
 previous_bundle_args() {
-  local rel entries name sha
-  PREVIOUS_ARGS=(--protect-local)
-  if [ "$PRIVATE_BEFORE" = "$PRIVATE_COMMIT" ]; then PREVIOUS_ARGS+=(--previous-bundle "$BUNDLE"); return 0; fi
-  rel="${BUNDLE#"$PRIVATE"/}"
-  entries="$(tree_entries "$PRIVATE_BEFORE" "$rel")" || {
-    case "$entries" in *"is not tracked"*) return 0 ;; esac
+  local applied entries name sha
+  PREVIOUS_ARGS=(--protect-local) PREVIOUS_NOTE=""
+  applied="$(applied_commit)"
+  if [ -z "$applied" ]; then
+    PREVIOUS_NOTE="no record of a previously applied baseline; every differing live file counts as a local change"
+    return 0
+  fi
+  if [ "$applied" = "$PRIVATE_COMMIT" ]; then PREVIOUS_ARGS+=(--previous-bundle "$BUNDLE"); return 0; fi
+  entries="$(tree_entries "$applied" "$BUNDLE_REL")" || {
+    case "$entries" in *"is not tracked"*) PREVIOUS_NOTE="the last applied commit has no baseline"; return 0 ;; esac
     return 1
   }
   PREVIOUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dot-update-previous.XXXXXX")" || return 1
@@ -627,7 +672,7 @@ previous_bundle_args() {
   done <<EOF
 $entries
 EOF
-  PREVIOUS_ARGS+=(--previous-bundle "$PREVIOUS_DIR/$rel")
+  PREVIOUS_ARGS+=(--previous-bundle "$PREVIOUS_DIR/$BUNDLE_REL")
 }
 
 if ! has_baseline; then
@@ -637,28 +682,40 @@ else
   [ -n "$pi_gate" ] || pi_gate="$(tree_problem "$BUNDLE" baseline "$PRIVATE_COMMIT")"
   if [ "$DRY_RUN" = 1 ]; then
     [ -z "$pi_gate" ] || say_warn "apply + packages: a real update would skip them — $pi_gate"
-    # Before pulling, the current baseline is also the previous one.
-    rc=0; capture pi_config apply --protect-local --previous-bundle "$BUNDLE" || rc=$?
-    if [ "$rc" = 3 ] && [ "$YES" = 0 ]; then
+    # Guard preview against the last applied baseline, when that needs no temp
+    # files (it is the current commit) or there is none (no previous).
+    applied="$(applied_commit)" guard=()
+    if [ "$YES" = 1 ]; then guard=()
+    elif [ -z "$applied" ]; then guard=(--protect-local)
+    elif [ "$applied" = "$PRIVATE_COMMIT" ]; then guard=(--protect-local --previous-bundle "$BUNDLE")
+    else note "guard preview skipped: the last applied baseline (${applied:0:7}) is not the current commit; a real update compares against it"
+    fi
+    rc=0; capture pi_config apply ${guard[@]+"${guard[@]}"} || rc=$?
+    would_skip=0
+    if [ "$rc" = 3 ] && [ "${#guard[@]}" -gt 0 ]; then
+      would_skip=1
       say_warn "apply (preview) — live files have local changes, so a real update would skip apply; $REVIEW_HINT"
       log_lines | grep -E -- '^local change ' | indent
-    elif [ "$rc" = 0 ] || [ "$rc" = 3 ]; then
+    elif [ "$rc" = 0 ]; then
       say_ok "apply (preview) — $(summary 'managed files;')"
       log_lines | grep -E -- "$CHANGE_LINES" | indent
     else
       say_fail "apply (preview) failed (exit $rc)"; log_lines | indent
     fi
     run_step "packages (preview)" '' say_fail "" pi_config packages
-    run_step "check" 'managed files;' say_warn "./dot update would apply it" pi_config check
+    if [ "$would_skip" = 1 ]; then check_hint="a real update would not apply it (local changes above)"
+    else check_hint="./dot update would apply it"; fi
+    run_step "check" 'managed files;' say_warn "$check_hint" pi_config check
   elif [ -n "$pi_gate" ]; then
     say_warn "apply + packages skipped — $pi_gate"
     run_step "check" 'managed files;' say_warn "" pi_config check
   else
-    PREVIOUS_ARGS=()
+    PREVIOUS_ARGS=() PREVIOUS_NOTE=""
     if [ "$YES" = 0 ] && ! previous_bundle_args; then
-      say_fail "apply skipped — could not read the previous baseline at ${PRIVATE_BEFORE:0:7}"
+      say_fail "apply skipped — could not read the last applied baseline"
       run_step "check" 'managed files;' say_warn "" pi_config check
     else
+      [ -z "$PREVIOUS_NOTE" ] || note "$PREVIOUS_NOTE"
       rc=0; capture pi_config apply --apply ${PREVIOUS_ARGS[@]+"${PREVIOUS_ARGS[@]}"} || rc=$?
       cleanup_previous; PREVIOUS_DIR=""
       if [ "$rc" = 3 ]; then
@@ -670,10 +727,12 @@ else
         # left partially applied (new files, old packages); rerun after fixing.
         say_ok "apply — $(summary 'managed files;')"
         log_lines | grep -E -- "$CHANGE_LINES" | indent
-        run_step "packages" '' say_fail "Pi config is applied but packages are not; fix and rerun" \
-          pi_config packages --apply \
-          && log_lines | grep -Eq '^(install|npm install) ' \
-          && note "  restart Pi sessions to load package changes"
+        if run_step "packages" '' say_fail "Pi config is applied but packages are not; fix and rerun" \
+          pi_config packages --apply; then
+          ! log_lines | grep -Eq '^(install|npm install) ' || note "  restart Pi sessions to load package changes"
+          # Only now is this commit's baseline fully applied on this machine.
+          record_applied || say_warn "could not record the applied baseline in $APPLIED_STATE"
+        fi
         run_step "check" 'managed files;' say_fail "" pi_config check
       else
         say_fail "apply failed (exit $rc)"; log_lines | indent

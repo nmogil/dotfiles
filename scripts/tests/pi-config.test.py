@@ -341,6 +341,18 @@ class PiConfigTest(unittest.TestCase):
         self.run_cli("apply", self.vps, apply=True, extra_args=self.protect(previous))
         self.assertFalse((self.vps / ".pi/agent/skills/test").exists())
 
+    def test_protect_local_treats_a_deleted_managed_file_as_a_local_change(self):
+        previous = self.synced_previous()
+        self.put(self.mac, ".pi/agent/extensions/other.ts", "export const other = 1;\n")
+        self.run_cli("capture", apply=True)
+        (self.vps / ".pi/agent/extensions/test.ts").unlink()
+        before = self.tree(self.vps)
+        result = self.run_cli("apply", self.vps, apply=True, expected=3, extra_args=self.protect(previous))
+        self.assertIn("local change  .pi/agent/extensions/test.ts", result.stdout)
+        self.assertNotIn("local change  .pi/agent/extensions/other.ts", result.stdout)
+        self.assertEqual(self.tree(self.vps), before)
+        self.assertFalse((self.vps / ".pi/agent/extensions/test.ts").exists())
+
     def test_protect_local_without_previous_baseline_protects_every_differing_live_file(self):
         self.run_cli("capture", apply=True)
         self.put(self.vps, ".pi/agent/extensions/test.ts", "export default () => 'vps';\n")

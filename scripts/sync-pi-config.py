@@ -358,15 +358,19 @@ def main() -> int:
                                    env=environment, check=True)
         return 0
     # Local changes: a live file this run would replace or archive that does
-    # not match the previous baseline (or that baseline did not manage). It
-    # may hold uncaptured work, so nothing is written. Checked in this process,
-    # immediately before any write.
+    # not match the previous baseline (or that baseline did not manage), or a
+    # previously managed file that was deleted locally and would be restored.
+    # Either may be uncaptured work, so nothing is written. Checked in this
+    # process, immediately before any write. Files new to the baseline that are
+    # absent here are simply installed.
     protected = []
     if args.protect_local:
         prior = load_bundle(args.previous_bundle.absolute())[1] if args.previous_bundle else {}
         for name in sorted(set(changes) | set(removed)):
             target = safe_path(home, name)
-            if not target.exists():
+            if not target.exists() and not target.is_symlink():
+                if name in prior:
+                    protected.append(name)  # deleted locally; apply would restore it
                 continue
             if name in prior:
                 if name == SETTINGS:

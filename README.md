@@ -452,10 +452,14 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
    `./dot pi config apply --apply --protect-local --previous-bundle <old>`,
    `packages --apply`, and `check` (see
    [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). `<old>` is the baseline
-   at the private repo's pre-update commit, read from git. The Pi tool itself,
-   immediately before writing, refuses (nothing written) if it would replace or
-   archive any live file that differs from the incoming baseline unless that
-   file matched the previous baseline — so local edits to managed files and
+   at the private commit this machine last applied **successfully**, read from
+   git; it is recorded in `~/.local/state/dotfiles/pi-config-applied` only
+   after apply and packages both succeed (no record: no previous baseline, so
+   every differing live file is protected). The Pi tool itself, immediately
+   before writing, refuses (nothing written) if it would replace or archive
+   any live file that differs from the incoming baseline unless that file
+   matched the previous baseline, or restore a previously managed file that
+   was deleted here — so local edits and deletions of managed files and
    pre-existing files the new baseline starts managing are kept (on the Mac,
    the source of truth, they are usually uncaptured work). Review with
    `./dot pi config apply` (preview) or `./dot pi config capture` on the Mac,
