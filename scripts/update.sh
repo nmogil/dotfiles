@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # dot update — bring this machine up to date in one command:
-#   1. record whether the live Pi config already differs from the current
-#      baseline (possible uncaptured local work), before anything changes
-#   2. fetch exactly the tracked upstream branch from the verified remote, then
+#   1. fetch exactly the tracked upstream branch from the verified remote, then
 #      fast-forward the public and private dotfiles repos to that fetched commit
 #      (git merge --ff-only --no-overwrite-ignore)
-#   3. re-verify both checkouts (path, remote, clean tree, HEAD = that commit)
-#      and the Pi baseline / Rex overlay provenance, then apply the Pi baseline
-#      and its packages and check it
-#   4. apply + check the Mac Rex image-paste config (Mac only)
-#   5. run cheap read-only checks (rex-safe-upgrade install)
+#   2. re-verify both checkouts (path, remote, clean tree, HEAD = that commit,
+#      freshness) and that the Pi baseline / Rex overlay files match the
+#      verified commit, then apply the Pi baseline — guarded so live files with
+#      local changes are never replaced — and its packages, and check it
+#   3. apply + check the Mac Rex image-paste config (Mac only)
+#   4. run cheap read-only checks (rex-safe-upgrade install)
 #
 # Never stashes, resets, or forces; never passes --force to installers; never
 # restarts Rex, updates the Pi CLI, or touches running agent sessions. Live
@@ -47,10 +46,11 @@ Bring this machine up to date:
              remote is skipped with a warning — never stashed, reset, or
              forced — and the applies that depend on it are skipped too
   Pi config  ./dot pi config apply --apply, packages --apply, then check
-             (needs both repos, and a baseline tracked and clean in the private
-             repo). Skipped when the live config already had file drift from
-             the pre-update baseline — it may hold uncaptured local changes —
-             or when there was no pre-update baseline, unless --yes
+             (needs both repos, and baseline files identical to the verified
+             private commit). Apply is skipped, unless --yes, when it would
+             replace or archive a live file that differs from the previous
+             baseline (or that baseline did not manage): it may hold
+             uncaptured local changes
   Rex        Mac only: ./dot rex config --apply, then --check (needs the public
              repo, plus the private one when a private overlay exists); files
              that differ need manual review. ./dot rex install --check when
@@ -61,8 +61,9 @@ Bring this machine up to date:
              repos or temp files (output is kept in memory)
   --fetch    With --dry-run: fetch the tracked upstream branch first, which
              updates only its remote-tracking ref (never branches or worktrees)
-  -y, --yes  Apply the Pi baseline even if the live config had file drift or
-             there was no pre-update baseline (apply backs up what it replaces)
+  -y, --yes  Apply the Pi baseline even over live files with local changes
+             (apply backs up what it replaces), and apply even when a repo's
+             freshness cannot be re-established in the updater hand-off
   -h, --help Show this help
 
 Exit status is 1 if any step failed. Color is used only on a TTY and never
@@ -248,15 +249,15 @@ check_checkout() {
 
 # update_repo <label> <dir> [expected-remote-key]
 # Sets REPO_STATE to "ok" (up to date, fast-forwarded, or in dry-run would be)
-# or a short reason it was not updated; on ok also REPO_COMMIT (HEAD now) and
-# REPO_KEY. UPDATER_CHANGED=1 when the fast-forward touched scripts/update.sh
+# or a short reason it was not updated; on ok also REPO_COMMIT (HEAD now),
+# REPO_BEFORE (HEAD before this run), and REPO_KEY. UPDATER_CHANGED=1 when the fast-forward touched scripts/update.sh
 # or dot.
-REPO_STATE="" REPO_COMMIT="" REPO_KEY="" UPDATER_CHANGED=0 REPOS_BEHIND=0
+REPO_STATE="" REPO_COMMIT="" REPO_BEFORE="" REPO_KEY="" UPDATER_CHANGED=0 REPOS_BEHIND=0
 repo_fail() { REPO_STATE="$2"; say_fail "$1: $3"; log_lines | indent; }
 
 update_repo() {
   local label="$1" dir="$2" expect="${3:-}" sha counts ahead behind before after note="" upstream
-  REPO_STATE="" REPO_COMMIT="" REPO_KEY="" UPDATER_CHANGED=0
+  REPO_STATE="" REPO_COMMIT="" REPO_BEFORE="" REPO_KEY="" UPDATER_CHANGED=0
   if ! check_checkout "$dir" "$expect"; then
     REPO_STATE="$CK_STATE"
     if [ "$CK_SAY" = say_fail ]; then repo_fail "$label" "$CK_STATE" "$CK_MSG"
@@ -298,6 +299,7 @@ update_repo() {
     return
   fi
   before="$(git -C "$dir" rev-parse HEAD)"
+  REPO_BEFORE="$before"
   if [ "$behind" -eq 0 ]; then
     REPO_STATE=ok REPO_COMMIT="$before" REPO_KEY="$CK_KEY"
     say_ok "$label: up to date ($CK_BRANCH$note)"; return
@@ -340,11 +342,60 @@ verify_repo() {
   [ "$head" = "$commit" ] || { VERIFY_REASON="HEAD is not the verified commit"; return 1; }
 }
 
-# tree_problem <path> <what>: why <path> is not exactly what the verified
-# private commit contains (empty when it is): it must be canonical, inside the
-# private repo, tracked, and free of modified, untracked, or ignored files.
+# verify_fresh <dir> <before>: after verify_repo succeeded (CK_* set), prove
+# the checkout passed the freshness/divergence check: its remote-tracking ref
+# and FETCH_HEAD both record the commit the update fetched, HEAD contains it
+# (equal, or ahead with unpushed local commits), and the pre-update commit is
+# an ancestor of HEAD. Sets VERIFY_REASON.
+verify_fresh() {
+  local dir="$1" before="$2" track fetch_head fetched
+  VERIFY_REASON=""
+  case "$before" in
+    ''|*[!0-9a-f]*) VERIFY_REASON="no recorded pre-update commit"; return 1 ;;
+  esac
+  if ! track="$(git -C "$dir" rev-parse --verify --quiet "$CK_TRACK^{commit}" 2>/dev/null)"; then
+    VERIFY_REASON="no $CK_TRACK"; return 1
+  fi
+  fetch_head="$(git -C "$dir" rev-parse --path-format=absolute --git-path FETCH_HEAD 2>/dev/null)" || fetch_head=""
+  fetched="$( { head -n 1 "$fetch_head" 2>/dev/null || true; } | cut -f 1)"
+  [ -n "$fetched" ] && [ "$fetched" = "$track" ] \
+    || { VERIFY_REASON="FETCH_HEAD does not record the fetched $CK_REMOTE/$CK_SRC"; return 1; }
+  git -C "$dir" merge-base --is-ancestor "$track" HEAD 2>/dev/null \
+    || { VERIFY_REASON="HEAD does not contain $CK_REMOTE/$CK_SRC"; return 1; }
+  git -C "$dir" merge-base --is-ancestor "$before" HEAD 2>/dev/null \
+    || { VERIFY_REASON="the pre-update commit is not an ancestor of HEAD"; return 1; }
+}
+
+# tree_entries <commit> <rel>: "path<TAB>blob" for every entry under <rel> in
+# the private repo's <commit>, sorted. Prints "ERROR <reason>" and fails when
+# <rel> is absent or holds anything but regular files (submodules, symlinks).
+tree_entries() {
+  local commit="$1" rel="$2" listing
+  listing="$(git -C "$PRIVATE" -c core.quotePath=false --literal-pathspecs \
+    ls-tree -r --full-tree "$commit" -- "$rel" 2>/dev/null)" \
+    || { echo "ERROR cannot be listed at the verified commit"; return 1; }
+  [ -n "$listing" ] || { echo "ERROR is not tracked at the verified commit"; return 1; }
+  printf '%s\n' "$listing" | while IFS= read -r line; do
+    mode="${line%% *}" rest="${line#* }"; rest="${rest#* }"
+    sha="${rest%%"$TAB"*}" name="${rest#*"$TAB"}"
+    case "$mode" in
+      100644|100755) printf '%s\t%s\n' "$name" "$sha" ;;
+      160000) echo "ERROR contains a submodule ($name)"; exit 1 ;;
+      *) echo "ERROR contains a non-regular entry ($name, mode $mode)"; exit 1 ;;
+    esac
+  done | LC_ALL=C sort
+}
+TAB="$(printf '\t')"
+NL='
+'
+
+# tree_problem <path> <what> <commit>: why the files the installers will read
+# under <path> are not exactly the private repo's verified <commit> (empty
+# when they are). Each worktree file's content is hashed and compared with the
+# commit's tree, so index flags (assume-unchanged, skip-worktree) cannot hide
+# a modification; extra, missing, symlinked, or submodule entries fail.
 tree_problem() {
-  local path="$1" what="$2" real rel status
+  local path="$1" what="$2" commit="$3" real rel expected actual names hashes first
   real="$(cd "$path" 2>/dev/null && pwd -P)" || { printf '%s %s is missing' "$what" "$path"; return; }
   [ "$real" = "$path" ] || { printf '%s %s is not a canonical path' "$what" "$path"; return; }
   case "$path/" in
@@ -352,14 +403,28 @@ tree_problem() {
     *) printf '%s %s is outside the private repo %s' "$what" "$path" "$PRIVATE"; return ;;
   esac
   rel="${path#"$PRIVATE"/}"
-  if [ -z "$(git -C "$PRIVATE" --literal-pathspecs ls-files -- "$rel" 2>/dev/null | head -n 1)" ]; then
-    printf '%s %s is not tracked in the private repo' "$what" "$path"; return
+  if ! expected="$(tree_entries "$commit" "$rel")"; then
+    printf '%s %s %s' "$what" "$path" "$(printf '%s\n' "$expected" | grep '^ERROR ' | head -n 1 | cut -c 7-)"
+    return
   fi
-  if ! status="$(git -C "$PRIVATE" --literal-pathspecs status --porcelain --ignored \
-    --untracked-files=all -- "$rel" 2>/dev/null)"; then
-    printf 'could not read git status for %s %s' "$what" "$path"; return
+  if [ -n "$(cd "$PRIVATE" && find "$rel" \( -type l -o -name "*$NL*" \) -print | head -n 1)" ]; then
+    printf '%s %s contains a symlink or an unsupported file name' "$what" "$path"; return
   fi
-  [ -z "$status" ] || printf '%s %s has untracked, ignored, or modified files' "$what" "$path"
+  names="$(cd "$PRIVATE" && find "$rel" ! -type d -print | LC_ALL=C sort)"
+  hashes=""
+  if [ -n "$names" ] && ! hashes="$(printf '%s\n' "$names" \
+    | git -C "$PRIVATE" hash-object --no-filters --stdin-paths 2>/dev/null)"; then
+    printf 'could not hash %s %s' "$what" "$path"; return
+  fi
+  actual="$(paste <(printf '%s\n' "$names") <(printf '%s\n' "$hashes") | LC_ALL=C sort)"
+  if [ "$actual" != "$expected" ]; then
+    first="$(LC_ALL=C comm -3 <(printf '%s\n' "$expected" | cut -f 1) <(printf '%s\n' "$actual" | cut -f 1) \
+      | head -n 1 | sed "s/^$TAB//")"
+    [ -n "$first" ] || first="$(LC_ALL=C comm -3 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") \
+      | head -n 1 | sed "s/^$TAB//" | cut -f 1)"
+    printf '%s %s differs from the verified commit (%s: modified, hidden by an index flag, extra, or missing)' \
+      "$what" "$path" "$first"
+  fi
 }
 
 dotfiles_load_config
@@ -409,30 +474,18 @@ in_home() { (cd "$HOME" && DOTFILES_LOCAL_ENV=/dev/null "$@"); }
 pi_config() { in_home env DOTFILES_PI_CONFIG_DIR="$BUNDLE" "$DOT" pi config "$@"; }
 rex_config() { in_home env DOTFILES_REX_OVERLAY_DIR="$OVERLAY" "$DOT" rex config "$@"; }
 
-# classify_check <rc>: classify `pi config check` output in $LOG as clean,
-# files (file drift: differing or retired managed files), packages
-# (package/dependency drift only), or error (the check did not complete).
-classify_check() {
-  if [ "$1" = 0 ]; then echo clean; return; fi
-  if [ "$1" = 1 ] && log_lines | grep -Eq '^[0-9]+ managed files; [0-9]+ differ; [0-9]+ retired\.'; then
-    if log_lines | grep -Eq '^(drift|stale) '; then echo files; else echo packages; fi
-  else
-    echo error
-  fi
-}
-
 HANDOFF_OK=1
 if [ "$APPLY_PHASE" = 1 ]; then
   # Continue the previous updater's run. Its state is a claim, not proof:
   # every "ok" is re-verified against the checkouts below.
   PUBLIC_STATE="${DOT_UPDATE_PUBLIC:-}" PUBLIC_DIR="${DOT_UPDATE_PUBLIC_DIR:-}"
   PUBLIC_COMMIT="${DOT_UPDATE_PUBLIC_COMMIT:-}" PUBLIC_KEY="${DOT_UPDATE_PUBLIC_REMOTE:-}"
+  PUBLIC_BEFORE="${DOT_UPDATE_PUBLIC_BEFORE:-}"
   PRIVATE_STATE="${DOT_UPDATE_PRIVATE:-}" PRIVATE_DIR="${DOT_UPDATE_PRIVATE_DIR:-}"
   PRIVATE_COMMIT="${DOT_UPDATE_PRIVATE_COMMIT:-}" PRIVATE_KEY="${DOT_UPDATE_PRIVATE_REMOTE:-}"
-  PI_PRECHECK="${DOT_UPDATE_PI_PRECHECK:-}" PRECHECK_LOG="${DOT_UPDATE_PI_PRECHECK_DETAIL:-}"
+  PRIVATE_BEFORE="${DOT_UPDATE_PRIVATE_BEFORE:-}"
   counts="${DOT_UPDATE_COUNTS:-}"
   [ -n "$PUBLIC_STATE" ] && [ -n "$PRIVATE_STATE" ] || HANDOFF_OK=0
-  case "$PI_PRECHECK" in clean|files|packages|error|none) ;; *) HANDOFF_OK=0 ;; esac
   [ "${DOT_UPDATE_BUNDLE-unset}" = "$BUNDLE" ] || HANDOFF_OK=0
   if [ "$PUBLIC_STATE" = ok ] && [ "$PUBLIC_DIR" != "$ROOT" ]; then
     PUBLIC_STATE="not verified: checkout path mismatch"
@@ -447,8 +500,8 @@ if [ "$APPLY_PHASE" = 1 ]; then
        set_counts $counts || HANDOFF_OK=0 ;;
   esac
   unset DOT_UPDATE_PUBLIC DOT_UPDATE_PUBLIC_DIR DOT_UPDATE_PUBLIC_COMMIT DOT_UPDATE_PUBLIC_REMOTE \
-    DOT_UPDATE_PRIVATE DOT_UPDATE_PRIVATE_DIR DOT_UPDATE_PRIVATE_COMMIT DOT_UPDATE_PRIVATE_REMOTE \
-    DOT_UPDATE_PI_PRECHECK DOT_UPDATE_PI_PRECHECK_DETAIL DOT_UPDATE_BUNDLE DOT_UPDATE_COUNTS
+    DOT_UPDATE_PUBLIC_BEFORE DOT_UPDATE_PRIVATE DOT_UPDATE_PRIVATE_DIR DOT_UPDATE_PRIVATE_COMMIT \
+    DOT_UPDATE_PRIVATE_REMOTE DOT_UPDATE_PRIVATE_BEFORE DOT_UPDATE_BUNDLE DOT_UPDATE_COUNTS
   if [ "$HANDOFF_OK" = 0 ]; then
     say_fail "updater hand-off state is missing or invalid; not applying anything"
     [ "$PUBLIC_STATE" != ok ] || PUBLIC_STATE="hand-off invalid"
@@ -460,21 +513,12 @@ else
   else mode=''; fi
   printf '%sdot update%s %s(%s%s)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$OS" "$mode" "$C_RESET"
 
-  # Before anything changes: does the live config already differ from the
-  # CURRENT baseline? File drift may be local work nobody has captured, and
-  # applying the (new) baseline would overwrite it.
-  PI_PRECHECK=none PRECHECK_LOG=""
-  if [ "$DRY_RUN" = 0 ] && has_baseline; then
-    rc=0; capture pi_config check || rc=$?
-    PI_PRECHECK="$(classify_check "$rc")" PRECHECK_RC="$rc" PRECHECK_LOG="$LOG"
-  fi
-
   section "Repos"
   update_repo dotfiles "$ROOT"
   PUBLIC_STATE="$REPO_STATE" PUBLIC_DIR="$ROOT" PUBLIC_COMMIT="$REPO_COMMIT" PUBLIC_KEY="$REPO_KEY"
-  PUBLIC_UPDATER_CHANGED="$UPDATER_CHANGED"
+  PUBLIC_BEFORE="$REPO_BEFORE" PUBLIC_UPDATER_CHANGED="$UPDATER_CHANGED"
 
-  PRIVATE_DIR="$PRIVATE" PRIVATE_COMMIT="" PRIVATE_KEY=""
+  PRIVATE_DIR="$PRIVATE" PRIVATE_COMMIT="" PRIVATE_KEY="" PRIVATE_BEFORE=""
   if [ -z "$PRIVATE" ]; then
     PRIVATE_STATE="not configured"
     say_skip "dotfiles-private: not configured (DOTFILES_PI_SCAFFOLD_DIR unset in local.env)"
@@ -484,6 +528,7 @@ else
   else
     update_repo dotfiles-private "$PRIVATE" "$PRIVATE_EXPECT"
     PRIVATE_STATE="$REPO_STATE" PRIVATE_COMMIT="$REPO_COMMIT" PRIVATE_KEY="$REPO_KEY"
+    PRIVATE_BEFORE="$REPO_BEFORE"
   fi
   if [ "$DRY_RUN" = 1 ] && [ "$FETCH" = 0 ]; then
     note "behind/ahead use cached remote-tracking refs; add --fetch to refresh them"
@@ -499,26 +544,41 @@ else
     note "the updater changed; continuing with the new version"
     export DOT_UPDATE_PUBLIC="$PUBLIC_STATE" DOT_UPDATE_PUBLIC_DIR="$PUBLIC_DIR" \
       DOT_UPDATE_PUBLIC_COMMIT="$PUBLIC_COMMIT" DOT_UPDATE_PUBLIC_REMOTE="$PUBLIC_KEY" \
+      DOT_UPDATE_PUBLIC_BEFORE="$PUBLIC_BEFORE" \
       DOT_UPDATE_PRIVATE="$PRIVATE_STATE" DOT_UPDATE_PRIVATE_DIR="$PRIVATE_DIR" \
       DOT_UPDATE_PRIVATE_COMMIT="$PRIVATE_COMMIT" DOT_UPDATE_PRIVATE_REMOTE="$PRIVATE_KEY" \
-      DOT_UPDATE_PI_PRECHECK="$PI_PRECHECK" DOT_UPDATE_BUNDLE="$BUNDLE" \
+      DOT_UPDATE_PRIVATE_BEFORE="$PRIVATE_BEFORE" DOT_UPDATE_BUNDLE="$BUNDLE" \
       DOT_UPDATE_COUNTS="$N_OK $N_WARN $N_FAIL $N_SKIP"
-    DOT_UPDATE_PI_PRECHECK_DETAIL="$(printf '%s\n' "$PRECHECK_LOG" | tail -n "$MAX_DETAIL_LINES")"
-    export DOT_UPDATE_PI_PRECHECK_DETAIL
     next=(--internal-apply-phase)
     [ "$YES" = 0 ] || next+=(--yes)
     exec "${BASH:-bash}" "$ROOT/scripts/update.sh" "${next[@]}"
   fi
 fi
 
-# Re-verify every "ok" right before applying anything.
-if [ "$PUBLIC_STATE" = ok ] && ! verify_repo "$ROOT" "" "$PUBLIC_COMMIT" "$PUBLIC_KEY"; then
-  PUBLIC_STATE="not verified: $VERIFY_REASON"
-fi
-if [ "$PRIVATE_STATE" = ok ] \
-  && ! verify_repo "$PRIVATE" "$PRIVATE_EXPECT" "$PRIVATE_COMMIT" "$PRIVATE_KEY"; then
-  PRIVATE_STATE="not verified: $VERIFY_REASON"
-fi
+# Re-verify every "ok" right before applying anything. A real run must also
+# prove freshness (see verify_fresh); when that cannot be established — e.g. a
+# hand-off with no matching fetch — applying needs --yes.
+reverify() {  # reverify <label> <dir> <expected-key> <commit> <remote-key> <before>
+  if ! verify_repo "$2" "$3" "$4" "$5"; then
+    printf 'not verified: %s' "$VERIFY_REASON"; return
+  fi
+  [ "$DRY_RUN" = 0 ] || { printf ok; return; }
+  if verify_fresh "$2" "$6"; then printf ok
+  elif [ "$YES" = 1 ]; then printf 'unfresh: %s' "$VERIFY_REASON"
+  else printf 'not verified: freshness not established: %s; --yes applies anyway' "$VERIFY_REASON"; fi
+}
+[ "$PUBLIC_STATE" != ok ] \
+  || PUBLIC_STATE="$(reverify dotfiles "$ROOT" "" "$PUBLIC_COMMIT" "$PUBLIC_KEY" "$PUBLIC_BEFORE")"
+[ "$PRIVATE_STATE" != ok ] || PRIVATE_STATE="$(reverify dotfiles-private "$PRIVATE" "$PRIVATE_EXPECT" \
+  "$PRIVATE_COMMIT" "$PRIVATE_KEY" "$PRIVATE_BEFORE")"
+case "$PUBLIC_STATE" in "unfresh: "*)
+  say_warn "dotfiles: freshness not established (${PUBLIC_STATE#unfresh: }); applying because of --yes"
+  PUBLIC_STATE=ok ;;
+esac
+case "$PRIVATE_STATE" in "unfresh: "*)
+  say_warn "dotfiles-private: freshness not established (${PRIVATE_STATE#unfresh: }); applying because of --yes"
+  PRIVATE_STATE=ok ;;
+esac
 
 # gate_reason <needs-private:0|1>: why an apply that depends on the repos must
 # not run (empty when it may).
@@ -535,64 +595,91 @@ gate_reason() {
 }
 
 # -------------------------------------------------------------------- Pi config
+# Apply runs with --protect-local: the Pi tool itself, immediately before
+# writing, refuses (exit 3) to replace or archive any live file that differs
+# from the incoming baseline unless it matched the PREVIOUS baseline (the
+# private repo's pre-update commit). That covers local edits to managed files
+# and pre-existing files the new baseline starts managing. --yes drops it.
 section "Pi config"
 REVIEW_HINT="review with ./dot pi config apply (preview) or, on the Mac, ./dot pi config capture; --yes applies anyway (with backups)"
+PREVIOUS_DIR=""
+cleanup_previous() { [ -z "$PREVIOUS_DIR" ] || rm -rf "$PREVIOUS_DIR"; }
+trap cleanup_previous EXIT
+
+# previous_bundle_args: sets PREVIOUS_ARGS to the guard flags for apply. The
+# previous baseline is the bundle at PRIVATE_BEFORE: the live bundle itself when
+# the private repo did not move (already verified against that commit), or a
+# copy of that commit's tree; none when it did not exist (then every differing
+# live file counts as a local change). Real runs only (temp files).
+previous_bundle_args() {
+  local rel entries name sha
+  PREVIOUS_ARGS=(--protect-local)
+  if [ "$PRIVATE_BEFORE" = "$PRIVATE_COMMIT" ]; then PREVIOUS_ARGS+=(--previous-bundle "$BUNDLE"); return 0; fi
+  rel="${BUNDLE#"$PRIVATE"/}"
+  entries="$(tree_entries "$PRIVATE_BEFORE" "$rel")" || {
+    case "$entries" in *"is not tracked"*) return 0 ;; esac
+    return 1
+  }
+  PREVIOUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dot-update-previous.XXXXXX")" || return 1
+  while IFS="$TAB" read -r name sha; do
+    mkdir -p "$PREVIOUS_DIR/$(dirname "$name")" \
+      && git -C "$PRIVATE" cat-file blob "$sha" > "$PREVIOUS_DIR/$name" || return 1
+  done <<EOF
+$entries
+EOF
+  PREVIOUS_ARGS+=(--previous-bundle "$PREVIOUS_DIR/$rel")
+}
+
 if ! has_baseline; then
   say_skip "no pi-config baseline (set DOTFILES_PI_SCAFFOLD_DIR in local.env)"
 else
   pi_gate="$(gate_reason 1)"
-  [ -n "$pi_gate" ] || pi_gate="$(tree_problem "$BUNDLE" baseline)"
+  [ -n "$pi_gate" ] || pi_gate="$(tree_problem "$BUNDLE" baseline "$PRIVATE_COMMIT")"
   if [ "$DRY_RUN" = 1 ]; then
     [ -z "$pi_gate" ] || say_warn "apply + packages: a real update would skip them — $pi_gate"
-    run_step "apply (preview)" 'managed files;' say_fail "" pi_config apply
+    # Before pulling, the current baseline is also the previous one.
+    rc=0; capture pi_config apply --protect-local --previous-bundle "$BUNDLE" || rc=$?
+    if [ "$rc" = 3 ] && [ "$YES" = 0 ]; then
+      say_warn "apply (preview) — live files have local changes, so a real update would skip apply; $REVIEW_HINT"
+      log_lines | grep -E -- '^local change ' | indent
+    elif [ "$rc" = 0 ] || [ "$rc" = 3 ]; then
+      say_ok "apply (preview) — $(summary 'managed files;')"
+      log_lines | grep -E -- "$CHANGE_LINES" | indent
+    else
+      say_fail "apply (preview) failed (exit $rc)"; log_lines | indent
+    fi
     run_step "packages (preview)" '' say_fail "" pi_config packages
-    rc=0; capture pi_config check || rc=$?
-    case "$(classify_check "$rc")" in
-      clean) say_ok "check — $(summary 'managed files;')"; log_lines | grep -E -- "$CHANGE_LINES" | indent ;;
-      packages)
-        say_warn "check failed (exit $rc) — package/dependency drift only; ./dot update would install packages"
-        log_lines | grep -E -- "$CHANGE_LINES" | indent ;;
-      files)
-        if [ "$YES" = 1 ]; then hint="./dot update --yes would apply it"
-        else hint="live config has file drift from the current baseline, so a real update would skip apply (it may hold uncaptured local changes); $REVIEW_HINT"; fi
-        say_warn "check failed (exit $rc) — $hint"; log_lines | indent ;;
-      *) say_warn "check failed (exit $rc) — operational error, so a real update would skip apply"; log_lines | indent ;;
-    esac
+    run_step "check" 'managed files;' say_warn "./dot update would apply it" pi_config check
   elif [ -n "$pi_gate" ]; then
     say_warn "apply + packages skipped — $pi_gate"
     run_step "check" 'managed files;' say_warn "" pi_config check
   else
-    blocked=""
-    case "$PI_PRECHECK" in
-      clean) ;;
-      packages) note "pre-update check: package/dependency drift only; applying" ;;
-      files)
-        [ "$YES" = 1 ] || blocked="live config already had file drift from the pre-update baseline and may hold uncaptured local changes; $REVIEW_HINT" ;;
-      error)
-        say_warn "pre-update check failed (exit ${PRECHECK_RC:-?}) — operational error, so file drift is unknown"
-        printf '%s\n' "$PRECHECK_LOG" | indent
-        [ "$YES" = 1 ] || blocked="pre-update check did not complete; fix it and rerun, or --yes applies anyway (with backups)" ;;
-      none)
-        if [ "$YES" = 0 ] && [ -e "$HOME/.pi/agent" ]; then
-          blocked="no pre-update baseline to compare the live Pi config against; $REVIEW_HINT"
-        fi ;;
-      *) blocked="pre-update check state unknown" ;;
-    esac
-    if [ -n "$blocked" ]; then
-      say_warn "apply + packages skipped — $blocked"
-      [ "$PI_PRECHECK" != files ] || printf '%s\n' "$PRECHECK_LOG" | grep -E -- '^(drift|stale) ' | indent
+    PREVIOUS_ARGS=()
+    if [ "$YES" = 0 ] && ! previous_bundle_args; then
+      say_fail "apply skipped — could not read the previous baseline at ${PRIVATE_BEFORE:0:7}"
       run_step "check" 'managed files;' say_warn "" pi_config check
-    # apply backs up every file it replaces. If packages then fails, Pi is left
-    # partially applied (new files, old packages); rerun after fixing.
-    elif run_step "apply" 'managed files;' say_fail "" pi_config apply --apply; then
-      run_step "packages" '' say_fail "Pi config is applied but packages are not; fix and rerun" \
-        pi_config packages --apply \
-        && log_lines | grep -Eq '^(install|npm install) ' \
-        && note "  restart Pi sessions to load package changes"
-      run_step "check" 'managed files;' say_fail "" pi_config check
     else
-      say_skip "packages: skipped (apply failed)"
-      say_skip "check: skipped (apply failed)"
+      rc=0; capture pi_config apply --apply ${PREVIOUS_ARGS[@]+"${PREVIOUS_ARGS[@]}"} || rc=$?
+      cleanup_previous; PREVIOUS_DIR=""
+      if [ "$rc" = 3 ]; then
+        say_warn "apply + packages skipped — live files differ from the previous baseline and may hold uncaptured local changes (nothing written); $REVIEW_HINT"
+        log_lines | grep -E -- '^local change ' | indent
+        run_step "check" 'managed files;' say_warn "" pi_config check
+      elif [ "$rc" = 0 ]; then
+        # apply backs up every file it replaces. If packages then fails, Pi is
+        # left partially applied (new files, old packages); rerun after fixing.
+        say_ok "apply — $(summary 'managed files;')"
+        log_lines | grep -E -- "$CHANGE_LINES" | indent
+        run_step "packages" '' say_fail "Pi config is applied but packages are not; fix and rerun" \
+          pi_config packages --apply \
+          && log_lines | grep -Eq '^(install|npm install) ' \
+          && note "  restart Pi sessions to load package changes"
+        run_step "check" 'managed files;' say_fail "" pi_config check
+      else
+        say_fail "apply failed (exit $rc)"; log_lines | indent
+        say_skip "packages: skipped (apply failed)"
+        say_skip "check: skipped (apply failed)"
+      fi
     fi
   fi
 fi
@@ -629,7 +716,7 @@ else
   rex_gate=""
   if [ -n "$OVERLAY" ] && [ -e "$OVERLAY" ]; then
     rex_gate="$(gate_reason 1)"
-    [ -n "$rex_gate" ] || rex_gate="$(tree_problem "$OVERLAY" overlay)"
+    [ -n "$rex_gate" ] || rex_gate="$(tree_problem "$OVERLAY" overlay "$PRIVATE_COMMIT")"
   else
     rex_gate="$(gate_reason 0)"
   fi

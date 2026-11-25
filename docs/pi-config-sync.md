@@ -80,13 +80,17 @@ deleted. Restart Pi after package changes; running sessions may still contain
 previously loaded extensions or skills.
 
 `./dot update` runs `apply --apply`, `packages --apply`, and `check` for you,
-but only after both dotfiles repos fast-forwarded cleanly and the baseline is
-tracked and clean in the verified private commit. It skips apply (unless
-`--yes`) when `check` already showed file drift before pulling — that may be
-uncaptured local work — or could not run, or when there was no baseline before
-pulling but `~/.pi/agent` exists. Package-only drift does not block. Apply
-backs up what it replaces; a failed `packages` step leaves Pi partially applied
-until rerun. See the README's "Updating".
+but only after both dotfiles repos fast-forwarded cleanly and every baseline
+file matches the verified private commit. Its apply adds `--protect-local
+--previous-bundle <baseline at the pre-update commit>`: in the same process,
+right before writing, the tool refuses (exit 3, nothing written, `local change
+<path>` lines) to replace or archive any live file that differs from the
+incoming baseline unless it matched the previous baseline. That keeps local
+edits and pre-existing files a new baseline starts managing. Without
+`--previous-bundle`, every differing live file counts. `--yes` drops the guard.
+Package drift never blocks. Apply backs up what it replaces; a failed
+`packages` step leaves Pi partially applied until rerun. See the README's
+"Updating".
 
 The installed Pi CLI must match `manifest.json`'s `piVersion`. Both machines
 currently use **1.6.0**; the public CLI installer and package manifest pin that

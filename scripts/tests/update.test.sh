@@ -42,6 +42,7 @@ exec "$REAL_UNAME" "\$@"
 EOF
 chmod +x "$TMP/bin/uname" || die "chmod"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/rex" && chmod +x "$TMP/bin/rex" || die "rex stub"
+printf '#!/bin/sh\necho 1.6.0\n' > "$TMP/bin/pi" && chmod +x "$TMP/bin/pi" || die "pi stub"
 export PATH="$TMP/bin:$PATH"
 
 # git wrapper (on PATH only while update.sh runs): logs every invocation to
@@ -64,40 +65,55 @@ chmod +x "$TMP/gitstub/git" || die "chmod"
 
 # Stub `dot`: records argv (and, for Pi commands, the DOTFILES_PI_CONFIG_DIR it
 # was given), prints output shaped like the real commands, and fails when its
-# argv equals $STUB_FAIL. `pi config check` reports file drift with STUB_DRIFT,
-# package-only drift with STUB_PKG_DRIFT, and an operational error with
-# STUB_CHECK_ERROR. STUB_REX_REPLACE makes the Rex preview report a differing
-# file; STUB_REAL_REX runs the real scripts/setup-rex-config.sh instead.
-# STUB_TMP_WATCH: record what exists in that directory at each call.
+# argv starts with $STUB_FAIL. For `pi config apply` the --protect-local /
+# --previous-bundle guard flags are logged separately to $STUB_LOG.guard
+# ("unguarded", "protect none", or "protect <previous manifest.json>") and
+# the previous bundle's path to $STUB_LOG.prevpath; with STUB_LOCAL_CHANGE a
+# guarded apply reports a local change and exits 3. STUB_REX_REPLACE makes the
+# Rex preview report a differing file; STUB_REAL_REX runs the real
+# scripts/setup-rex-config.sh instead, and STUB_REAL_PI the real
+# scripts/sync-pi-config.sh (with a stub `pi` that only reports 1.6.0). STUB_TMP_WATCH: record what exists in
+# that directory at each call.
 STUB_DOT="$TMP/stub-dot"
 cat > "$STUB_DOT" <<'EOF' || die "dot stub"
 #!/usr/bin/env bash
+if [ -n "${STUB_REAL_PI:-}" ] && [ "${1:-} ${2:-}" = "pi config" ]; then
+  printf '%s\n' "$*" >> "$STUB_LOG"; shift 2
+  exec bash "$(dirname "$0")/scripts/sync-pi-config.sh" "$@"
+fi
+guard=""
+if [ "${1:-} ${2:-} ${3:-}" = "pi config apply" ]; then
+  guard=unguarded; prev=""; rest=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --protect-local) guard="protect none" ;;
+      --previous-bundle) prev="$2"; shift ;;
+      *) rest+=("$1") ;;
+    esac
+    shift
+  done
+  set -- "${rest[@]}"
+  if [ -n "$prev" ]; then
+    guard="protect $(cat "$prev/manifest.json" 2>/dev/null || echo missing)"
+    printf '%s\n' "$prev" >> "$STUB_LOG.prevpath"
+  fi
+  printf '%s\n' "$guard" >> "$STUB_LOG.guard"
+fi
 printf '%s\n' "$*" >> "$STUB_LOG"
 case "$*" in "pi config"*) printf '%s\n' "${DOTFILES_PI_CONFIG_DIR-<unset>}" >> "$STUB_LOG.bundle" ;; esac
 [ -z "${STUB_TMP_WATCH:-}" ] || ls -A "$STUB_TMP_WATCH" >> "$STUB_LOG.tmp"
 if [ -n "${STUB_REAL_REX:-}" ] && [ "${1:-} ${2:-}" = "rex config" ]; then
   shift 2; exec bash "$(dirname "$0")/scripts/setup-rex-config.sh" "$@"
 fi
-if [ "$*" = "${STUB_FAIL:-}" ]; then
+case "$*" in "${STUB_FAIL:-<none>}"*)
   for i in $(seq 1 30); do echo "noisy line $i"; done
   echo "stub failure for: $*" >&2
-  exit 1
-fi
-if [ "$*" = "pi config check" ] && [ -n "${STUB_DRIFT:-}" ]; then
-  echo "drift  .pi/agent/local-edit.ts"
-  echo "3 managed files; 1 differ; 0 retired. Unmanaged files preserved."
-  exit 1
-fi
-if [ "$*" = "pi config check" ] && [ -n "${STUB_PKG_DRIFT:-}" ]; then
-  echo "Pi CLI: 1.6.0 (baseline 1.6.0)"
-  echo "package drift: example installed=missing expected=1.0.0"
-  echo "extension dependency drift: .pi/agent/extensions/mpl missing chart"
-  echo "3 managed files; 0 differ; 0 retired. Unmanaged files preserved."
-  exit 1
-fi
-if [ "$*" = "pi config check" ] && [ -n "${STUB_CHECK_ERROR:-}" ]; then
-  echo "pi-config: Pi version differs; install the baseline version first" >&2
-  exit 2
+  exit 1 ;;
+esac
+if [ -n "${STUB_LOCAL_CHANGE:-}" ] && [ "${guard%% *}" = protect ]; then
+  echo "local change  .pi/agent/local-edit.ts"
+  echo "pi-config: 1 live file(s) differ from the previous baseline" >&2
+  exit 3
 fi
 case "$*" in
   "pi config apply"*|"pi config check")
@@ -151,6 +167,7 @@ populate_public() {
     && cp "$ROOT/scripts/update.sh" scripts/update.sh \
     && cp "$ROOT/scripts/lib/local-env.sh" scripts/lib/local-env.sh \
     && cp "$ROOT/scripts/setup-rex-config.sh" scripts/setup-rex-config.sh \
+    && cp "$ROOT/scripts/sync-pi-config.sh" "$ROOT/scripts/sync-pi-config.py" scripts/ \
     && mkdir -p config && cp -R "$ROOT/config/rex" config/rex \
     && cp "$STUB_DOT" dot \
     && echo '# fake dotfiles' > README.md
@@ -185,7 +202,7 @@ fresh() {  # rebuild remotes + clones for one scenario
   write_local_env "DOTFILES_PI_SCAFFOLD_DIR=\"$TMP/private/pi-scaffold\""
   printf '#!/bin/sh\n' > "$HOME/.local/bin/rex-safe-upgrade" || die "rex-safe-upgrade"
   : > "$TMP/calls" || die "calls"
-  rm -f "$TMP/calls.bundle" "$TMP/calls.tmp" || die "cleanup"
+  rm -f "$TMP"/calls.* || die "cleanup"
   : > "$TMP/gitlog" || die "gitlog"
 }
 
@@ -228,8 +245,7 @@ run_update --internal-apply-phase --dry-run
 # --- 2: real run fast-forwards both repos and applies in order -----------------
 fresh; push_upstream public; push_upstream private; push_upstream private
 run_update
-expected_calls="pi config check
-pi config apply --apply
+expected_calls="pi config apply --apply
 pi config packages --apply
 pi config check
 rex config --dry-run
@@ -462,7 +478,7 @@ echo local-edit >> "$TMP/private/pi-config/manifest.json"
 run_update
 if has "! apply + packages skipped — dotfiles-private not updated" \
   && ! called "pi config apply --apply" && ! called "pi config packages --apply" \
-  && [ "$(count_calls "pi config check")" = 2 ] && called "rex config --apply"; then
+  && [ "$(count_calls "pi config check")" = 1 ] && called "rex config --apply"; then
   ok "skipped private repo skips Pi apply/packages (checks still run); Rex apply without overlay still runs"
 else bad "skipped private repo skips Pi apply/packages (checks still run); Rex apply without overlay still runs"; show_calls; fi
 
@@ -512,23 +528,90 @@ if [ "$RC" = 0 ] && has "NEW-UPDATER-RAN --internal-apply-phase" \
 else bad "an upstream change to the updater re-execs the new updater for the apply phase only"; show_calls; fi
 
 # --- 7: uncaptured live Pi changes are protected ----------------------------------
-fresh; push_upstream private
-STUB_DRIFT=1 run_update
-if [ "$RC" = 0 ] && has "may hold uncaptured local changes" && has "./dot pi config capture" \
-  && has "--yes" && ! called "pi config apply --apply" && ! called "pi config packages --apply" \
-  && [ "$(count_calls "pi config check")" = 2 ] && has "    drift  .pi/agent/local-edit.ts"; then
-  ok "pre-update drift skips Pi apply with a review hint"
-else bad "pre-update drift skips Pi apply with a review hint"; show_calls; fi
+# Apply runs guarded (--protect-local) against the PREVIOUS baseline: the
+# private repo's pre-update commit, copied out of git (not the working tree).
+new_manifest() { echo '{"piVersion":"1.6.0","rev":2}' > pi-config/manifest.json; }
+fresh; commit_upstream private new_manifest
+run_update
+prev_path="$(cat "$TMP/calls.prevpath" 2>/dev/null)"
+if [ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] && called "pi config apply --apply" \
+  && grep -q '"rev":2' "$TMP/private/pi-config/manifest.json" \
+  && [ -n "$prev_path" ] && [ "$prev_path" != "$TMP/private/pi-config" ] && [ ! -e "$prev_path" ]; then
+  ok "apply is guarded against the pre-update baseline (exported from git, then removed)"
+else bad "apply is guarded against the pre-update baseline (exported from git, then removed)"; cat "$TMP/calls.guard"; fi
+
+fresh; push_upstream public
+run_update
+[ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] \
+  && [ "$(cat "$TMP/calls.prevpath")" = "$TMP/private/pi-config" ] \
+  && ok "private repo unchanged: the verified live bundle is the previous baseline" \
+  || bad "private repo unchanged: the verified live bundle is the previous baseline"
 
 fresh; push_upstream private
-STUB_DRIFT=1 run_update --yes
-called "pi config apply --apply" && called "pi config packages --apply" \
-  && ok "--yes applies despite pre-update drift" || bad "--yes applies despite pre-update drift"
+STUB_LOCAL_CHANGE=1 run_update
+if [ "$RC" = 0 ] && has "may hold uncaptured local changes" && has "./dot pi config capture" && has "--yes" \
+  && has "    local change  .pi/agent/local-edit.ts" && ! called "pi config packages --apply" \
+  && called "pi config check"; then
+  ok "a guarded apply that finds local changes skips apply + packages with a review hint"
+else bad "a guarded apply that finds local changes skips apply + packages with a review hint"; show_calls; fi
+
+fresh; push_upstream private
+STUB_LOCAL_CHANGE=1 run_update --yes
+[ "$(cat "$TMP/calls.guard")" = unguarded ] && called "pi config packages --apply" \
+  && ok "--yes applies unguarded" || bad "--yes applies unguarded"
+
+rm_config() { git rm -q -r pi-config; }
+add_config() { mkdir -p pi-config && echo '{"piVersion":"1.6.0"}' > pi-config/manifest.json; }
+fresh; commit_upstream private rm_config
+git_q -C "$TMP/private" pull --ff-only
+commit_upstream private add_config
+run_update
+[ "$(cat "$TMP/calls.guard")" = "protect none" ] && called "pi config apply --apply" \
+  && ok "no previous baseline: guarded with no previous bundle (every differing live file is protected)" \
+  || bad "no previous baseline: guarded with no previous bundle (every differing live file is protected)"
 
 fresh
-STUB_DRIFT=1 run_update --dry-run
-[ "$RC" = 0 ] && has "a real update would skip apply" && ! grep -q -- '--apply' "$TMP/calls" \
-  && ok "dry-run warns that drift would block apply" || bad "dry-run warns that drift would block apply"
+STUB_LOCAL_CHANGE=1 run_update --dry-run
+[ "$RC" = 0 ] && has "a real update would skip apply" && has "    local change  .pi/agent/local-edit.ts" \
+  && ! grep -q -- '--apply' "$TMP/calls" \
+  && [ "$(cat "$TMP/calls.guard")" = 'protect {"piVersion":"1.6.0"}' ] \
+  && ok "dry-run previews the guard against the current baseline" \
+  || bad "dry-run previews the guard against the current baseline"
+
+# End to end with the real Pi tool: a file the incoming baseline starts
+# managing, already present on this machine with different content, is a
+# local change; the same update without it installs the new file.
+SOURCE_HOME="$TMP/source-home"
+capture_source() {  # snapshot $SOURCE_HOME into the private seed's pi-config
+  rm -rf pi-config && HOME="$SOURCE_HOME" python3 "$TMP/public/scripts/sync-pi-config.py" capture --apply \
+    --home "$SOURCE_HOME" --bundle "$PWD/pi-config" >/dev/null
+}
+real_pi_fixture() {
+  rm -rf "$SOURCE_HOME" && mkdir -p "$SOURCE_HOME/.pi/agent/extensions" || die "source home"
+  echo '{"theme":"dark","packages":[]}' > "$SOURCE_HOME/.pi/agent/settings.json" || die "settings"
+  echo 'export default () => 1;' > "$SOURCE_HOME/.pi/agent/extensions/a.ts" || die "a.ts"
+  commit_upstream private capture_source
+  git_q -C "$TMP/private" pull --ff-only
+  HOME="$HOME" python3 "$TMP/public/scripts/sync-pi-config.py" apply --apply --home "$HOME" \
+    --bundle "$TMP/private/pi-config" >/dev/null 2>&1 || die "initial apply"
+  echo 'export const fromSource = 1;' > "$SOURCE_HOME/.pi/agent/extensions/new.ts" || die "new.ts"
+  commit_upstream private capture_source
+}
+fresh; real_pi_fixture
+echo 'export const mine = 2;' > "$HOME/.pi/agent/extensions/new.ts" || die "local new.ts"
+STUB_REAL_PI=1 run_update
+if [ "$RC" = 0 ] && has "    local change  .pi/agent/extensions/new.ts" && has "may hold uncaptured local changes" \
+  && [ "$(cat "$HOME/.pi/agent/extensions/new.ts")" = 'export const mine = 2;' ] \
+  && [ "$(head_of "$TMP/private")" = "$(remote_head "$PRIV_URL")" ] && ! called "pi config packages --apply"; then
+  ok "real Pi tool: a pre-existing live file the new baseline starts managing is not overwritten"
+else bad "real Pi tool: a pre-existing live file the new baseline starts managing is not overwritten"; show_calls; fi
+
+fresh; real_pi_fixture
+STUB_REAL_PI=1 run_update
+if [ "$RC" = 0 ] && [ "$(cat "$HOME/.pi/agent/extensions/new.ts")" = 'export const fromSource = 1;' ] \
+  && has "✓ apply" && has "✓ check"; then
+  ok "real Pi tool: the same update without a local copy installs the new file"
+else bad "real Pi tool: the same update without a local copy installs the new file"; fi
 
 # --- 8: Rex replacements need manual review ----------------------------------------
 fresh
@@ -605,44 +688,76 @@ forge_state() {  # a complete, correct hand-off for the current checkouts
     DOT_UPDATE_PUBLIC_COMMIT="$pub_commit" DOT_UPDATE_PUBLIC_REMOTE="$PUB_KEY" \
     DOT_UPDATE_PRIVATE=ok DOT_UPDATE_PRIVATE_DIR="$TMP/private" \
     DOT_UPDATE_PRIVATE_COMMIT="$priv_commit" DOT_UPDATE_PRIVATE_REMOTE="$PRIV_KEY" \
-    DOT_UPDATE_PI_PRECHECK=clean DOT_UPDATE_BUNDLE="$TMP/private/pi-config" DOT_UPDATE_COUNTS="2 0 0 0"
+    DOT_UPDATE_PUBLIC_BEFORE="$pub_commit" DOT_UPDATE_PRIVATE_BEFORE="$priv_commit" \
+    DOT_UPDATE_BUNDLE="$TMP/private/pi-config" DOT_UPDATE_COUNTS="2 0 0 0"
+}
+# fetch_like_update: what the parent updater's fetch leaves behind.
+fetch_like_update() {
+  git_q -C "$1" fetch --quiet --no-tags --refmap= origin +refs/heads/main:refs/remotes/origin/main
 }
 unforge() {
   unset DOT_UPDATE_PUBLIC DOT_UPDATE_PUBLIC_DIR DOT_UPDATE_PUBLIC_COMMIT DOT_UPDATE_PUBLIC_REMOTE \
     DOT_UPDATE_PRIVATE DOT_UPDATE_PRIVATE_DIR DOT_UPDATE_PRIVATE_COMMIT DOT_UPDATE_PRIVATE_REMOTE \
-    DOT_UPDATE_PI_PRECHECK DOT_UPDATE_PI_PRECHECK_DETAIL DOT_UPDATE_BUNDLE DOT_UPDATE_COUNTS
+    DOT_UPDATE_PUBLIC_BEFORE DOT_UPDATE_PRIVATE_BEFORE DOT_UPDATE_BUNDLE DOT_UPDATE_COUNTS
 }
 fresh; forge_state
 run_update --internal-apply-phase; unforge
+[ "$RC" = 0 ] && ! grep -q -- '--apply' "$TMP/calls" && has "freshness not established" && has "--yes" \
+  && ! grep -q ' fetch' "$TMP/gitlog" \
+  && ok "a matching hand-off without a matching fetch is refused without --yes" \
+  || bad "a matching hand-off without a matching fetch is refused without --yes"
+
+fresh; forge_state
+run_update --internal-apply-phase --yes; unforge
+[ "$RC" = 0 ] && called "pi config apply --apply" && called "rex config --apply" \
+  && has "freshness not established" && has "applying because of --yes" \
+  && ok "--yes applies a hand-off whose freshness cannot be established" \
+  || bad "--yes applies a hand-off whose freshness cannot be established"
+
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state
+run_update --internal-apply-phase; unforge
 [ "$RC" = 0 ] && called "pi config apply --apply" && called "rex config --apply" && ! grep -q ' fetch' "$TMP/gitlog" \
-  && ok "a complete, matching hand-off runs the apply phase without fetching" \
-  || bad "a complete, matching hand-off runs the apply phase without fetching"
+  && ok "a hand-off matching the fetched refs and FETCH_HEAD runs the apply phase without fetching" \
+  || bad "a hand-off matching the fetched refs and FETCH_HEAD runs the apply phase without fetching"
+
+fresh; push_upstream private; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state
+run_update --internal-apply-phase; unforge
+! called "pi config apply --apply" && has "dotfiles-private not verified (freshness not established: HEAD does not contain origin/main" \
+  && ok "a hand-off for a checkout behind its fetched upstream blocks Pi apply" \
+  || bad "a hand-off for a checkout behind its fetched upstream blocks Pi apply"
+
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state
+DOT_UPDATE_PRIVATE_BEFORE="$(remote_head "$PUB_URL")"
+run_update --internal-apply-phase; unforge
+! called "pi config apply --apply" && has "the pre-update commit is not an ancestor of HEAD" \
+  && ok "a hand-off whose pre-update commit is not an ancestor of HEAD blocks Pi apply" \
+  || bad "a hand-off whose pre-update commit is not an ancestor of HEAD blocks Pi apply"
 
 fresh
-export DOT_UPDATE_PUBLIC=ok DOT_UPDATE_PRIVATE=ok DOT_UPDATE_PI_PRECHECK=clean
+export DOT_UPDATE_PUBLIC=ok DOT_UPDATE_PRIVATE=ok
 run_update --internal-apply-phase; unforge
 [ "$RC" = 1 ] && ! grep -q -- '--apply' "$TMP/calls" && has "hand-off" \
   && ok "status strings alone (no paths/commits) are not proof: nothing applied" \
   || bad "status strings alone (no paths/commits) are not proof: nothing applied"
 
-fresh; forge_state; DOT_UPDATE_PRIVATE_COMMIT="$(remote_head "$PUB_URL")"
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state; DOT_UPDATE_PRIVATE_COMMIT="$(remote_head "$PUB_URL")"
 run_update --internal-apply-phase; unforge
 ! called "pi config apply --apply" && has "apply + packages skipped — dotfiles-private not verified" \
   && called "rex config --apply" \
   && ok "hand-off commit that is not HEAD blocks Pi apply" || bad "hand-off commit that is not HEAD blocks Pi apply"
 
-fresh; forge_state; echo local-edit >> "$TMP/private/pi-config/manifest.json"
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state; echo local-edit >> "$TMP/private/pi-config/manifest.json"
 run_update --internal-apply-phase; unforge
 ! called "pi config apply --apply" && has "dotfiles-private not verified" \
   && ok "dirty tree at apply time blocks Pi apply" || bad "dirty tree at apply time blocks Pi apply"
 
-fresh; forge_state; DOT_UPDATE_PUBLIC_DIR="$TMP/private"
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state; DOT_UPDATE_PUBLIC_DIR="$TMP/private"
 run_update --internal-apply-phase; unforge
 ! grep -q -- '--apply' "$TMP/calls" && has "dotfiles not verified" \
   && ok "hand-off for a different public checkout blocks all applies" \
   || bad "hand-off for a different public checkout blocks all applies"
 
-fresh; forge_state; DOT_UPDATE_PRIVATE_REMOTE="$TMP/remotes/stranger/dotfiles-private"
+fresh; fetch_like_update "$TMP/public"; fetch_like_update "$TMP/private"; forge_state; DOT_UPDATE_PRIVATE_REMOTE="$TMP/remotes/stranger/dotfiles-private"
 run_update --internal-apply-phase; unforge
 ! called "pi config apply --apply" && has "dotfiles-private not verified" \
   && ok "hand-off remote that does not match blocks Pi apply" || bad "hand-off remote that does not match blocks Pi apply"
@@ -658,7 +773,7 @@ run_update
 fresh; push_upstream private
 echo leftover > "$TMP/private/pi-config/secret.local"
 run_update
-! called "pi config apply --apply" && has "apply + packages skipped — baseline" && has "untracked, ignored, or modified" \
+! called "pi config apply --apply" && has "apply + packages skipped — baseline" && has "differs from the verified commit (pi-config/secret.local" \
   && called "rex config --apply" \
   && ok "an ignored file inside the baseline blocks Pi apply" || bad "an ignored file inside the baseline blocks Pi apply"
 
@@ -668,7 +783,7 @@ echo '{"piVersion":"1.6.0"}' > "$TMP/private/pi-local/manifest.json" || die "man
 echo 'pi-local/' >> "$TMP/private/.git/info/exclude" || die "exclude"
 write_local_env "DOTFILES_PI_SCAFFOLD_DIR=\"$TMP/private/pi-scaffold\"" "DOTFILES_PI_CONFIG_DIR=\"$TMP/private/pi-local\""
 run_update
-! called "pi config apply --apply" && has "not tracked" \
+! called "pi config apply --apply" && has "is not tracked at the verified commit" \
   && ok "an untracked baseline blocks Pi apply" || bad "an untracked baseline blocks Pi apply"
 
 fresh
@@ -679,46 +794,24 @@ run_update
 ! called "pi config apply --apply" && has "outside the private repo" \
   && ok "a baseline outside the private repo blocks Pi apply" || bad "a baseline outside the private repo blocks Pi apply"
 
-rm_config() { git rm -q -r pi-config; }
-add_config() { mkdir -p pi-config && echo '{"piVersion":"1.6.0"}' > pi-config/manifest.json; }
-fresh; commit_upstream private rm_config
-git_q -C "$TMP/private" pull --ff-only
-commit_upstream private add_config
-mkdir -p "$HOME/.pi/agent" || die "mkdir"
-run_update
-if ! called "pi config apply --apply" && has "no pre-update baseline" && has "--yes" \
-  && [ "$(head_of "$TMP/private")" = "$(remote_head "$PRIV_URL")" ]; then
-  ok "no pre-update baseline but live Pi config present: apply needs --yes"
-else bad "no pre-update baseline but live Pi config present: apply needs --yes"; show_calls; fi
-fresh; commit_upstream private rm_config
-git_q -C "$TMP/private" pull --ff-only
-commit_upstream private add_config
-mkdir -p "$HOME/.pi/agent" || die "mkdir"
-run_update --yes
-called "pi config apply --apply" && ok "--yes applies without a pre-update baseline" \
-  || bad "--yes applies without a pre-update baseline"
-
-# --- 8e: the pre-update check blocks only on FILE drift --------------------------------
-fresh; push_upstream private
-STUB_PKG_DRIFT=1 run_update
-if called "pi config apply --apply" && called "pi config packages --apply" \
-  && ! has "uncaptured" && has "package/dependency drift only"; then
-  ok "package/dependency-only drift before the update does not block apply (retry works)"
-else bad "package/dependency-only drift before the update does not block apply (retry works)"; show_calls; fi
-
-fresh; push_upstream private
-STUB_CHECK_ERROR=1 run_update
-if ! called "pi config apply --apply" && has "pre-update check failed (exit 2)" \
-  && has "    pi-config: Pi version differs" && ! has "uncaptured"; then
-  ok "an operational error from the pre-update check is reported separately and blocks apply"
-else bad "an operational error from the pre-update check is reported separately and blocks apply"; fi
+for flag in assume-unchanged skip-worktree; do
+  fresh; push_upstream private
+  echo '{"piVersion":"9.9.9"}' > "$TMP/private/pi-config/manifest.json" || die "edit"
+  git_q -C "$TMP/private" update-index "--$flag" pi-config/manifest.json
+  [ -z "$(git -C "$TMP/private" status --porcelain --ignored)" ] || die "$flag did not hide the edit"
+  run_update
+  if ! called "pi config apply --apply" \
+    && has "differs from the verified commit (pi-config/manifest.json"; then
+    ok "a tracked baseline edit hidden by $flag blocks Pi apply"
+  else bad "a tracked baseline edit hidden by $flag blocks Pi apply"; fi
+done
 
 # --- 8f: Rex overlay provenance ---------------------------------------------------------
 fresh; commit_upstream private add_overlay
 git_q -C "$TMP/private" pull --ff-only
 echo leftover > "$TMP/private/rex/secret.local"
 run_update
-! called "rex config --apply" && has "image paste config apply skipped — overlay" \
+! called "rex config --apply" && has "image paste config apply skipped — overlay" && has "rex/secret.local" \
   && ok "an ignored file inside the private overlay blocks Rex apply" \
   || bad "an ignored file inside the private overlay blocks Rex apply"
 
@@ -729,6 +822,22 @@ run_update
 ! called "rex config --apply" && has "outside the private repo" \
   && ok "DOTFILES_REX_OVERLAY_DIR outside the private repo blocks Rex apply" \
   || bad "DOTFILES_REX_OVERLAY_DIR outside the private repo blocks Rex apply"
+
+fresh
+# A gitlink (mode 160000) under the overlay; committed without `add -A`, which
+# would drop it because no submodule is checked out.
+mkdir -p "$TMP/seed-private/rex" && echo 'return {}' > "$TMP/seed-private/rex/private.lua" || die "overlay"
+git_q -C "$TMP/seed-private" add rex/private.lua
+git_q -C "$TMP/seed-private" update-index --add --cacheinfo \
+  "160000,$(git -C "$TMP/seed-private" rev-parse HEAD),rex/vendored"
+git_q -C "$TMP/seed-private" commit -m "overlay with a submodule"
+git_q -C "$TMP/seed-private" push origin main
+git_q -C "$TMP/private" pull --ff-only
+[ "$(git -C "$TMP/private" ls-tree HEAD rex/vendored | cut -c1-6)" = 160000 ] || die "no gitlink"
+run_update
+! called "rex config --apply" && has "image paste config apply skipped — overlay" && has "contains a submodule (rex/vendored)" \
+  && ok "a private overlay containing a submodule blocks Rex apply" \
+  || bad "a private overlay containing a submodule blocks Rex apply"
 
 # --- 8g: the real Rex installer (stub rex binary) -----------------------------------------
 fresh
@@ -777,7 +886,7 @@ else bad "failed step prints ✗ with an indented output tail and exits 1"; fi
 
 fresh
 STUB_FAIL="pi config apply --apply" run_update
-! called "pi config packages --apply" && [ "$(count_calls "pi config check")" = 1 ] && [ "$RC" = 1 ] \
+! called "pi config packages --apply" && [ "$(count_calls "pi config check")" = 0 ] && [ "$RC" = 1 ] \
   && ok "Pi packages/check are skipped after a failed apply" \
   || bad "Pi packages/check are skipped after a failed apply"
 

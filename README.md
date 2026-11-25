@@ -437,31 +437,37 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
    the same owner as this repo's `origin` with the name `dotfiles-private`
    (override with `DOTFILES_PRIVATE_REMOTE` in `local.env`). If the
    fast-forward changed `scripts/update.sh` or `dot`, the new updater runs the
-   remaining steps; it receives the checkout paths and commit IDs and
-   re-verifies them (and treats missing or mismatched state as "don't apply").
+   remaining steps; it receives the checkout paths, pre- and post-update
+   commit IDs, and remotes, and re-verifies them (missing or mismatched state
+   means "don't apply"; freshness it cannot re-establish needs `--yes`).
 2. **Pi config** — right before applying, both checkouts are re-verified (same
-   path and remote, clean, HEAD is the commit just checked), and the baseline
-   (`DOTFILES_PI_CONFIG_DIR`, default `pi-config` beside the scaffold; relative
-   paths are relative to `$HOME`, resolved once and passed to every Pi command)
-   must be inside the private repo, tracked, and free of modified, untracked,
-   or ignored files. Then: `./dot pi config apply --apply`, `packages --apply`,
-   and `check` (see [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). Before
-   pulling, it runs `./dot pi config check`: **file** drift from the current
-   baseline (`drift`/`stale` lines) may be uncaptured local work (on the Mac,
-   the source of truth, it usually is), so apply is skipped with a warning —
-   review with `./dot pi config apply` (preview) or `./dot pi config capture`
-   on the Mac, or rerun with `--yes`. Package/dependency-only drift does not
-   block (so retrying after a failed package install works); a check that
-   fails to run is reported separately and blocks unless `--yes`, as does
-   having no pre-update baseline while `~/.pi/agent` exists. Apply backs up
+   path and remote, clean, HEAD is the commit just checked, which contains the
+   fetched remote-tracking ref recorded in `FETCH_HEAD` and descends from the
+   pre-update commit). The baseline (`DOTFILES_PI_CONFIG_DIR`, default
+   `pi-config` beside the scaffold; relative paths are relative to `$HOME`,
+   resolved once and passed to every Pi command) must be inside the private
+   repo, and every file in it is hashed and compared with the verified commit's
+   tree — so modifications hidden by `assume-unchanged`/`skip-worktree`, extra
+   or missing files, symlinks, and submodules all block. Then:
+   `./dot pi config apply --apply --protect-local --previous-bundle <old>`,
+   `packages --apply`, and `check` (see
+   [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). `<old>` is the baseline
+   at the private repo's pre-update commit, read from git. The Pi tool itself,
+   immediately before writing, refuses (nothing written) if it would replace or
+   archive any live file that differs from the incoming baseline unless that
+   file matched the previous baseline — so local edits to managed files and
+   pre-existing files the new baseline starts managing are kept (on the Mac,
+   the source of truth, they are usually uncaptured work). Review with
+   `./dot pi config apply` (preview) or `./dot pi config capture` on the Mac,
+   or rerun with `--yes`. Package/dependency drift never blocks. Apply backs up
    every file it replaces under `~/.local/state/dotfiles/pi-config-backups/`.
    Apply and packages are separate steps: if packages fails, Pi is left
    partially applied (new config, old packages) until you fix it and rerun. It
    never updates the Pi CLI itself; restart Pi sessions to load package changes.
 3. **Rex** — Mac only, when this repo is verified, plus the private repo when
    a private Rex overlay exists (`DOTFILES_REX_OVERLAY_DIR`, default `rex/`
-   beside the scaffold; it must likewise be tracked and clean in the private
-   repo): `./dot rex config --apply` then `--check`. Existing files that differ
+   beside the scaffold; its files must likewise match the verified commit):
+   `./dot rex config --apply` then `--check`. Existing files that differ
    are reported as needing manual review (`./dot rex config`, then `--force`);
    update never passes `--force` and never restarts Rex (run `rex config
    reload` yourself). Linux reports "skipped (Mac only)". `./dot rex install

@@ -31,7 +31,7 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
-| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, re-verify checkouts + baseline/overlay provenance, then apply Pi baseline + Mac Rex config, cheap checks) |
+| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
 | CI (Ubuntu + macOS) | `.github/workflows/ci.yml` |
 | Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
 | Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |

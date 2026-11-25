@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -262,6 +263,98 @@ class PiConfigTest(unittest.TestCase):
         self.put(self.mac, ".pi/agent/settings.json", '{"packages":["npm:test@latest"]}')
         self.run_cli("capture", apply=True, expected=2)
         self.assertFalse(self.bundle.exists())
+
+
+    # --protect-local (used by ./dot update): never overwrite or archive a live
+    # file that differs from the incoming baseline unless it matched the
+    # previous baseline (i.e. it holds no local change).
+    def tree(self, home):
+        return {str(p.relative_to(home)): p.read_bytes() for p in sorted(home.rglob("*")) if p.is_file()}
+
+    def synced_previous(self):
+        self.run_cli("capture", apply=True)
+        previous = self.root / "previous"
+        shutil.copytree(self.bundle, previous)
+        self.run_cli("apply", self.vps, apply=True)
+        return previous
+
+    def protect(self, previous=None):
+        args = ["--protect-local"]
+        if previous is not None:
+            args += ["--previous-bundle", str(previous)]
+        return tuple(args)
+
+    def test_protect_local_refuses_newly_managed_file_that_differs(self):
+        previous = self.synced_previous()
+        self.put(self.mac, ".pi/agent/extensions/new.ts", "export const fromMac = 1;\n")
+        self.run_cli("capture", apply=True)
+        self.put(self.vps, ".pi/agent/extensions/new.ts", "export const mine = 2;\n")
+        before = self.tree(self.vps)
+        result = self.run_cli("apply", self.vps, apply=True, expected=3, extra_args=self.protect(previous))
+        self.assertIn("local change  .pi/agent/extensions/new.ts", result.stdout)
+        self.assertEqual(self.tree(self.vps), before)
+        preview = self.run_cli("apply", self.vps, expected=3, extra_args=self.protect(previous))
+        self.assertIn("local change  .pi/agent/extensions/new.ts", preview.stdout)
+        self.assertEqual(self.tree(self.vps), before)
+        self.run_cli("apply", self.vps, apply=True)  # without the guard: unchanged behavior
+        self.assertEqual((self.vps / ".pi/agent/extensions/new.ts").read_text(), "export const fromMac = 1;\n")
+
+    def test_protect_local_allows_new_absent_or_identical_files_and_clean_updates(self):
+        previous = self.synced_previous()
+        self.put(self.mac, ".pi/agent/extensions/new.ts", "export const fromMac = 1;\n")
+        self.put(self.mac, ".pi/agent/extensions/same.ts", "export const same = 1;\n")
+        self.put(self.mac, ".pi/agent/extensions/test.ts", "export default () => 2;\n")
+        settings = json.loads((self.mac / ".pi/agent/settings.json").read_text())
+        settings["theme"] = "dark"
+        self.put(self.mac, ".pi/agent/settings.json", json.dumps(settings))
+        self.run_cli("capture", apply=True)
+        self.put(self.vps, ".pi/agent/extensions/same.ts", "export const same = 1;\n")
+        self.run_cli("apply", self.vps, apply=True, extra_args=self.protect(previous))
+        self.assertEqual((self.vps / ".pi/agent/extensions/new.ts").read_text(), "export const fromMac = 1;\n")
+        self.assertEqual((self.vps / ".pi/agent/extensions/test.ts").read_text(), "export default () => 2;\n")
+        self.assertEqual(json.loads((self.vps / ".pi/agent/settings.json").read_text())["theme"], "dark")
+        self.run_cli("check", self.vps)
+
+    def test_protect_local_refuses_locally_edited_managed_files(self):
+        previous = self.synced_previous()
+        self.put(self.mac, ".pi/agent/extensions/test.ts", "export default () => 2;\n")
+        self.run_cli("capture", apply=True)
+        self.put(self.vps, ".pi/agent/extensions/test.ts", "export default () => 'vps edit';\n")
+        settings = json.loads((self.vps / ".pi/agent/settings.json").read_text())
+        settings["theme"] = "vps-theme"
+        self.put(self.vps, ".pi/agent/settings.json", json.dumps(settings))
+        before = self.tree(self.vps)
+        result = self.run_cli("apply", self.vps, apply=True, expected=3, extra_args=self.protect(previous))
+        self.assertIn("local change  .pi/agent/extensions/test.ts", result.stdout)
+        self.assertIn("local change  .pi/agent/settings.json", result.stdout)
+        self.assertEqual(self.tree(self.vps), before)
+
+    def test_protect_local_refuses_archiving_a_locally_edited_retired_file(self):
+        previous = self.synced_previous()
+        (self.mac / ".pi/agent/skills/test/SKILL.md").unlink()
+        self.run_cli("capture", apply=True)
+        self.put(self.vps, ".pi/agent/skills/test/SKILL.md", "# edited on the vps\n")
+        result = self.run_cli("apply", self.vps, apply=True, expected=3, extra_args=self.protect(previous))
+        self.assertIn("local change  .pi/agent/skills/test/SKILL.md", result.stdout)
+        self.assertEqual((self.vps / ".pi/agent/skills/test/SKILL.md").read_text(), "# edited on the vps\n")
+        self.put(self.vps, ".pi/agent/skills/test/SKILL.md", "# Portable skill\n")
+        self.run_cli("apply", self.vps, apply=True, extra_args=self.protect(previous))
+        self.assertFalse((self.vps / ".pi/agent/skills/test").exists())
+
+    def test_protect_local_without_previous_baseline_protects_every_differing_live_file(self):
+        self.run_cli("capture", apply=True)
+        self.put(self.vps, ".pi/agent/extensions/test.ts", "export default () => 'vps';\n")
+        result = self.run_cli("apply", self.vps, apply=True, expected=3, extra_args=self.protect())
+        self.assertIn("local change  .pi/agent/extensions/test.ts", result.stdout)
+        self.assertFalse((self.vps / ".pi/agent/skills/test/SKILL.md").exists())
+        (self.vps / ".pi/agent/extensions/test.ts").unlink()
+        self.run_cli("apply", self.vps, apply=True, extra_args=self.protect())
+        self.assertTrue((self.vps / ".pi/agent/skills/test/SKILL.md").exists())
+
+    def test_protect_local_flags_are_apply_only(self):
+        self.run_cli("capture", apply=True)
+        self.run_cli("check", self.vps, expected=2, extra_args=("--protect-local",))
+        self.run_cli("apply", self.vps, expected=2, extra_args=("--previous-bundle", str(self.bundle)))
 
 
 if __name__ == "__main__":
