@@ -64,6 +64,9 @@ class RexConfigTest(unittest.TestCase):
         original = 'rex.bind("cmd+d", "pane.split")\n'
         (self.config/'init.lua').write_text(original)
         (self.config/'keep.lua').write_text('-- unrelated file\n')
+        preview = self.run_setup().stdout
+        self.assertIn(f'would replace {self.config/"init.lua"} (differs; --apply needs --force', preview)
+        self.assertIn(f'would install {self.config/"rex-image-paste/init.lua"}', preview)
         self.run_setup('--apply', expected=1)
         self.assertFalse((self.config/'rex-image-paste').exists())
         self.assertEqual((self.config/'init.lua').read_text(), original)

@@ -93,7 +93,14 @@ done
 printf 'Rex config: %s\n' "$CONFIG"
 if [ "$MODE" = dry-run ]; then
   if [ "${#changes[@]}" -gt 0 ]; then
-    for relative in "${changes[@]}"; do printf 'would install %s\n' "$(target_path "$relative")"; done
+    for relative in "${changes[@]}"; do
+      target="$(target_path "$relative")"
+      if [ -f "$target" ]; then
+        printf 'would replace %s (differs; --apply needs --force, which backs it up)\n' "$target"
+      else
+        printf 'would install %s\n' "$target"
+      fi
+    done
   fi
   echo 'No files changed. Use --apply to install; --check to validate the installed copy.'
   exit 0
