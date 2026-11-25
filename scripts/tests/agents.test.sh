@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Resolve config from the temp HOME only (CI runners export XDG_CONFIG_HOME).
+unset XDG_CONFIG_HOME DOTFILES_LOCAL_ENV
 
 mkdir -p "$TMP/.agents/skills/goal-contract" \
   "$TMP/.pi/agent/extensions" "$TMP/.claude" "$TMP/.codex" "$TMP/.hermes"

@@ -240,10 +240,19 @@ def main() -> int:
     parser.add_argument("--home", type=Path, default=Path.home(), help="personal profile's home")
     parser.add_argument("--apply", action="store_true", help="explicitly allow writes; otherwise read-only")
     parser.add_argument("--exclude", action="append", help="machine-local resource prefix to preserve; saved on apply")
+    parser.add_argument("--protect-local", action="store_true",
+                        help="apply: refuse (exit 3) to replace or archive any live file that differs from "
+                             "the incoming baseline unless it matched --previous-bundle")
+    parser.add_argument("--previous-bundle", type=Path,
+                        help="with --protect-local: the baseline this machine was last updated from")
     args = parser.parse_args()
     home, bundle = args.home.absolute(), args.bundle.absolute()
     if args.command == "check" and args.apply:
         parser.error("check never writes")
+    if args.protect_local and args.command != "apply":
+        parser.error("--protect-local only applies to apply")
+    if args.previous_bundle is not None and not args.protect_local:
+        parser.error("--previous-bundle requires --protect-local")
     if args.command == "capture":
         if args.exclude:
             parser.error("capture always records the full source baseline")
@@ -348,6 +357,36 @@ def main() -> int:
                     subprocess.run(["pi", "install", source, "--no-approve"], cwd=directory,
                                    env=environment, check=True)
         return 0
+    # Local changes: a live file this run would replace or archive that does
+    # not match the previous baseline (or that baseline did not manage), or a
+    # previously managed file that was deleted locally and would be restored.
+    # Either may be uncaptured work, so nothing is written. Checked in this
+    # process, immediately before any write. Files new to the baseline that are
+    # absent here are simply installed.
+    protected = []
+    if args.protect_local:
+        prior = load_bundle(args.previous_bundle.absolute())[1] if args.previous_bundle else {}
+        for name in sorted(set(changes) | set(removed)):
+            target = safe_path(home, name)
+            if not target.exists() and not target.is_symlink():
+                if name in prior:
+                    protected.append(name)  # deleted locally; apply would restore it
+                continue
+            if name in prior:
+                if name == SETTINGS:
+                    actual = object_file(target)
+                    if {key: actual[key] for key in actual if key in PREFERENCES} == json.loads(prior[name]):
+                        continue
+                elif target.is_file() and target.read_bytes() == prior[name]:
+                    continue
+            protected.append(name)
+        for name in protected:
+            print(f"local change  {name}")
+        if protected and args.apply:
+            print(f"pi-config: {len(protected)} live file(s) differ from the previous baseline and would be "
+                  "replaced or archived; review them (capture on the source machine) or apply without "
+                  "--protect-local", file=sys.stderr)
+            return 3
     backup = None
     if args.command == "apply" and args.apply and (changes or removed):
         backup_root = safe_path(home, ".local/state/dotfiles/pi-config-backups")
@@ -375,6 +414,8 @@ def main() -> int:
     if backup:
         print(f"Backups: {backup}")
     print(f"{len(files)} managed files; {len(changes)} {'updated' if backup else 'differ'}; {len(removed)} retired. Unmanaged files preserved.")
+    if protected:
+        return 3
     return 1 if args.command == "check" and (changes or removed or package_drift or dependency_drift) else 0
 
 

@@ -79,6 +79,22 @@ Removed declarations stop loading, but old cached packages are not
 deleted. Restart Pi after package changes; running sessions may still contain
 previously loaded extensions or skills.
 
+`./dot update` runs `apply --apply`, `packages --apply`, and `check` for you,
+but only after both dotfiles repos fast-forwarded cleanly and every baseline
+file matches the verified private commit. Its apply adds `--protect-local
+--previous-bundle <baseline at the last successfully applied private commit>`
+(recorded in `~/.local/state/dotfiles/pi-config-applied` after apply and
+packages succeed): in the same process, right before writing, the tool refuses
+(exit 3, nothing written, `local change <path>` lines) to replace or archive
+any live file that differs from the incoming baseline unless it matched the
+previous baseline, or to restore a previously managed file deleted locally.
+That keeps local edits and deletions and pre-existing files a new baseline
+starts managing; files new to the baseline are installed. Without
+`--previous-bundle` (nothing recorded), every differing live file counts. `--yes` drops the guard.
+Package drift never blocks. Apply backs up what it replaces; a failed
+`packages` step leaves Pi partially applied until rerun. See the README's
+"Updating".
+
 The installed Pi CLI must match `manifest.json`'s `piVersion`. Both machines
 currently use **1.6.0**; the public CLI installer and package manifest pin that
 version too. Change those pins deliberately when upgrading the source machine.

@@ -109,6 +109,12 @@ def detached_pid(argv):
     return int(p.stdout)
 
 
+# The planner and restart workflow inspect real processes through /proc
+# (Linux only). The installer tests below run everywhere.
+HAS_PROC = Path('/proc/self/stat').exists()
+
+
+@unittest.skipUnless(HAS_PROC, 'needs Linux /proc (rex-safe-upgrade inspects real processes); not available on this OS')
 class Base(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

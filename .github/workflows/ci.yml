@@ -1,0 +1,84 @@
+name: CI
+# Syntax checks and every runnable test suite on Linux and macOS. Tests that
+# need things CI cannot have (the private companion repo, an installed Pi, a
+# live Rex, Linux /proc on macOS) print a SKIP reason instead of failing.
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      # Actions are pinned to full commit SHAs (Node 24 runtime releases).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      # agents tests need tomllib (3.11+); Hermes config tests need PyYAML.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet --disable-pip-version-check 'PyYAML==6.0.4'
+
+      - name: Syntax-check shell scripts (bash -n)
+        run: git ls-files -z dot '*.sh' | xargs -0 -n1 bash -n
+
+      - name: shellcheck (dot update)
+        if: runner.os == 'Linux'
+        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh
+
+      - name: Shell tests
+        run: |
+          failed=0
+          for t in scripts/tests/*.test.sh; do
+            echo "::group::$t"
+            bash "$t" || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      # macOS ships bash 3.2 as /bin/bash; PATH bash on the runner is newer.
+      - name: update tests under /bin/bash (bash 3.2)
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash --version | head -n 1
+          /bin/bash scripts/tests/update.test.sh
+
+      - name: Python tests
+        run: |
+          failed=0
+          for t in scripts/tests/*.test.py; do
+            echo "::group::$t"
+            python3 "$t" -v || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      - name: Node tests
+        run: |
+          failed=0
+          for t in scripts/tests/*.test.mjs; do
+            echo "::group::$t"
+            node "$t" || { echo "::error::$t failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      - name: dot smoke (help, update --help)
+        run: |
+          ./dot help >/dev/null
+          ./dot update --help >/dev/null

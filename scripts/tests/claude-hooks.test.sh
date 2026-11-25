@@ -18,7 +18,11 @@ trap 'rm -rf "$TMP"' EXIT
 export DOTFILES_LOCAL_ENV="$TMP/no-local.env"
 export PI_MEMORY_COMPILER_DIR="$TMP/compiler"
 export CLAUDE_SETTINGS="$TMP/.claude/settings.json"
-mkdir -p "$TMP/compiler/hooks" "$TMP/.claude"
+mkdir -p "$TMP/compiler/hooks" "$TMP/.claude" "$TMP/bin"
+# --check also requires uv on PATH; stub it so the test does not depend on the
+# host having uv installed (CI runners may not).
+printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/uv" && chmod +x "$TMP/bin/uv"
+export PATH="$TMP/bin:$PATH"
 touch "$TMP/compiler/hooks/session-start.py" \
       "$TMP/compiler/hooks/pre-compact.py" \
       "$TMP/compiler/hooks/session-end.py"

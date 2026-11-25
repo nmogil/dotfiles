@@ -24,13 +24,15 @@ and dispatches to them.
 | macOS setup steps | `setup.sh` |
 | Linux setup steps | `setup-linux.sh` |
 | Repo cloning | `clone-repos.sh` (list lives in gitignored `repos.txt`) |
-| Local/private overrides | `~/.config/dotfiles/local.env` (template: `config/dotfiles/local.env.example`) |
+| Local/private overrides | `~/.config/dotfiles/local.env` (template: `config/dotfiles/local.env.example`; sourced as bash — must be trusted) |
 | Git identity | `~/.config/dotfiles/local.env` (`DOTFILES_GIT_NAME`/`_EMAIL`) or `~/.config/git/local.gitconfig` — not tracked |
 | Workstream buckets | `DOTFILES_REPO_BUCKETS` in `local.env` (default `personal ventures external`) |
 | VPS hardening | `harden-vps.sh` |
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
+| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
+| CI (Ubuntu + macOS) | `.github/workflows/ci.yml` |
 | Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
 | Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |
 | Pi agent scaffold | `scripts/setup-pi-agent.sh` (opt-in; scaffold source via `DOTFILES_PI_SCAFFOLD_DIR`; see `docs/pi-agent-setup.md`) |
@@ -45,6 +47,9 @@ Package manifests under `packages/` are documentation + input for
 
 ## Safety rules
 
+- **`local.env` is code.** Scripts (including `./dot update`) source
+  `~/.config/dotfiles/local.env` as bash. Only trusted, owner-writable content
+  belongs there; do not point `DOTFILES_LOCAL_ENV` at files others can edit.
 - **Never commit secrets.** No API keys, tokens, `.env` files, SSH keys.
   `repos.txt` stays gitignored. Run `./dot doctor` — it flags tracked secrets.
 - **Do not edit live `$HOME` configs directly.** Edit the repo copy; let the
@@ -78,10 +83,11 @@ Package manifests under `packages/` are documentation + input for
 bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh \
   scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
-  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh \
+  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/update.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
+bash scripts/tests/update.test.sh          # ./dot update: temp repos/HOME + stubbed dot
 bash scripts/tests/agent-configs.test.sh      # local override + portable defaults
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
@@ -91,7 +97,14 @@ node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
 ./dot packages check                      # installed vs declared packages
+./dot update --dry-run                    # read-only: no fetch, previews; writes nothing (not even temp files)
 ```
+
+CI (`.github/workflows/ci.yml`) runs `bash -n` on every tracked shell script and
+all `scripts/tests/*.test.{sh,py,mjs}` on Ubuntu and macOS for every PR and push
+to `main` (plus `update.test.sh` under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
+installed Pi, a live Rex, Linux `/proc` (skipped on macOS), PyYAML — print a
+skip reason instead of failing. Keep new tests hermetic (temp `HOME`, stubs).
 
 Prefer read-only commands (`./dot doctor`, `./dot chezmoi diff`, `./dot packages
 check`) when confirming state — none of them mutate the system.
