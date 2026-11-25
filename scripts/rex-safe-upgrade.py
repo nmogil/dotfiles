@@ -53,6 +53,45 @@ START_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_START_WAIT", 30))
 REXUME_UNIT = "rexume"
 
 
+# ------------------------------------------------------------ external tools
+
+# Each external command is looked up on PATH once and then always run from
+# that path. A later lookup could find a different binary: when a test's fake
+# `rex` directory is deleted under a still-running run, PATH would fall
+# through to the real /usr/bin/rex and the real server.
+_BINS: dict[str, str | None] = {}
+# Set by the test suite to the directory of its fake commands (test mode).
+FAKE_BIN = os.environ.get("REX_SAFE_UPGRADE_FAKE_BIN")
+
+
+def bin_path(name: str) -> str:
+    if name not in _BINS:
+        _BINS[name] = shutil.which(name)
+    path = _BINS[name]
+    if not path:
+        raise FileNotFoundError(f"{name}: not found on PATH")
+    return path
+
+
+def test_mode_problems() -> list[str]:
+    """In test mode, everything this tool can reach must be a fake: refuse to
+    run otherwise, so a test can never reach a real Rex server or systemd."""
+    if not FAKE_BIN:
+        return []
+    out = []
+    for name in ("rex", "systemctl"):
+        found = shutil.which(name)
+        if not found or Path(found).resolve().parent != Path(FAKE_BIN).resolve():
+            out.append(f"{name} resolves to {found}, not the fake in {FAKE_BIN}")
+        _BINS[name] = found  # pinned: exactly what was checked is what runs
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    if not runtime or runtime.startswith("/run/user"):
+        out.append(f"XDG_RUNTIME_DIR={runtime!r} is not a test directory")
+    if os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        out.append("DBUS_SESSION_BUS_ADDRESS is set")
+    return out
+
+
 # ---------------------------------------------------------------- rex helpers
 
 class RexError(Exception):
@@ -61,7 +100,8 @@ class RexError(Exception):
 
 def rex(*args: str, timeout: int = 30) -> str:
     try:
-        p = subprocess.run(["rex", "--autostart=false", *args], capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run([bin_path("rex"), "--autostart=false", *args], capture_output=True, text=True,
+                           timeout=timeout)
     except subprocess.TimeoutExpired as e:
         raise RexError(f"rex {' '.join(args[:3])}: timed out") from e
     except OSError as e:
@@ -94,7 +134,10 @@ def server_info() -> dict | None:
 
 
 def installed_version() -> str:
-    out = subprocess.run(["rex", "version"], capture_output=True, text=True).stdout
+    try:
+        out = subprocess.run([bin_path("rex"), "version"], capture_output=True, text=True, timeout=30).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return "?"
     m = re.match(r"rex (\S+)", out)
     return m.group(1) if m else "?"
 
@@ -429,7 +472,8 @@ def systemctl_user(*args: str) -> subprocess.CompletedProcess | None:
     env = {**os.environ}
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     try:
-        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=120, env=env)
+        return subprocess.run([bin_path("systemctl"), "--user", *args], capture_output=True, text=True,
+                              timeout=120, env=env)
     except (subprocess.TimeoutExpired, OSError):
         return None
 
@@ -591,9 +635,16 @@ def restart_phase(r: Run, panes: list[Pane], info: dict) -> int:
             r.log(f"  to resume {p.label}, type in that pane: {p.resume_cmd}")
 
     old_pid = info["pid"]
+    # The very last check: `rex server stop` stops whatever server this rex
+    # reaches, so it must still be the one every pane was checked on.
+    now = server_info()
+    if not now or (now.get("instance_id"), now.get("pid")) != (info.get("instance_id"), old_pid):
+        r.log("ABORT, nothing changed: the Rex server changed or stopped answering right before the stop")
+        return 3
     r.log(f"stopping server pid {old_pid}")
     try:
-        subprocess.run(["rex", "--autostart=false", "server", "stop"], capture_output=True, text=True, timeout=120)
+        subprocess.run([bin_path("rex"), "--autostart=false", "server", "stop"], capture_output=True, text=True,
+                       timeout=120)
     except (subprocess.TimeoutExpired, OSError) as e:
         r.log(f"warning: rex server stop: {e}")  # outcome checked below
     if not wait_for(lambda: not Path(f"/proc/{old_pid}").exists(), 90):
@@ -613,7 +664,7 @@ def restart_phase(r: Run, panes: list[Pane], info: dict) -> int:
     if not wait_for(lambda: server_info() is not None, RECONNECT_WAIT):
         r.log(f"no reconnect from the Rex app in {RECONNECT_WAIT:.0f}s; starting the server here")
         try:
-            subprocess.run(["rex", "server", "start"], capture_output=True, text=True, timeout=60)
+            subprocess.run([bin_path("rex"), "server", "start"], capture_output=True, text=True, timeout=60)
         except (subprocess.TimeoutExpired, OSError) as e:
             r.log(f"warning: rex server start: {e}")
     new = server_info() if wait_for(lambda: server_info() is not None, START_WAIT) else None
@@ -726,6 +777,11 @@ def main() -> int:
     ap.add_argument("--run-dir", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    problems = test_mode_problems()
+    if problems:
+        print("rex-safe-upgrade: test mode (REX_SAFE_UPGRADE_FAKE_BIN), refusing to run; nothing changed:\n  "
+              + "\n  ".join(problems))
+        return 2
     info = server_info()
     if not info:
         print("No Rex server is running; nothing to restart.")
@@ -765,6 +821,9 @@ def main() -> int:
     if args.dry_run:
         print("Dry run: preflight ok.")
         return 0
+    if FAKE_BIN:  # a transient unit drops the test's environment, fakes included
+        print("rex-safe-upgrade: test mode, refusing to start a systemd unit; nothing changed")
+        return 2
     stamp = new_run_name()
     run_dir = RUNS / stamp
     cmd = ["systemd-run", *([] if os.getuid() == 0 else ["--user"]),

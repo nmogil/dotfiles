@@ -5,7 +5,20 @@ The tool runs as a real subprocess. Its only seam to Rex is the `rex` CLI, so
 a stateful fake `rex` on PATH stands in for the server: it keeps state in a
 JSON file, "restarts" by killing a real process, restores panes as shells, and
 starts real processes when a resume command is typed. /proc inspection runs
-against real processes. Nothing here touches a live Rex server.
+against real processes.
+
+Nothing here may reach a real Rex server or systemd, even when a test fails
+halfway. Layers (see Sandbox):
+- PATH holds only the fakes, an allowlist of real tools (never rex, systemctl
+  or systemd-run), and tripwires that record any call that gets past both;
+  every test fails if a tripwire fired.
+- XDG_RUNTIME_DIR is a temp dir and DBUS_SESSION_BUS_ADDRESS is unset, so no
+  client finds a real server socket or user bus by default.
+- REX_SAFE_UPGRADE_FAKE_BIN puts the tool in test mode: it refuses to run
+  unless rex and systemctl resolve to the fakes, and never starts a systemd unit.
+- Every process a test starts is killed, with its children, before its temp
+  dir is removed. The tool resolves each command once, so it can't fall
+  through to another rex if the fakes vanish anyway (the 2026-11-25 incident).
 """
 import fcntl
 import hashlib
@@ -34,14 +47,17 @@ FAKE_REX = textwrap.dedent('''\
     path = os.environ["FAKE_REX_STATE"]
     st = json.load(open(path))
     args = [a for a in sys.argv[1:] if not a.startswith("--autostart")]
-    def save(): json.dump(st, open(path, "w"))
+    def save():
+        with open(path + ".tmp", "w") as f: json.dump(st, f)
+        os.replace(path + ".tmp", path)
+    def ticks(pid): return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
     def out(v): save(); print(json.dumps(v)); sys.exit(0)
     def opt(name): return args[args.index(name) + 1]
     def blocks(): return [b for s in st["sessions"] for b in s["blocks"]]
     def block(): return next(b for b in blocks() if b["block_id"] == opt("-b"))
     def detached(argv):
         p = subprocess.Popen(["bash", "-c", 'exec "$@" >/dev/null 2>&1 & echo $!', "_", *argv], stdout=subprocess.PIPE, text=True)
-        pid = int(p.stdout.read()); p.wait(); st["spawned"].append(pid); return pid
+        pid = int(p.stdout.read()); p.wait(); st["spawned"].append([pid, ticks(pid)]); return pid
     st["calls"].append(args[:2])
     cmd = args[:2]
     if cmd[:1] == ["version"]: print("rex " + st["installed"]); sys.exit(0)
@@ -66,10 +82,12 @@ FAKE_REX = textwrap.dedent('''\
     if cmd[:1] == ["capture"]: print("screen"); sys.exit(0)
     if cmd == ["server", "stop"]:
         if st["stop_hangs"]: save(); import time; time.sleep(60)
-        os.kill(st["server_pid"], signal.SIGTERM)
+        try:  # only the fake server this test started, never a reused pid
+            if ticks(st["server_pid"]) == st["server_ticks"]: os.kill(st["server_pid"], signal.SIGTERM)
+        except OSError: pass
         st["running"] = None
         for b in blocks():  # Rex restores every pane as a fresh shell
-            fg = st["restore_as"].get(b["block_id"], {"name": "zsh", "pid": 1})
+            fg = st["restore_as"].get(b["block_id"], {"name": "zsh", "pid": st["prompt_pid"]})
             b["process"] = {"foreground": {**fg, "cwd": b["process"]["foreground"]["cwd"]}}
             b["program_status"] = {"records": []}
         if st["reconnect"]: st.update(running=st["comes_back_as"], instance="new")
@@ -88,9 +106,9 @@ FAKE_REX = textwrap.dedent('''\
             sfile = typed[typed.index("--session") + 1] if "--session" in typed else None
             if b["block_id"] in st["resume_wrong"]: sfile = "/elsewhere.jsonl"
             rec = Path(os.environ["HOME"], ".local/state/rex-safe-upgrade/panes", b["block_id"].removeprefix("block:") + ".json")
-            ticks = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
-            if b["block_id"] in st["resume_incomplete"]: ticks = None
-            rec.write_text(json.dumps({"v": 2, "pid": pid, "startTicks": ticks, "sessionFile": sfile, "hasMessages": True}))
+            t = ticks(pid)
+            if b["block_id"] in st["resume_incomplete"]: t = None
+            rec.write_text(json.dumps({"v": 2, "pid": pid, "startTicks": t, "sessionFile": sfile, "hasMessages": True}))
             b["process"] = {"foreground": {"name": "node", "pid": pid, "cwd": cwd}}
         elif "hermes" in typed:
             pid = detached([sys.executable, "-c", "import time; time.sleep(60)", "hermes", *typed[typed.index("--tui"):]])
@@ -110,7 +128,8 @@ FAKE_SYSTEMCTL = textwrap.dedent('''\
     st["calls"].append(["systemctl", *args])
     st["systemctl_runtime_dirs"].append(os.environ.get("XDG_RUNTIME_DIR"))
     def done(code, text=None):
-        json.dump(st, open(path, "w"))
+        with open(path + ".tmp", "w") as f: json.dump(st, f)
+        os.replace(path + ".tmp", path)
         if text: print(text)
         sys.exit(code)
     if args[:1] != ["--user"] or args[2:] != ["rexume"]: done(1)
@@ -128,6 +147,53 @@ FAKE_PI = textwrap.dedent('''\
     import os, sys
     os.execv(sys.argv[1], ["pi", "60"])
 ''')
+
+# Never real in a test: the tool's only ways to a Rex server or systemd.
+GUARDED = ('rex', 'systemctl', 'systemd-run')
+# Anything that resolves one of GUARDED past the fakes lands here instead.
+# Shell builtins only: the sandbox PATH has no dirname/basename.
+TRIPWIRE = '#!/bin/sh\nprintf "%s\\n" "${0##*/} $*" >> "${0%/*}/calls.log"\nexit 1\n'
+FAKE_SYSTEMD_RUN = '#!/bin/sh\necho "fake systemd-run: refusing" >&2\nexit 1\n'
+
+
+class Sandbox:
+    """The environment every test runs commands in. See the module docstring."""
+
+    def __init__(self, test, home, tools, fakebin=None):
+        trip = tempfile.TemporaryDirectory()
+        test.addCleanup(trip.cleanup)  # after the tripwire check below
+        self.tripwire = Path(trip.name)
+        for name in GUARDED:
+            (self.tripwire / name).write_text(TRIPWIRE)
+            (self.tripwire / name).chmod(0o755)
+        toolbin = home / 'tools'  # real tools, by allowlist only
+        toolbin.mkdir()
+        for name in tools:
+            real = sys.executable if name == 'python3' else shutil.which(name)
+            assert name not in GUARDED and real, name
+            (toolbin / name).symlink_to(real)
+        dirs = [d for d in (fakebin, toolbin, self.tripwire) if d]
+        runtime = home / 'run'
+        runtime.mkdir(mode=0o700)
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith(('REX_', 'PI_', 'DBUS_', 'SYSTEMD_', 'XDG_RUNTIME'))}
+        self.env.update(HOME=str(home), PATH=':'.join(map(str, dirs)), XDG_RUNTIME_DIR=str(runtime))
+        if fakebin:
+            self.env['REX_SAFE_UPGRADE_FAKE_BIN'] = str(fakebin)
+        # The tripwires record (checked once, then the log is cleared).
+        subprocess.run([str(self.tripwire / 'rex'), 'probe'], env={'PATH': ''})
+        test.assertEqual(self.calls(), ['rex probe'])
+        (self.tripwire / 'calls.log').unlink()
+        # Without the fakes, nothing real is reachable: only the tripwires.
+        for name in GUARDED:
+            test.assertEqual(shutil.which(name, path=':'.join(map(str, dirs[-2:]))), str(self.tripwire / name))
+            if fakebin:
+                test.assertEqual(shutil.which(name, path=self.env['PATH']), str(fakebin / name))
+
+    def calls(self):
+        log = self.tripwire / 'calls.log'
+        return log.read_text().splitlines() if log.exists() else []
+
 
 S = 'session:00000000-0000-0000-0000-000000000001'
 W = 'window:00000000-0000-0000-0000-000000000002'
@@ -150,6 +216,25 @@ def children(pid):
     return [int(x) for x in out.split()]
 
 
+def kill_tree(pid, ticks):
+    """SIGKILL pid and its descendants, if pid is still the process that
+    started at ticks (never a reused pid)."""
+    try:
+        if start_ticks(pid) != ticks:
+            return
+    except (OSError, IndexError):
+        return
+    for c in children(pid):
+        try:
+            kill_tree(c, start_ticks(c))
+        except (OSError, IndexError):
+            pass
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def wait_until(pred, timeout=10):
     end = time.time() + timeout
     while time.time() < end:
@@ -170,40 +255,59 @@ class Base(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
-        fakebin = self.home / 'bin'
+        self.fakebin = fakebin = self.home / 'bin'
         fakebin.mkdir()
-        for name, src in (('rex', FAKE_REX), ('systemctl', FAKE_SYSTEMCTL), ('fake-pi', FAKE_PI)):
+        for name, src in (('rex', FAKE_REX), ('systemctl', FAKE_SYSTEMCTL), ('systemd-run', FAKE_SYSTEMD_RUN),
+                          ('fake-pi', FAKE_PI)):
             (fakebin / name).write_text(src)
             (fakebin / name).chmod(0o755)
         self.fake_pi = fakebin / 'fake-pi'
         self.node = fakebin / 'node'  # Pi runs as node; a copy of sleep stands in
         shutil.copy(shutil.which('sleep'), self.node)
         self.state_file = self.home / 'rex-state.json'
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith(('REX_', 'PI_'))}
-        self.env.update(HOME=str(self.home), PATH=f'{fakebin}:{os.environ["PATH"]}',
-                        FAKE_REX_STATE=str(self.state_file),
+        # Cleanups run last-registered first: kill everything, then check the
+        # tripwires, then remove the temp dirs.
+        self.sandbox = Sandbox(self, self.home, ('bash', 'sh', 'env', 'sleep', 'pgrep', 'python3'), fakebin)
+        self.addCleanup(lambda: self.assertEqual(self.sandbox.calls(), [], 'a test reached a real rex/systemd'))
+        self.env = self.sandbox.env
+        self.env.update(FAKE_REX_STATE=str(self.state_file),
                         REX_SAFE_UPGRADE_RECONNECT_WAIT='3', REX_SAFE_UPGRADE_START_WAIT='3',
                         REX_SAFE_UPGRADE_PANE_WAIT='5')
         self.blocks = []
-        self.pids = []
+        self.pids = []  # [pid, start ticks] of processes to kill at the end
+        self.procs = []  # tool processes
         self.records = self.home / '.local/state/rex-safe-upgrade/panes'
         self.records.mkdir(parents=True)
         self.addCleanup(self.kill_all)
 
     def kill_all(self):
+        """Kill every process this test started, children first, before its
+        temp dir (and the fakes in it) is removed."""
         spawned = []
-        if self.state_file.exists():
+        try:
             spawned = json.loads(self.state_file.read_text()).get('spawned', [])
-        for pid in self.pids + spawned:
+        except (OSError, ValueError):
+            pass
+        roots = []
+        for p in self.procs:
             try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                roots.append([p.pid, start_ticks(p.pid)])
+            except (OSError, IndexError):
+                pass  # already exited
+        for pid, ticks in roots + self.pids + spawned:
+            kill_tree(pid, ticks)
+        for p in self.procs:
+            p.wait()
+
+    def track(self, pid):
+        try:
+            self.pids.append([pid, start_ticks(pid)])
+        except OSError:
+            pass  # already gone
+        return pid
 
     def spawn(self, argv):
-        pid = detached_pid(argv)
-        self.pids.append(pid)
-        return pid
+        return self.track(detached_pid(argv))
 
     # -- panes --
     def pane(self, fg_name, pid, state='idle', app=None, cwd='/tmp', top=None):
@@ -246,8 +350,7 @@ class Base(unittest.TestCase):
         wrapper = self.spawn_in_terminal(argv) if tty else self.spawn(argv)
         self.assertTrue(wait_until(lambda: len(children(wrapper)) == kids and any(
             os.path.basename(os.readlink(f'/proc/{c}/exe')) == 'node' for c in children(wrapper))))
-        pi = next(c for c in children(wrapper) if os.readlink(f'/proc/{c}/exe') == str(self.node))
-        self.pids.append(pi)
+        pi = self.track(next(c for c in children(wrapper) if os.readlink(f'/proc/{c}/exe') == str(self.node)))
         b = self.pane('dash', wrapper, state=state, app='pi')
         if owner == 'pi':
             self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = pi
@@ -279,26 +382,35 @@ class Base(unittest.TestCase):
                     fail_send=(), resume_wrong=(), resume_incomplete=(), on_second_ls=None, comes_back_as=None,
                     rexume='inactive', rexume_stop_fails=False, stop_hangs=False, restore_as=None):
         self.server_pid = self.spawn(['sleep', '60'])
+        prompt = self.spawn(['sleep', '60'])  # stands in for each restored pane's new login shell
         # Another session listed first, so finding a pane's session means searching.
         other = {'session_id': S[:-1] + '9', 'label': 'other', 'blocks': [], 'windows': []}
         self.state_file.write_text(json.dumps({
             'running': running, 'installed': installed, 'server_pid': self.server_pid,
+            'server_ticks': start_ticks(self.server_pid),
             'instance': 'old', 'endpoint': ENDPOINT, 'reconnect': reconnect, 'start_works': start_works,
             'fail_send': list(fail_send), 'resume_wrong': list(resume_wrong),
             'resume_incomplete': list(resume_incomplete),
             'on_second_ls': on_second_ls or {}, 'ls_count': 0, 'spawned': [], 'calls': [],
             'comes_back_as': comes_back_as or installed,
             'rexume': rexume, 'rexume_stop_fails': rexume_stop_fails, 'systemctl_runtime_dirs': [],
-            'stop_hangs': stop_hangs, 'restore_as': restore_as or {},
+            'stop_hangs': stop_hangs, 'restore_as': restore_as or {}, 'prompt_pid': prompt,
             'sessions': [other, {'session_id': S, 'label': 'work', 'blocks': self.blocks,
                                  'windows': [{'window_id': W, 'label': 'tab'}]}]}))
 
     def state(self):
         return json.loads(self.state_file.read_text())
 
+    def popen_tool(self, *args, env=None):
+        p = subprocess.Popen([sys.executable, str(TOOL), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, env={**self.env, **(env or {})})
+        self.procs.append(p)  # killed with its children even if the test fails
+        return p
+
     def tool(self, *args, env=None):
-        return subprocess.run([sys.executable, str(TOOL), *args], capture_output=True, text=True,
-                              env={**self.env, **(env or {})}, timeout=120)
+        p = self.popen_tool(*args, env=env)
+        out, err = p.communicate(timeout=120)
+        return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
     def run_tool(self, *extra):
         self.run_dir = self.home / 'run'
@@ -492,7 +604,7 @@ class PlanTest(Base):
                 caller_env = {**self.env, 'REX_BLOCK': b, **env}
                 pid = detached_pid(['bash', '-c', 'exec -a pi "$@"', '_', sys.executable, '-c', code,
                                     str(go), str(out), sys.executable, str(TOOL)], env=caller_env)
-                self.pids.append(pid)
+                self.track(pid)
                 self.assertEqual(self.pane('node', pid, state='working', app='pi', top=os.getpid()), b)
                 self.write_pi_record(b, pid)
                 self.pi_pane(state='working')  # someone else's busy agent
@@ -623,7 +735,6 @@ class RestartTest(Base):
 
     def test_active_rexume_is_paused_for_the_restart(self):
         self.write_state(rexume='active')
-        self.env.pop('XDG_RUNTIME_DIR', None)  # a default is still found
         r, _ = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         calls = self.state()['calls']
@@ -633,7 +744,7 @@ class RestartTest(Base):
         last_rex = max(i for i, c in enumerate(calls) if c[0] != 'systemctl')
         self.assertGreater(start, last_rex)  # after resume and verification
         self.assertEqual(self.state()['rexume'], 'active')
-        self.assertEqual(set(self.state()['systemctl_runtime_dirs']), {f'/run/user/{os.getuid()}'})
+        self.assertEqual(set(self.state()['systemctl_runtime_dirs']), {self.env['XDG_RUNTIME_DIR']})
         log = self.log()
         self.assertIn('paused rexume', log)
         self.assertIn('started rexume again', log)
@@ -675,19 +786,59 @@ class RestartTest(Base):
     def test_rexume_is_started_again_when_the_run_is_killed(self):
         self.write_state(rexume='active', stop_hangs=True)
         self.run_dir = self.home / 'run'
-        p = subprocess.Popen([sys.executable, str(TOOL), 'run', f'--run-dir={self.run_dir}'],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=self.env)
-        def stopping():
-            try:
-                return ['server', 'stop'] in self.state()['calls']
-            except json.JSONDecodeError:  # caught mid-write
-                return False
-        self.assertTrue(wait_until(stopping, 30))
+        p = self.popen_tool('run', f'--run-dir={self.run_dir}')
+        self.assertTrue(wait_until(lambda: ['server', 'stop'] in self.state()['calls'], 30))
         p.send_signal(signal.SIGTERM)
-        out = p.communicate(timeout=30)[0]
+        out = ''.join(p.communicate(timeout=30))
         self.assertNotEqual(p.returncode, 0, out)
         self.assertEqual(self.systemctl_calls()[-1], ['--user', 'start', 'rexume'], out)
         self.assertIn('started rexume again', self.log())
+
+    # -- isolation: the 2026-11-25 incident and the layers against it
+    def test_run_whose_fakes_vanish_never_reaches_another_rex(self):
+        # A test failed while its run was in `rex server stop`; cleanup removed
+        # the fakes and the run went on. It re-resolved `rex` on PATH, found
+        # the real one, and stopped the real server. Now it must not find any.
+        self.write_state(rexume='active', stop_hangs=True)
+        self.run_dir = self.home / 'run'
+        p = self.popen_tool('run', f'--run-dir={self.run_dir}')
+        self.assertTrue(wait_until(lambda: ['server', 'stop'] in self.state()['calls'], 30))
+        hung = children(p.pid)  # the fake rex, inside `server stop`
+        shutil.rmtree(self.fakebin)
+        for c in hung:
+            os.kill(c, signal.SIGKILL)
+        os.kill(self.server_pid, signal.SIGKILL)
+        out = ''.join(p.communicate(timeout=60))
+        self.assertEqual(p.returncode, 4, out)
+        self.assertIn('server did not come back', out)
+        self.assertEqual(self.sandbox.calls(), [])
+
+    def test_test_mode_refuses_a_rex_that_is_not_the_fake(self):
+        self.write_state()
+        for env in ({'PATH': f'{self.sandbox.tripwire}:{self.env["PATH"]}'},  # tripwire rex first
+                    {'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'},
+                    {'DBUS_SESSION_BUS_ADDRESS': f'unix:path=/run/user/{os.getuid()}/bus'}):
+            with self.subTest(env=env):
+                r = self.tool('run', env=env)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn('test mode', r.stdout)
+        self.assertEqual(self.state()['calls'], [])
+        self.assertEqual(self.sandbox.calls(), [])
+        self.assertTrue(self.server_alive())
+
+    def test_test_mode_never_starts_a_systemd_unit(self):
+        # A run started inside the server's process tree hands itself to a
+        # transient unit, which would drop the fakes. Here the "server" is
+        # this test process, so the tool takes that branch.
+        self.blocks.clear()
+        self.write_state()
+        st = self.state()
+        st.update(server_pid=os.getpid(), server_ticks=start_ticks(os.getpid()))
+        self.state_file.write_text(json.dumps(st))
+        r = self.tool('run')
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn('refusing to start a systemd unit', r.stdout)
+        self.assertNotIn(['server', 'stop'], self.state()['calls'])
 
 
 class InstallerTest(unittest.TestCase):
@@ -695,8 +846,9 @@ class InstallerTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith('PI_')}
-        self.env['HOME'] = str(self.home)
+        sandbox = Sandbox(self, self.home, ('bash', 'sh', 'grep', 'cmp', 'install', 'mkdir', 'dirname', 'python3'))
+        self.addCleanup(lambda: self.assertEqual(sandbox.calls(), [], 'the installer reached rex/systemd'))
+        self.env = sandbox.env
         self.tool = self.home / '.local/bin/rex-safe-upgrade'
         self.ext = self.home / '.pi/agent/extensions/rex-pane-session.ts'
 

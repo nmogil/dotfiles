@@ -116,9 +116,11 @@ resumed. Only one run can be in progress at a time.
    server and every pane again; if anything changed, it stops without changing
    anything.
 4. If rexume is active, pauses it (`systemctl --user stop rexume`); if that
-   fails, it stops with exit 8 and changes nothing. Then it runs
+   fails, it stops with exit 8 and changes nothing. It checks once more that
+   the server it reaches is the one it checked (exit 3 otherwise), then runs
    `rex server stop` (the server saves sessions on stop) and copies the
-   saved-session database as a backup.
+   saved-session database as a backup. `rex` and `systemctl` are looked up on
+   `PATH` once per run and always run from that path afterwards.
 5. Waits up to 90 seconds for the Rex app to reconnect, which starts the new
    server through the login server. If that doesn't happen, it runs
    `rex server start` itself.
@@ -206,7 +208,7 @@ LaunchAgent `io.github.entwining.rexume`, but this tool doesn't run on macOS.
 | 0 | Done, or nothing to do |
 | 1 | No Rex server running |
 | 2 | Not safe right now; nothing changed |
-| 3 | Server changed during preflight (nothing changed), or the old server didn't stop |
+| 3 | Server changed during preflight or right before the stop (nothing changed), or the old server didn't stop |
 | 4 | Server didn't come back; the log lists the commands to resume each pane |
 | 5 | Some panes didn't resume; the log lists their commands |
 | 6 | Another run is in progress; nothing changed |
@@ -270,6 +272,34 @@ restart with resume and verification, the app not reconnecting, the server
 never returning, the server coming back on the old version, a pane that fails,
 a pane restored running a command, the wrong conversation coming back, a
 change during preflight, a concurrent run, rexume paused and started again on
-success, failure and SIGTERM (and a stop that fails), and the installer. The second drives the Pi extension's
-handlers against real files, including a record that can't be removed. They
-never contact a live Rex server or start Pi.
+success, failure and SIGTERM (and a stop that fails), and the installer. The
+second drives the Pi extension's handlers against real files, including a
+record that can't be removed. Neither starts Pi.
+
+The tests must never reach a real Rex server or systemd, even when a test
+fails halfway. On 2026-11-25 one did: a test failed while its `run` was still
+going, cleanup deleted the fake `rex`, and the run's next `rex server stop`
+found `/usr/bin/rex` on `PATH` and stopped the VPS's real server. The layers
+since then:
+
+- `PATH` holds only the fakes, an allowlist of real tools (never `rex`,
+  `systemctl` or `systemd-run`), and tripwire copies of those three that
+  record any call. Every test fails if a tripwire fired.
+- `XDG_RUNTIME_DIR` is a temp dir and `DBUS_SESSION_BUS_ADDRESS` is unset.
+- `REX_SAFE_UPGRADE_FAKE_BIN` (set by the tests to the fakes' directory) puts
+  the tool in test mode: it exits 2 without doing anything unless `rex` and
+  `systemctl` resolve there and the runtime dir isn't `/run/user/*`, and it
+  never starts a systemd unit.
+- The tool resolves each command once per run, so deleted fakes make calls
+  fail instead of falling through to another `rex`.
+- Every process a test starts is killed with its children before the test's
+  temp dir is removed, and only if its pid still belongs to the same process.
+
+Even so, prefer running the Linux tests in a container, or on a machine with
+no Rex server you care about:
+
+```bash
+docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh -c \
+  'apt-get update -qq && apt-get install -y -qq python3 procps nodejs >/dev/null &&
+   python3 scripts/tests/rex-safe-upgrade.test.py -v && node scripts/tests/rex-pane-session.test.mjs'
+```
