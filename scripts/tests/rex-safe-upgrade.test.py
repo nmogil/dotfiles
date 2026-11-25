@@ -887,13 +887,14 @@ class PlanTest(Base):
         self.assertRegex(r.stdout, r"pi \(pid \d+\) is working")
         self.assertRegex(r.stdout, r"pi \(pid \d+\) hasn't reported whether it's busy")
 
-    def script_pane_with_pi(self):
+    def script_pane_with_pi(self, node=None):
         """A pane whose foreground program is `bash job.sh`, with Pi as the
         script's child: Rex reports the script; Pi is one level down."""
+        node = node or self.node
         script = self.home / 'job.sh'
-        script.write_text(f'"{self.fake_pi}" "{self.node}"\n{SLEEP} 60\n')
+        script.write_text(f'"{self.fake_pi}" "{node}"\n{SLEEP} 60\n')
         sh = self.spawn([BASH, *NOSTARTUP, str(script)])
-        pis = lambda: [c for c in children(sh) if os.readlink(f'/proc/{c}/exe') == str(self.node)]
+        pis = lambda: [c for c in children(sh) if os.readlink(f'/proc/{c}/exe') == str(node)]
         self.assertTrue(wait_until(pis))
         time.sleep(0.2)
         self.pane('bash', sh, state=None)
@@ -911,6 +912,65 @@ class PlanTest(Base):
                         {'state': state, 'app': 'pi', 'owner': {'pid': pi}, 'updated_at': utc(time.time())}]
                 r = self.assert_blocked("'bash' is running a script or command", extra=['--allow-unresumable'])
                 self.assertRegex(r.stdout, want)
+
+    # -- executables replaced while running (a package upgrade): /proc shows
+    # "<path> (deleted)", and Rex may name them that way too
+    def replaced(self, src, name):
+        """A copy of src to run, and a function that deletes it."""
+        d = self.home / 'replaced'
+        d.mkdir(exist_ok=True)
+        copy = d / name
+        shutil.copy(src, copy)
+        return copy
+
+    def assert_replaced(self, *pids):
+        for pid in pids:
+            self.assertTrue(os.readlink(f'/proc/{pid}/exe').endswith(' (deleted)'), pid)
+
+    def test_agents_with_replaced_executables_are_never_waived(self):
+        for case in ('working Pi under a script', 'unreported Pi in the foreground'):
+            with self.subTest(case=case):
+                self.blocks.clear()
+                node = self.replaced(self.node, 'node')
+                if case.startswith('working'):
+                    pi = self.script_pane_with_pi(node)
+                    self.blocks[-1]['program_status']['records'] = [
+                        {'state': 'working', 'app': 'pi', 'owner': {'pid': pi}, 'updated_at': utc(time.time())}]
+                    want = r"pi \(pid \d+\) is working"
+                else:
+                    pi = self.spawn([str(self.fake_pi), str(node)])
+                    self.assertTrue(wait_until(lambda: os.readlink(f'/proc/{pi}/exe') == str(node)))
+                    self.pane('node (deleted)', pi, state=None)
+                    self.write_pi_record(self.blocks[-1]['block_id'], pi)
+                    want = "pi hasn't reported whether it's busy"
+                node.unlink()
+                self.assert_replaced(pi)
+                r = self.assert_blocked(extra=['--allow-unresumable'])
+                self.assertRegex(r.stdout, want)
+
+    def test_replaced_shell_executables_are_still_shells(self):
+        bash, sh = self.replaced(os.path.realpath(BASH), 'bash'), self.replaced(os.path.realpath(SH), 'sh')
+        # An idle Pi behind a wrapper shell that was replaced: still resumable.
+        wrapper = self.spawn_in_terminal([str(bash), *NOSTARTUP, '-lc', '"$1" "$2"; exec "$3" 60', '_',
+                                          str(self.fake_pi), str(self.node), SLEEP])
+        pis = lambda: [c for c in children(wrapper) if os.readlink(f'/proc/{c}/exe') == str(self.node)]
+        self.assertTrue(wait_until(pis))
+        pi = pis()[0]
+        time.sleep(0.2)
+        b1 = self.pane('bash (deleted)', wrapper, app='pi')
+        self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = pi
+        self.write_pi_record(b1, pi)
+        # A shell at its prompt that was replaced: still an idle shell.
+        prompt = self.spawn(['zsh'], executable=str(sh), stdin=subprocess.PIPE)
+        b2 = self.pane('zsh (deleted)', prompt, state=None)
+        bash.unlink()
+        sh.unlink()
+        self.assert_replaced(wrapper, prompt)
+        self.write_state()
+        r, plan = self.run_tool('--dry-run')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((plan[b1]['kind'], plan[b1]['fg_pid']), ('pi', pi))
+        self.assertEqual(plan[b2]['kind'], 'shell')
 
     def test_one_wrapper_record_cannot_clear_two_unpromoted_agents(self):
         # Two Pi children (so no promotion) and one idle record owned by the

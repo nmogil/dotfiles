@@ -262,7 +262,7 @@ def local_server_problem(info: dict) -> str | None:
         uid = os.stat(f"/proc/{pid}").st_uid
     except OSError:
         return f"server pid {pid} isn't a process on this machine that can be inspected"
-    if os.path.basename(exe) != "rex":
+    if exe_name(exe) != "rex":
         return f"server pid {pid} runs {exe}, not rex"
     if uid != os.getuid():
         return f"server pid {pid} runs as uid {uid}, not as this account"
@@ -343,10 +343,18 @@ def proc_stat(pid: int) -> list[str]:
         return []
 
 
+def exe_name(path: str) -> str:
+    """The file name of an executable as /proc/<pid>/exe or Rex shows it.
+    Linux appends " (deleted)" once a running executable was replaced, as
+    after a node, pi, shell or rex package upgrade; that is still the same
+    program. Every executable-based comparison goes through here."""
+    return os.path.basename(str(path).removesuffix(" (deleted)"))
+
+
 def proc_exe_name(pid: int) -> str:
     """Name of the running executable, as Rex reports it ("node" for Pi)."""
     try:
-        return os.path.basename(os.readlink(f"/proc/{pid}/exe"))
+        return exe_name(os.readlink(f"/proc/{pid}/exe"))
     except OSError:
         return proc_name(pid)
 
@@ -435,7 +443,9 @@ def resolve_foreground(proc: dict) -> tuple[dict, str | None, bool]:
     the result then has "wrapper": the shell's pid. A shell running a command
     with one child that doesn't qualify is left as is, so the child counts as
     a background process."""
-    fg = proc.get("foreground") or {}
+    fg = dict(proc.get("foreground") or {})
+    if fg.get("name"):
+        fg["name"] = exe_name(fg["name"])  # Rex names the executable: "bash (deleted)" is bash
     pid = fg.get("pid")
     if not pid or fg.get("name") not in SHELLS:
         return fg, None, False

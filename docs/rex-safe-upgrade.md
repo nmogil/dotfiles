@@ -134,7 +134,9 @@ Otherwise the run stops with exit 3 and the plan says why.
      holds for every agent anywhere in the pane's process tree, checked
      first, whatever else the pane shows: say, Pi run by a script, or beside
      a background job. Such an agent must have reported its own state (a
-     wrapper's record can't show it idle). Any status
+     wrapper's record can't show it idle). A program whose executable was
+     replaced while it runs (after a node, pi, shell or rex package upgrade,
+     shown as `<path> (deleted)`) is still that program. Any status
      record of the running program that isn't idle counts, even next to an
      idle one; a record without a state, or a state Rex doesn't define,
      counts as unknown;
