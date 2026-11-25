@@ -5,10 +5,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# --- rexume's Pi extension never reaches the work profile -------------------------------
-# rexume (docs/rexume.md) writes ~/.pi/agent/extensions/rexume.ts, and it must
-# never load in a work profile. These cases use a minimal fixture scaffold, so
-# they run even where the real scaffold is absent (CI).
+# --- no work Pi profile while rexume is installed (docs/rexume.md) ---------------------
+# rexume reopens Pi without PI_CODING_AGENT_DIR, and its extension would load in
+# a work profile through the shared extensions, so the two never coexist. These
+# cases use a minimal fixture scaffold, so they run even where the real scaffold
+# is absent (CI).
 RX="$(mktemp -d)"
 trap 'rm -rf "$RX"' EXIT
 FIX="$RX/scaffold"
@@ -17,34 +18,64 @@ printf '%s\n' '// badge' > "$FIX/agent/extensions/account-profile-indicator.ts"
 printf '%s\n' '---' 'name: coding-agent-account-routing' '---' > "$FIX/agent/skills/coding-agent-account-routing/SKILL.md"
 printf '%s\n' '{"providers":{"anthropic":{"modelOverrides":{"m":{"name":"Work · Sonnet"}}}}}' > "$FIX/agent/models.work.example.json"
 printf '%s\n' '{}' > "$FIX/agent/cloak.json"
+# The caller's PATH without any directory holding a rexume (a dev machine may have one).
+RX_PATH=""
+rest="$PATH:"
+while [ -n "$rest" ]; do
+  dir="${rest%%:*}"; rest="${rest#*:}"
+  [ -n "$dir" ] && [ ! -e "$dir/rexume" ] && RX_PATH="${RX_PATH:+$RX_PATH:}$dir"
+done
 rx_home() {  # rx_home <dir>: a HOME with a personal profile (with extensions) and local.env
   mkdir -p "$1/.pi/agent/extensions" "$1/.config/dotfiles"
   printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' 'DOTFILES_ENABLE_HERMES=0' > "$1/.config/dotfiles/local.env"
 }
-rx_profiles() { HOME="$1" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" DOTFILES_PI_SCAFFOLD_DIR="$FIX" "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1; }
+rx_profiles() {  # rx_profiles <home> <flag>: ./dot pi profiles pinned to the fixture HOME
+  HOME="$1" PI_HOME="$1/.pi" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" \
+    DOTFILES_PI_SCAFFOLD_DIR="$FIX" DOTFILES_PROFILES_LOCK_TIMEOUT="${RX_LOCK_TIMEOUT:-10}" PATH="$RX_PATH" \
+    "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1
+}
 rx_fail() { printf 'FAIL %s\n' "$1"; sed 's/^/       /' "$RX/out"; exit 1; }
+rx_refuses_work_profile() {  # rx_refuses_work_profile <home> <name>
+  if rx_profiles "$1" --apply; then rx_fail "$2: pi profiles --apply created a work profile next to rexume"; fi
+  grep -Fq 'while rexume is installed' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
+    || rx_fail "$2: pi profiles --apply explains the rexume refusal"
+  [ ! -e "$1/.pi/agent-clientx" ] || rx_fail "$2: pi profiles --apply created $1/.pi/agent-clientx"
+  printf 'ok   %s\n' "$2"
+}
 
-# rexume installed first: --apply must not link the work extensions to it.
-H="$RX/rexume-first"; rx_home "$H"; printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
-if rx_profiles "$H" --apply; then rx_fail "pi profiles --apply links the work extensions while rexume.ts is there"; fi
-grep -Fq 'rexume.ts' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
-  || rx_fail "pi profiles --apply explains the rexume.ts refusal"
-[ ! -e "$H/.pi/agent-clientx/extensions" ] && [ ! -L "$H/.pi/agent-clientx/extensions" ] \
-  || rx_fail "pi profiles --apply created a work extensions link next to rexume.ts"
-if rx_profiles "$H" --check; then rx_fail "pi profiles --check passes while rexume.ts blocks the extensions link"; fi
-grep -Fq 'rexume.ts' "$RX/out" || rx_fail "pi profiles --check names rexume.ts"
-printf '%s\n' 'ok   rexume first: pi profiles --apply refuses to share extensions holding rexume.ts'
+# rexume first: --apply refuses to create a work profile, whichever trace rexume left.
+H="$RX/ext"; rx_home "$H"; printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
+rx_refuses_work_profile "$H" "rexume first (its Pi extension): no work profile"
+H="$RX/bin"; rx_home "$H"; mkdir -p "$H/.local/bin"; printf '#!/bin/sh\n' > "$H/.local/bin/rexume"; chmod 755 "$H/.local/bin/rexume"
+rx_refuses_work_profile "$H" "rexume first (its binary): no work profile"
+H="$RX/unit"; rx_home "$H"; mkdir -p "$H/.config/systemd/user"; : > "$H/.config/systemd/user/rexume.service"
+rx_refuses_work_profile "$H" "rexume first (its systemd unit): no work profile"
+H="$RX/agent"; rx_home "$H"; mkdir -p "$H/Library/LaunchAgents"; : > "$H/Library/LaunchAgents/io.github.entwining.rexume.plist"
+rx_refuses_work_profile "$H" "rexume first (its LaunchAgent): no work profile"
 
-# Profiles first, then rexume.ts appears behind the existing link: --check and --apply fail.
+# Profiles first, then rexume appears: --check flags the combination; --apply refuses.
 H="$RX/profiles-first"; rx_home "$H"
 rx_profiles "$H" --apply || rx_fail "pi profiles --apply (fixture scaffold) succeeds without rexume"
 [ -L "$H/.pi/agent-clientx/extensions" ] || rx_fail "pi profiles --apply shares extensions without rexume"
-printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
-if rx_profiles "$H" --check; then rx_fail "pi profiles --check passes while the work profile loads rexume.ts"; fi
-grep -Fq 'rexume.ts' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
-  || rx_fail "pi profiles --check explains that the work profile loads rexume.ts"
-if rx_profiles "$H" --apply; then rx_fail "pi profiles --apply passes while the work profile loads rexume.ts"; fi
-printf '%s\n' 'ok   profiles first: pi profiles --check/--apply fail once the shared extensions hold rexume.ts'
+[ ! -e "$H/.pi/.dotfiles-profiles.lock" ] || rx_fail "pi profiles --apply releases the profiles lock"
+mkdir -p "$H/.local/bin"; printf '#!/bin/sh\n' > "$H/.local/bin/rexume"; chmod 755 "$H/.local/bin/rexume"
+if rx_profiles "$H" --check; then rx_fail "pi profiles --check passes with rexume and a work profile"; fi
+grep -Fq 'rexume is installed' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
+  || rx_fail "pi profiles --check explains the rexume + work profile combination"
+if rx_profiles "$H" --apply; then rx_fail "pi profiles --apply passes with rexume and a work profile"; fi
+printf '%s\n' 'ok   profiles first: --check flags rexume + work profile, --apply refuses'
+
+# The profiles lock: a live holder makes --apply refuse within the timeout; nothing is created.
+H="$RX/locked"; rx_home "$H"
+sleep 30 & HOLDER=$!
+mkdir "$H/.pi/.dotfiles-profiles.lock"; echo "$HOLDER" > "$H/.pi/.dotfiles-profiles.lock/pid"
+t0="$(date +%s)"
+if RX_LOCK_TIMEOUT=1 rx_profiles "$H" --apply; then rx_fail "pi profiles --apply ran while the profiles lock was held"; fi
+t1="$(date +%s)"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null || true
+grep -Fq "holds $H/.pi/.dotfiles-profiles.lock (pid $HOLDER)" "$RX/out" || rx_fail "pi profiles --apply names the lock holder"
+[ ! -e "$H/.pi/agent-clientx" ] && [ $((t1 - t0)) -lt 8 ] || rx_fail "pi profiles --apply waited too long or wrote under the lock"
+printf '%s\n' 'ok   pi profiles --apply refuses (bounded) while ./dot rexume holds the profiles lock'
 rm -rf "$RX"; trap - EXIT
 
 # The scaffold is not tracked in this public repo. Use the caller's configured

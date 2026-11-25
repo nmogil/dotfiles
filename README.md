@@ -153,6 +153,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `config/rexboard/release.pins`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
 | `config/rexume/release.pins`, `scripts/setup-rexume.sh` | rexume, which reopens agent conversations after a Rex restart and returns worker results (opt-in; Mac: Homebrew via `./dot rexume`, not the Brewfile; Linux: pinned, checksum- and attestation-verified; `./dot rexume`, `docs/rexume.md`) |
 | `scripts/lib/pinned-release.sh` | Shared pinned-release installer (checksums, safe publish, backups) used by rexboard and rexume |
+| `scripts/lib/pi-profiles-lock.sh` | Work-profile detection, rexume detection, and the lock shared by `./dot rexume --apply` and `./dot pi profiles --apply` |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -430,8 +431,9 @@ or later; `setup-linux.sh` does not run it:
 ./dot rexume --check
 ```
 
-The work Pi profile never gets rexume's extension, and `--apply` refuses
-while it would. See [`docs/rexume.md`](docs/rexume.md).
+rexume and a work Pi profile never coexist: `--apply` refuses on a machine
+with one, and `./dot pi profiles --apply` refuses while rexume is installed.
+See [`docs/rexume.md`](docs/rexume.md).
 
 ## Manual Steps After Setup
 

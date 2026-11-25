@@ -37,9 +37,9 @@ jobs:
       - name: Syntax-check shell scripts (bash -n)
         run: git ls-files -z dot '*.sh' | xargs -0 -n1 bash -n
 
-      - name: shellcheck (dot update, rexboard, rexume)
+      - name: shellcheck (dot update, rexboard, rexume, pi profiles)
         if: runner.os == 'Linux'
-        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh scripts/setup-rexboard.sh scripts/tests/rexboard.test.sh scripts/lib/pi-cli.sh scripts/tests/pi-version.test.sh scripts/lib/pinned-release.sh scripts/setup-rexume.sh scripts/tests/rexume.test.sh
+        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh scripts/setup-rexboard.sh scripts/tests/rexboard.test.sh scripts/lib/pi-cli.sh scripts/tests/pi-version.test.sh scripts/lib/pinned-release.sh scripts/setup-rexume.sh scripts/tests/rexume.test.sh scripts/lib/pi-profiles-lock.sh scripts/setup-pi-profiles.sh scripts/tests/pi-profiles.test.sh
 
       - name: Shell tests
         run: |
@@ -52,7 +52,7 @@ jobs:
           exit "$failed"
 
       # macOS ships bash 3.2 as /bin/bash; PATH bash on the runner is newer.
-      - name: update, rexboard, rexume tests under /bin/bash (bash 3.2)
+      - name: update, rexboard, rexume, pi-profiles tests under /bin/bash (bash 3.2)
         if: runner.os == 'macOS'
         run: |
           /bin/bash --version | head -n 1
@@ -60,6 +60,7 @@ jobs:
           /bin/bash scripts/tests/rexboard.test.sh
           /bin/bash scripts/tests/pi-version.test.sh
           /bin/bash scripts/tests/rexume.test.sh
+          /bin/bash scripts/tests/pi-profiles.test.sh
 
       - name: Python tests
         run: |

@@ -30,11 +30,13 @@ and `docs/cli.md` in the rexume repository.
 
 `--apply` does these steps in order. It stops at the first one that fails.
 
-1. **Work-profile guard** (see below). It refuses if any `~/.pi/agent-*`
-   profile has `extensions/rexume.ts`, shares `~/.pi/agent/extensions`, or has
-   a profile or extensions path that doesn't resolve. It also refuses if the
-   personal `rexume.ts` or extensions path is a symlink that `rexume install`
-   would write through.
+1. **Profiles lock.** It takes `~/.pi/.dotfiles-profiles.lock`, which
+   `./dot pi profiles --apply` also takes, and holds it to the end (see
+   below).
+   **No work Pi profile.** It refuses if any work Pi profile exists (see
+   below). It also refuses if the personal `rexume.ts` is a symlink, or the
+   personal profile or extensions path is a symlink that doesn't resolve,
+   since `rexume install` would write through it.
 2. **Conflicting `rexume` on PATH** (Linux). It refuses before changing
    anything if a `rexume` other than `~/.local/bin/rexume` comes first on the
    caller's PATH, or if `~/.local/bin` isn't on PATH and a `rexume` is. (macOS:
@@ -99,8 +101,8 @@ If the Rex server outlives your login, run `loginctl enable-linger` once.
 - the daemon job is active: `systemctl --user is-active rexume`, or
   `launchctl print gui/$(id -u)/io.github.entwining.rexume` showing
   `state = running`;
-- `~/.pi/agent/extensions/rexume.ts` exists;
-- no `~/.pi/agent-*/extensions/rexume.ts` exists;
+- `~/.pi/agent/extensions/rexume.ts` exists (and isn't a symlink);
+- no work Pi profile exists;
 - `rexume status` succeeds and returns `claude_hooks_missing` as an empty list.
   `null` (rexume couldn't read the Claude Code settings) or a missing field
   fail the check, and so do missing hooks.
@@ -109,7 +111,12 @@ It exits 3 when there is no trace of rexume (no binary, extension, job file or
 running daemon), and 1 otherwise, with each reason. On Linux, a `rexume` on
 PATH that isn't the pinned `~/.local/bin/rexume` is a problem (1), not
 absence. A standalone `--check` never waits: right after an install, run it
-again if the daemon hasn't created its database yet. Checks never run the
+again if the daemon hasn't created its database yet. Every `systemctl`,
+`launchctl` and `rexume status` call is bounded (10 seconds each,
+`DOTFILES_REXUME_CALL_TIMEOUT`), and `--apply`'s readiness wait is a real
+20-second deadline (`DOTFILES_REXUME_READY_TIMEOUT`). `--dry-run` writes
+nothing, not even a temp file: the installer and its libraries use no heredocs
+or here-strings, which bash 3.2 writes to temp files. A test enforces this. Checks never run the
 binary except the read-only `rexume status`, and only after the binary is
 verified (from Homebrew, or matching the pin). `./dot doctor` runs the check
 where Rex or rexume is present.
@@ -130,53 +137,53 @@ never stops or restarts the server. `--autostart=false` stops the `rex` CLI from
 starting a missing server itself. A socket-activated service (for example a
 systemd socket unit for Rex) could still start one when the probe connects.
 
-## Work profile: never gets the extension
+## Work profile: rexume and a work Pi profile never coexist
 
 The work Pi profile (`~/.pi/agent-<slug>`, launched by the `pi-work` shell
 function with `PI_CODING_AGENT_DIR` set) must never load rexume's Pi
 extension. When rexume reopens a conversation, it starts `pi` without
 `PI_CODING_AGENT_DIR`, so a work conversation would come back under the
-personal profile, with personal models and credentials. With no extension in
-the work profile, its sessions are never recorded, so rexume never reopens
-them. After a restart, reopen work conversations yourself (or with
-`rex-safe-upgrade`).
+personal profile, with personal models and credentials.
 
-The installer enforces this:
+Pi profiles share the personal `extensions` directory
+(`./dot pi profiles` links it). Under that model, no check on individual
+files can keep `rexume.ts` out of a work profile. A link under another name
+gets through, and so does a profile created while rexume installs. So the
+rule is at the profile level, and fails closed:
 
-- `rexume install` always runs with `PI_CODING_AGENT_DIR` removed. Run from a
-  `pi-work` shell, it would otherwise write the extension into the work
-  profile, and the job would keep the variable.
-- `--apply` refuses before installing anything if a work profile has
-  `extensions/rexume.ts`, or if its `extensions` directory is the personal one
-  (a symlink to `~/.pi/agent/extensions`): `rexume install` writes there, and
-  the work profile would load it.
-- The guard fails closed. A work profile or extensions symlink that doesn't
-  resolve is refused, because `rexume install` would create the missing
-  target, and that could be the personal directory. Directories are compared
-  by device and inode, not by path. A symlink at the personal `rexume.ts` is
-  refused. The guard runs again right before `rexume install`.
-- `--check` fails while any `~/.pi/agent-*/extensions/rexume.ts` exists.
-- `./dot pi profiles --apply` refuses to link a work profile's `extensions` to
-  `~/.pi/agent/extensions` while `rexume.ts` is there, and `--check` reports
-  it as a problem. Both setup orders are covered: rexume first, then profiles;
-  or profiles first, then rexume.
+- **`./dot rexume --apply` refuses on any machine with a work Pi profile.** A
+  work profile is any `~/.pi/agent-*` entry: a directory, a symlink (dangling
+  too) or a file. The only exception is `~/.pi/agent-memory` when it is a
+  plain directory with neither `settings.json` nor `extensions` (the VPS's
+  memory data directory). The message lists the profiles. rexume can't be
+  installed on such a machine until Pi profiles stop sharing `extensions`.
+  That is Noah's decision, separate from this installer. The check runs again
+  right before `rexume install`.
+- **`./dot pi profiles --apply` refuses to create or update a work profile
+  while rexume is installed.** Installed means any of: `rexume.ts` in the
+  personal extensions, `~/.local/bin/rexume`, the systemd unit or
+  LaunchAgent, or a `rexume` on PATH. `./dot pi profiles --check` fails when
+  rexume and a work profile coexist.
+- **One lock.** Both `--apply`s take `~/.pi/.dotfiles-profiles.lock` (an
+  atomic `mkdir`, holding the owner's pid) for their whole check-and-write, so
+  neither can slip in between the other's check and its writes. A second run
+  waits up to 10 seconds (`DOTFILES_PROFILES_LOCK_TIMEOUT`), then refuses and
+  names the holder. A lock whose pid is gone is taken over. A lock without a
+  pid is never taken over: remove it by hand once you're sure nothing is
+  running.
+- `rexume install` always runs with `PI_CODING_AGENT_DIR` removed.
+- `./dot rexume --check` fails while rexume is installed and any work profile
+  exists.
 
-**Current layout:** `setup-pi-profiles.sh` (`./dot pi profiles`) links the
-work profile's `extensions` directory to the personal one. Until the work
-profile gets an extensions directory of its own, `--apply` refuses with
-"shares ~/.pi/agent/extensions". Don't work around this by hand.
+**On this Mac today** (`~/.pi/agent-work`, sharing `extensions`),
+`./dot rexume --apply` refuses. Don't work around it by hand.
 
-The skill stub `~/.agents/skills/rexume/SKILL.md` is shared by every Pi
-profile (and Codex and OpenCode). That is acceptable: it only tells an agent to
-run `rexume skill show`. A work Pi's conversation is never recorded, so rexume
-never reopens it. Its `rexume task` commands, though, resolve the conversation
-last recorded in that pane (possibly an earlier personal one), so don't use
-them from a work Pi.
+The skill stub `~/.agents/skills/rexume/SKILL.md` would be read by every Pi
+profile (and by Codex and OpenCode). That is acceptable: it only tells an agent
+to run `rexume skill show`.
 
 If you run `rexume install` or `rexume uninstall` by hand, use
-`env -u PI_CODING_AGENT_DIR rexume install` (or `uninstall`). If a work
-profile ever gets `rexume.ts`, delete that file. rexume marks it
-`// Written by \`rexume install\``.
+`env -u PI_CODING_AGENT_DIR rexume install` (or `uninstall`).
 
 ## Claude Code plugin: forgeable messages
 
@@ -253,7 +260,7 @@ macOS follows Homebrew (`brew upgrade`). Linux follows the pin. To move it:
 
 ```sh
 bash scripts/tests/rexume.test.sh     # fixture release over file://; stubs on an allowlisted temp-only PATH
-bash scripts/tests/pi-profiles.test.sh  # pi profiles never shares extensions holding rexume.ts
+bash scripts/tests/pi-profiles.test.sh  # no work profile while rexume is installed; the shared lock
 bash scripts/tests/rexboard.test.sh   # the shared pinned-release library
 ./dot rexume --check
 ```

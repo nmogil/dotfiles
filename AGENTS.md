@@ -40,7 +40,7 @@ and dispatches to them.
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
 | rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.pins` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
-| rexume (reopen agent conversations after a Rex restart; opt-in, Rex preview.23+) | `config/rexume/release.pins` + `scripts/setup-rexume.sh` (Mac: `brew install` on --apply, not in the Brewfile; Linux: pinned, checksum- and attestation-verified; never into a work Pi profile, and `setup-pi-profiles.sh` won't share extensions holding rexume.ts; see `docs/rexume.md`) |
+| rexume (reopen agent conversations after a Rex restart; opt-in, Rex preview.23+) | `config/rexume/release.pins` + `scripts/setup-rexume.sh` (Mac: `brew install` on --apply, not in the Brewfile; Linux: pinned, checksum- and attestation-verified; never on a machine with a work Pi profile, and `setup-pi-profiles.sh` won't create one while rexume is installed (shared lock `scripts/lib/pi-profiles-lock.sh`); see `docs/rexume.md`) |
 | Pinned Linux release installs (shared) | `scripts/lib/pinned-release.sh` (used by `setup-rexboard.sh` and `setup-rexume.sh`) |
 | Rex server upgrades (resume agents after restart) | `scripts/rex-safe-upgrade.py` + `templates/pi-rex/` + `scripts/setup-rex-safe-upgrade.sh` (see `docs/rex-safe-upgrade.md`) |
 | Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |
@@ -88,7 +88,7 @@ bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes
   scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
   scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/setup-rexboard.sh scripts/setup-rexume.sh \
-  scripts/lib/pinned-release.sh scripts/update.sh \
+  scripts/lib/pinned-release.sh scripts/lib/pi-profiles-lock.sh scripts/update.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
@@ -110,7 +110,7 @@ node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 
 CI (`.github/workflows/ci.yml`) runs `bash -n` on every tracked shell script and
 all `scripts/tests/*.test.{sh,py,mjs}` on Ubuntu and macOS for every PR and push
-to `main` (plus the update, rexboard, rexume and pi-version suites under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
+to `main` (plus the update, rexboard, rexume, pi-profiles and pi-version suites under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
 installed Pi, a live Rex, Linux `/proc` (skipped on macOS), PyYAML — print a
 skip reason instead of failing. Keep new tests hermetic (temp `HOME`, stubs).
 

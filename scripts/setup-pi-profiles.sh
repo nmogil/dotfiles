@@ -17,6 +17,8 @@ script_dir() {
 ROOT="$(cd "$(script_dir)/.." && pwd)"
 # shellcheck source=lib/local-env.sh
 . "$ROOT/scripts/lib/local-env.sh"
+# shellcheck source=lib/pi-profiles-lock.sh
+. "$ROOT/scripts/lib/pi-profiles-lock.sh"
 dotfiles_load_config
 
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
@@ -163,13 +165,12 @@ share_path_if_present() {
   echo "  link   $label"
 }
 
-# rexume (docs/rexume.md) writes its Pi extension to the personal profile. The
-# work profile must never load it: rexume reopens Pi without
-# PI_CODING_AGENT_DIR, so a work conversation would come back under the
-# personal profile. While it is there, the extensions directory is not shared.
-REXUME_EXTENSION="$PERSONAL_DIR/extensions/rexume.ts"
-rexume_extension_present() { [ -e "$REXUME_EXTENSION" ] || [ -L "$REXUME_EXTENSION" ]; }
-
+# rexume (docs/rexume.md) and a work profile never coexist: rexume's Pi
+# extension would load in the work profile through the shared extensions, and
+# rexume reopens Pi without PI_CODING_AGENT_DIR, so a work conversation would
+# come back under the personal profile. --apply refuses while rexume is
+# installed, under the profiles lock `./dot rexume --apply` also takes
+# (scripts/lib/pi-profiles-lock.sh); --check flags the combination.
 check_profiles() {
   local failed=0 path sensitive_failed=0
 
@@ -184,16 +185,6 @@ check_profiles() {
 
   for path in extensions skills themes npm; do
     [ -e "$PERSONAL_DIR/$path" ] || continue
-    if [ "$path" = extensions ] && rexume_extension_present; then
-      if [ -L "$WORK_DIR/$path" ] \
-        && [ "$(readlink -f "$WORK_DIR/$path")" = "$(readlink -f "$PERSONAL_DIR/$path")" ]; then
-        echo "  FAIL work profile loads rexume.ts through its shared extensions link; it must not (see docs/rexume.md)"
-      else
-        echo "  FAIL work extensions not shared: $REXUME_EXTENSION is there and must not load in a work profile (see docs/rexume.md)"
-      fi
-      failed=1
-      continue
-    fi
     if [ -L "$WORK_DIR/$path" ] \
       && [ "$(readlink -f "$WORK_DIR/$path")" = "$(readlink -f "$PERSONAL_DIR/$path")" ]; then
       echo "  ok     shared $path"
@@ -203,8 +194,10 @@ check_profiles() {
     fi
   done
 
-  if [ -e "$WORK_DIR/extensions/rexume.ts" ] || [ -L "$WORK_DIR/extensions/rexume.ts" ]; then
-    echo "  FAIL work profile has extensions/rexume.ts; delete it (see docs/rexume.md)"
+  local rexume_trace work_profiles
+  work_profiles="$(dotfiles_pi_work_profiles "$PI_ROOT" | tr '\n' ' ')"
+  if rexume_trace="$(dotfiles_rexume_trace "$PERSONAL_DIR")" && [ -n "$work_profiles" ]; then
+    echo "  FAIL rexume is installed ($rexume_trace) alongside a work Pi profile (${work_profiles% }); they must not coexist (see docs/rexume.md)"
     failed=1
   fi
 
@@ -273,6 +266,13 @@ case "$MODE" in
     check_profiles
     ;;
   apply)
+    # Decide and write under the profiles lock, so ./dot rexume --apply can't
+    # interleave; then refuse any work profile while rexume is installed.
+    dotfiles_profiles_lock "$PI_ROOT" setup-pi-profiles || exit 1
+    trap dotfiles_profiles_unlock EXIT
+    if rexume_trace="$(dotfiles_rexume_trace "$PERSONAL_DIR")"; then
+      fail "refusing to create or update a work Pi profile while rexume is installed ($rexume_trace): rexume's Pi extension would load in it through the shared extensions, and rexume reopens Pi without PI_CODING_AGENT_DIR. See docs/rexume.md (work profile)."
+    fi
     [ -d "$PERSONAL_DIR" ] || fail "personal Pi profile not found: $PERSONAL_DIR"
     for source in "$ACCOUNT_EXTENSION_SOURCE" "$PI_ACCOUNT_SKILL_SOURCE" "$WORK_MODELS_SOURCE" "$GENERIC_CLOAK_SOURCE"; do
       [ -f "$source" ] || fail "required template missing: $source"
@@ -289,9 +289,6 @@ case "$MODE" in
       "$PERSONAL_DIR/skills/coding-agent-account-routing/SKILL.md" "Pi account-routing skill"
 
     for path in extensions skills themes npm; do
-      if [ "$path" = extensions ] && rexume_extension_present; then
-        fail "refusing to share $PERSONAL_DIR/extensions with the work profile: it holds rexume.ts, rexume's Pi extension, which must never load in a work profile (see docs/rexume.md)"
-      fi
       share_path_if_present "$PERSONAL_DIR/$path" "$WORK_DIR/$path" "$path"
     done
     mkdir -p "$WORK_DIR/pi-codex-subagents"

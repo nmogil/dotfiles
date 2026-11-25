@@ -22,7 +22,7 @@ OUT="$TMP/out"
 REPO="$TMP/repo"; STUB="$TMP/stub"; REL="$TMP/release"
 mkdir -p "$REPO/scripts/lib" "$REPO/config/rexume" "$STUB" "$REL" || die mkdir
 cp "$ROOT/scripts/setup-rexume.sh" "$REPO/scripts/" || die "copy installer"
-cp "$ROOT/scripts/lib/pinned-release.sh" "$REPO/scripts/lib/" || die "copy library"
+cp "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh" "$REPO/scripts/lib/" || die "copy libraries"
 
 # The fixture rexume. Only `install` and `status` are expected; anything else
 # is recorded as unexpected.
@@ -51,6 +51,7 @@ case "$*" in
     printf '{ "version": 1, "claude_hook": "skipped", "claude_hook_note": "`~/.claude` does not exist",\n  "pi_extension": "%s", "pi_extension_note": %s, "omp_extension": "skipped", "omp_extension_note": "`~/.omp/agent` does not exist",\n  %s }\n' "$pi" "$note" "$job"
     ;;
   status)
+    if [ -n "${STUB_STATUS_HANG:-}" ]; then exec sleep 30; fi
     n=$(( $(cat "$STUB_TMP/status-count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_TMP/status-count"
     if [ "$n" -le "${STUB_STATUS_DELAY:-0}" ]; then
       echo "rexume: $HOME/.local/state/rexume/state.db does not exist; the daemon creates it" >&2; exit 1
@@ -133,7 +134,9 @@ cat > "$STUB/systemctl" <<'EOF'
 #!/bin/sh
 echo "systemctl $*" >> "$STUB_LOG"
 case "$*" in
-  "--user is-active --quiet rexume") [ -e "$STUB_TMP/daemon-active" ] ;;
+  "--user is-active --quiet rexume")
+    if [ -n "${STUB_SYSTEMCTL_HANG:-}" ]; then exec sleep 30; fi
+    [ -e "$STUB_TMP/daemon-active" ] ;;
   *) echo "systemctl $*" >> "$STUB_UNEXPECTED"; exit 1 ;;
 esac
 EOF
@@ -162,14 +165,12 @@ case "$*" in
 esac
 EOF
 # curl: logged, then the real one (the fixture release is served over file://).
-# STUB_RACE=share links the work profile's extensions to the personal ones
-# while the release downloads.
+# STUB_RACE=work creates a work Pi profile while the release downloads (a
+# writer that ignores the profiles lock).
 cat > "$STUB/curl" <<'EOF'
 #!/bin/sh
 echo "curl $*" >> "$STUB_LOG"
-if [ "${STUB_RACE:-}" = share ]; then
-  rm -rf "$HOME/.pi/agent-work/extensions" && ln -s "$HOME/.pi/agent/extensions" "$HOME/.pi/agent-work/extensions"
-fi
+if [ "${STUB_RACE:-}" = work ]; then mkdir -p "$HOME/.pi/agent-work"; fi
 exec /usr/bin/curl "$@"
 EOF
 cat > "$STUB/sw_vers" <<'EOF'
@@ -186,12 +187,12 @@ NOSYSTEMCTL="$(without systemctl)"; NOLAUNCHCTL="$(without launchctl)"
 # The only real tools the installer and stubs can reach: symlinks to these.
 SYSBIN="$TMP/sysbin"; mkdir -p "$SYSBIN" || die sysbin
 for tool in sh env cat sed grep tr head tail cut sort mkdir rm cp mv ln chmod touch mktemp \
-  dirname basename readlink date id tar gzip perl link stat sleep sha256sum shasum; do
+  dirname basename readlink date id tar gzip perl link stat sleep ps sha256sum shasum; do
   for d in /usr/bin /bin /usr/sbin /sbin; do
     if [ -x "$d/$tool" ]; then ln -s "$d/$tool" "$SYSBIN/$tool"; break; fi
   done
 done
-for tool in sh env sed grep tr mkdir rm cp chmod mktemp tar perl link stat sleep; do
+for tool in sh env sed grep tr mkdir rm cp chmod mktemp tar perl link stat sleep ps date; do
   [ -e "$SYSBIN/$tool" ] || die "no $tool for the allowlisted PATH"
 done
 [ -e "$SYSBIN/sha256sum" ] || [ -e "$SYSBIN/shasum" ] || die "no sha256sum or shasum"
@@ -201,17 +202,20 @@ DST="$HOMEDIR/.local/bin/rexume"
 CELLAR="$TMP/cellar"; BREWBIN="$TMP/brewbin"
 UNEXPECTED="$TMP/unexpected"; : > "$UNEXPECTED"
 PERSONAL_EXT="$HOMEDIR/.pi/agent/extensions/rexume.ts"
-WORK_EXT="$HOMEDIR/.pi/agent-work/extensions/rexume.ts"
+WORKDIR="$HOMEDIR/.pi/agent-work"
+LOCK="$HOMEDIR/.pi/.dotfiles-profiles.lock"
 
-# fresh [shared]: a new HOME with a personal Pi profile and a work profile whose
-# extensions directory is its own, or, with `shared`, a link to the personal one
-# (the layout setup-pi-profiles.sh makes).
+# fresh [work|shared]: a new HOME with a personal Pi profile and, with `work`,
+# a work profile with its own extensions directory, or, with `shared`, one whose
+# extensions link to the personal ones (the layout setup-pi-profiles.sh makes).
 fresh() {
   chmod -R u+w "$HOMEDIR" 2>/dev/null
   rm -rf "$HOMEDIR" "$CELLAR" "$BREWBIN" "$TMP/daemon-active" "$TMP/install-env" "$TMP/status-count"
-  mkdir -p "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/.pi/agent-work" || die home
-  if [ "${1:-}" = shared ]; then ln -s "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/.pi/agent-work/extensions"
-  else mkdir -p "$HOMEDIR/.pi/agent-work/extensions"; fi
+  mkdir -p "$HOMEDIR/.pi/agent/extensions" || die home
+  case "${1:-}" in
+    work) mkdir -p "$WORKDIR/extensions" ;;
+    shared) mkdir -p "$WORKDIR" && ln -s "$HOMEDIR/.pi/agent/extensions" "$WORKDIR/extensions" ;;
+  esac
   : > "$TMP/calls"; write_pins
 }
 # brew_has <version>: a fake Homebrew keg of the fixture rexume, linked onto PATH.
@@ -234,6 +238,8 @@ run() {
     STUB_LAUNCHD_STATE="${STUB_LAUNCHD_STATE:-running}" STUB_BREW_INSTALL_FAIL="${STUB_BREW_INSTALL_FAIL:-}" \
     STUB_STATUS_DELAY="${STUB_STATUS_DELAY:-0}" STUB_STATUS_RAW="${STUB_STATUS_RAW:-}" STUB_RACE="${STUB_RACE:-}" \
     STUB_MACOS="${STUB_MACOS:-15.5}" DOTFILES_REXUME_READY_TIMEOUT="${READY_TIMEOUT:-20}" \
+    DOTFILES_REXUME_CALL_TIMEOUT="${CALL_TIMEOUT:-10}" DOTFILES_PROFILES_LOCK_TIMEOUT="${LOCK_TIMEOUT:-10}" \
+    STUB_SYSTEMCTL_HANG="${STUB_SYSTEMCTL_HANG:-}" STUB_STATUS_HANG="${STUB_STATUS_HANG:-}" \
     "$BASH" "$REPO/scripts/setup-rexume.sh" "$@") > "$OUT" 2>&1
   RC=$?
 }
@@ -295,7 +301,7 @@ if [ "$(grep -cx "rexume install" "$TMP/calls")" = 1 ]; then
   ok "Linux --apply runs rexume install once"; else bad "Linux --apply runs rexume install once"; fi
 if [ -f "$TMP/install-env" ] && ! grep -q "^PI_CODING_AGENT_DIR=" "$TMP/install-env"; then
   ok "rexume install runs without PI_CODING_AGENT_DIR (set in the caller's shell)"; else bad "rexume install runs without PI_CODING_AGENT_DIR (set in the caller's shell)"; fi
-if [ -f "$PERSONAL_EXT" ] && [ ! -e "$WORK_EXT" ]; then
+if [ -f "$PERSONAL_EXT" ] && [ ! -e "$WORKDIR" ]; then
   ok "the work profile gets no rexume extension; the personal profile does"; else bad "the work profile gets no rexume extension; the personal profile does"; fi
 if grep -q "^PATH=$HOMEDIR/.local/bin:" "$TMP/install-env"; then
   ok "rexume install (and so the daemon) gets ~/.local/bin on PATH"; else bad "rexume install (and so the daemon) gets ~/.local/bin on PATH"; fi
@@ -359,23 +365,55 @@ fresh; STUB_REXUME_INSTALL_FAIL=1 run --apply
 if [ "$RC" = 1 ] && has "could not reach the user manager"; then
   ok "a failing rexume install is a failure, with its message"; else bad "a failing rexume install is a failure, with its message"; fi
 
-# --- the work Pi profile never gets the extension ----------------------------------------------
+# --- no rexume on a machine with a work Pi profile (profile level, fail closed) ---------------------
+WP_MSG="can't be installed on a machine with a work Pi profile"
+fresh work; run --apply
+[ "$RC" = 1 ] && has "$WP_MSG" && has "$WORKDIR" && has "docs/rexume.md" && ! called "rex " && ! called "curl " && ! installed && [ ! -e "$DST" ]
+res "a work profile (own extensions) makes --apply refuse before anything else"
 fresh shared; run --apply
-if [ "$RC" = 1 ] && has "agent-work" && has "shares" && ! installed && [ ! -e "$DST" ] && [ ! -e "$PERSONAL_EXT" ]; then
-  ok "a work profile sharing ~/.pi/agent/extensions makes --apply refuse before installing anything"; else bad "a work profile sharing ~/.pi/agent/extensions makes --apply refuse before installing anything"; fi
-fresh shared; run
-if [ "$RC" = 0 ] && has "would refuse"; then
-  ok "dry-run reports that --apply would refuse a shared extensions directory"; else bad "dry-run reports that --apply would refuse a shared extensions directory"; fi
-fresh; mkdir -p "$HOMEDIR/.pi/agent-other/extensions"; : > "$HOMEDIR/.pi/agent-other/extensions/rexume.ts"; run --apply
-if [ "$RC" = 1 ] && has "agent-other/extensions/rexume.ts" && ! installed; then
-  ok "an existing rexume.ts in any work profile makes --apply refuse"; else bad "an existing rexume.ts in any work profile makes --apply refuse"; fi
-fresh; run --apply; : > "$WORK_EXT"; run --check
-if [ "$RC" = 1 ] && has "agent-work/extensions/rexume.ts"; then
-  ok "--check exits 1 when a work profile has rexume.ts"; else bad "--check exits 1 when a work profile has rexume.ts"; fi
-fresh; run --apply; rm -rf "$HOMEDIR/.pi/agent-work/extensions"; ln -s "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/.pi/agent-work/extensions"
-run --check
-if [ "$RC" = 1 ] && has "agent-work"; then
-  ok "--check exits 1 when a work profile shares the extensions directory that holds rexume.ts"; else bad "--check exits 1 when a work profile shares the extensions directory that holds rexume.ts"; fi
+[ "$RC" = 1 ] && has "$WP_MSG" && ! installed && [ ! -e "$PERSONAL_EXT" ]; res "a work profile sharing the extensions makes --apply refuse"
+fresh work; ln -s ../../agent/extensions/rexume.ts "$WORKDIR/extensions/resume.ts"; run --apply
+[ "$RC" = 1 ] && has "$WP_MSG" && ! installed && [ ! -e "$PERSONAL_EXT" ]; res "a differently named alias to the personal rexume.ts cannot slip through (any work profile refuses)"
+fresh; ln -s "$TMP/nowhere/profile" "$HOMEDIR/.pi/agent-ghost"; run --apply
+[ "$RC" = 1 ] && has "agent-ghost" && ! installed; res "a dangling ~/.pi/agent-* symlink counts as a work profile"
+fresh; : > "$HOMEDIR/.pi/agent-notes"; run --apply
+[ "$RC" = 1 ] && has "agent-notes" && ! installed; res "a plain ~/.pi/agent-* file counts as a work profile (fail closed)"
+fresh; mkdir -p "$HOMEDIR/.pi/agent-memory"; : > "$HOMEDIR/.pi/agent-memory/notes.db"; run --apply
+[ "$RC" = 0 ] && installed; res "a plain ~/.pi/agent-memory data directory is not a work profile"
+fresh; mkdir -p "$HOMEDIR/.pi/agent-memory"; : > "$HOMEDIR/.pi/agent-memory/settings.json"; run --apply
+[ "$RC" = 1 ] && has "agent-memory" && ! installed; res "a .pi/agent-memory with settings.json is a Pi profile"
+fresh; mkdir -p "$HOMEDIR/.pi/agent-memory/extensions"; run --apply
+[ "$RC" = 1 ] && has "agent-memory" && ! installed; res "a .pi/agent-memory with extensions is a Pi profile"
+fresh; mkdir -p "$TMP/memdata"; ln -s "$TMP/memdata" "$HOMEDIR/.pi/agent-memory"; run --apply
+[ "$RC" = 1 ] && has "agent-memory" && ! installed; res "a .pi/agent-memory symlink is treated as a profile (fail closed)"
+fresh work; before="$(snapshot)"; run
+[ "$RC" = 0 ] && has "would refuse" && has "$WP_MSG" && [ "$(snapshot)" = "$before" ]; res "dry-run reports the refusal and writes nothing"
+fresh work; run --check
+[ "$RC" = 3 ]; res "--check with a work profile but no rexume: not installed (3)"
+fresh; run --apply; mkdir -p "$WORKDIR"; run --check
+[ "$RC" = 1 ] && has "work Pi profile" && has "$WORKDIR"; res "--check exits 1 when rexume is installed and a work profile exists"
+fresh; STUB_RACE=work run --apply
+[ "$RC" = 1 ] && has "$WP_MSG" && ! installed && [ ! -e "$PERSONAL_EXT" ]; res "the profile check runs again right before rexume install"
+fresh; ln -s "$TMP/nowhere/rexume.ts" "$PERSONAL_EXT"; run --apply
+[ "$RC" = 1 ] && has "$PERSONAL_EXT" && has "symlink" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a symlink at the personal rexume.ts refuses (install would write through it)"
+fresh; rm -rf "$HOMEDIR/.pi/agent/extensions"; ln -s "$TMP/nowhere/ext" "$HOMEDIR/.pi/agent/extensions"; run --apply
+[ "$RC" = 1 ] && has "$HOMEDIR/.pi/agent/extensions" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a dangling personal extensions symlink refuses"
+
+# --- the profiles lock: ./dot rexume --apply and ./dot pi profiles --apply never interleave -------------
+sleep 30 & HOLDER=$!
+fresh; mkdir "$LOCK" && echo "$HOLDER" > "$LOCK/pid"; t0="$(date +%s)"; LOCK_TIMEOUT=1 run --apply; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "holds $LOCK (pid $HOLDER)" && ! called "rex " && ! called "curl " && ! installed \
+  && [ "$(cat "$LOCK/pid")" = "$HOLDER" ] && [ $((t1 - t0)) -lt 8 ]; res "--apply refuses (bounded) while another process holds the profiles lock, and leaves its lock alone"
+fresh; mkdir "$LOCK" && echo "$HOLDER" > "$LOCK/pid"; (sleep 1; rm -rf "$LOCK") & LOCK_TIMEOUT=8 run --apply
+[ "$RC" = 0 ] && installed; res "--apply waits for a lock that is released"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+sh -c 'exit 0' & DEAD=$!; wait "$DEAD"
+fresh; mkdir "$LOCK" && echo "$DEAD" > "$LOCK/pid"; LOCK_TIMEOUT=2 run --apply
+[ "$RC" = 0 ] && installed && [ ! -e "$LOCK" ]; res "a stale lock (dead pid) is taken over, and --apply releases its lock"
+fresh; mkdir "$LOCK"; LOCK_TIMEOUT=1 run --apply
+[ "$RC" = 1 ] && has "holds $LOCK" && ! installed && [ -d "$LOCK" ]; res "a lock without a pid is not taken over (fail closed)"
+fresh; STUB_REX=old run --apply
+[ "$RC" = 1 ] && [ ! -e "$LOCK" ]; res "a failed --apply releases the lock"
 
 # --- Linux: --check exit codes ----------------------------------------------------------------
 fresh; run --apply; rm -f "$TMP/daemon-active"; run --check
@@ -416,7 +454,7 @@ fresh; before="$(snapshot)"; mac
 if [ "$RC" = 0 ] && has "would run: brew install entwining/tap/rexume" && has "rexume install" && ! called "brew install" && ! called "rex " && [ "$(snapshot)" = "$before" ]; then
   ok "macOS dry-run only reports the brew install and the rexume install"; else bad "macOS dry-run only reports the brew install and the rexume install"; fi
 fresh; mac --apply
-if [ "$RC" = 0 ] && called_x "brew install entwining/tap/rexume" && installed && [ ! -e "$DST" ] && [ -f "$PERSONAL_EXT" ] && [ ! -e "$WORK_EXT" ]; then
+if [ "$RC" = 0 ] && called_x "brew install entwining/tap/rexume" && installed && [ ! -e "$DST" ] && [ -f "$PERSONAL_EXT" ] && [ ! -e "$WORKDIR" ]; then
   ok "macOS --apply installs with Homebrew, then runs rexume install from Homebrew"; else bad "macOS --apply installs with Homebrew, then runs rexume install from Homebrew"; fi
 if ! grep -q "^PI_CODING_AGENT_DIR=" "$TMP/install-env"; then
   ok "macOS rexume install runs without PI_CODING_AGENT_DIR"; else bad "macOS rexume install runs without PI_CODING_AGENT_DIR"; fi
@@ -447,9 +485,9 @@ if [ "$RC" = 1 ] && has "Apple Silicon" && ! called "brew install"; then
 fresh; STUB_REX=old mac --apply
 if [ "$RC" = 1 ] && has "preview.23" && ! called "brew install" && ! installed; then
   ok "macOS: an older Rex server stops before brew install and rexume install"; else bad "macOS: an older Rex server stops before brew install and rexume install"; fi
-fresh shared; mac --apply
-if [ "$RC" = 1 ] && has "shares" && ! called "brew install" && ! installed; then
-  ok "macOS: a shared work-profile extensions directory refuses before brew install"; else bad "macOS: a shared work-profile extensions directory refuses before brew install"; fi
+fresh work; mac --apply
+[ "$RC" = 1 ] && has "$WP_MSG" && ! called "brew install" && ! called "brew --cellar" && ! installed
+res "macOS: a work profile refuses before Homebrew is asked anything"
 fresh; STUB_BREW_INSTALL_FAIL=1 mac --apply
 if [ "$RC" = 1 ] && ! installed; then
   ok "macOS --apply reports a failed brew install as a failure"; else bad "macOS --apply reports a failed brew install as a failure"; fi
@@ -468,26 +506,6 @@ fresh; STUB_PATH="$NOBREW:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --apply
 [ "$RC" = 1 ] && hasx "rexume: Homebrew is required on macOS (./dot setup mac)" && ! installed; res "macOS --apply without Homebrew fails clearly"
 fresh; mac --apply; STUB_PATH="$NOLAUNCHCTL:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
 [ "$RC" = 1 ] && has "launchctl is not on PATH; can't tell whether the rexume daemon is active"; res "macOS --check without launchctl says so (exit 1)"
-
-# --- the work-profile guard fails closed -------------------------------------------------------------
-W="$HOMEDIR/.pi/agent-work"
-fresh; rm -rf "$HOMEDIR/.pi/agent/extensions" "$W/extensions"; ln -s ../agent/extensions "$W/extensions"; run --apply
-[ "$RC" = 1 ] && has "$W/extensions" && ! installed && ! called "curl " && [ ! -e "$HOMEDIR/.pi/agent/extensions" ]
-res "a work extensions symlink to the not-yet-created personal directory refuses (dangling, fail closed)"
-fresh; rm -rf "$W/extensions"; ln -s "$TMP/nowhere/extensions" "$W/extensions"; run --apply
-[ "$RC" = 1 ] && has "$W/extensions" && ! installed; res "any dangling work extensions symlink refuses"
-fresh; ln -s agent "$HOMEDIR/.pi/alias"; rm -rf "$W/extensions"; ln -s "$HOMEDIR/.pi/alias/extensions" "$W/extensions"; run --apply
-[ "$RC" = 1 ] && has "shares" && ! installed; res "a work extensions directory reached through another path is the same directory (device:inode)"
-fresh; ln -s agent "$HOMEDIR/.pi/agent-alias"; run --apply
-[ "$RC" = 1 ] && has "agent-alias" && ! installed; res "a work profile that is the personal profile refuses"
-fresh; ln -s "$TMP/nowhere/profile" "$HOMEDIR/.pi/agent-ghost"; run --apply
-[ "$RC" = 1 ] && has "agent-ghost" && ! installed; res "a dangling work profile refuses (fail closed)"
-fresh; ln -s "$TMP/nowhere/rexume.ts" "$PERSONAL_EXT"; run --apply
-[ "$RC" = 1 ] && has "$PERSONAL_EXT" && has "symlink" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a symlink at the personal rexume.ts refuses (install would write through it)"
-fresh; rm -rf "$HOMEDIR/.pi/agent/extensions"; ln -s "$TMP/nowhere/ext" "$HOMEDIR/.pi/agent/extensions"; run --apply
-[ "$RC" = 1 ] && has "$HOMEDIR/.pi/agent/extensions" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a dangling personal extensions symlink refuses"
-fresh; STUB_RACE=share run --apply
-[ "$RC" = 1 ] && has "shares" && ! installed && [ ! -e "$PERSONAL_EXT" ]; res "the guard runs again right before rexume install (a link made during the download is caught)"
 
 # --- --check details --------------------------------------------------------------------------------
 mkdir -p "$TMP/otherbin"; cp "$REXUME_SRC" "$TMP/otherbin/rexume"
@@ -523,6 +541,20 @@ fresh; mac
 
 # --- Brewfile: rexume is opt-in ---------------------------------------------------------------------------
 ! grep -Eq '^[[:space:]]*(brew|tap)[[:space:]]+"entwining/' "$ROOT/Brewfile"; res "the Brewfile does not install rexume (./dot rexume --apply does)"
+
+# --- every daemon-manager and status call is bounded --------------------------------------------------------
+fresh; run --apply; t0="$(date +%s)"; CALL_TIMEOUT=1 STUB_SYSTEMCTL_HANG=1 run --check; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "systemctl --user is-active rexume timed out" && [ $((t1 - t0)) -lt 10 ]; res "--check bounds a hanging systemctl"
+t0="$(date +%s)"; CALL_TIMEOUT=1 STUB_STATUS_HANG=1 run --check; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "rexume status timed out" && [ $((t1 - t0)) -lt 10 ]; res "--check bounds a hanging rexume status"
+fresh; t0="$(date +%s)"; READY_TIMEOUT=2 CALL_TIMEOUT=1 STUB_STATUS_HANG=1 run --apply; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "not ready" && [ $((t1 - t0)) -lt 20 ]; res "--apply's readiness wait is a real elapsed-time deadline"
+
+# --- no heredocs or here-strings (bash 3.2 writes them to temp files; dry-run must write nothing) ------------
+[ "$(grep -c '<<' "$ROOT/scripts/setup-rexume.sh")" = 1 ] \
+  && [ "$(grep -n '<<' "$ROOT/scripts/setup-rexume.sh" | cut -d: -f1)" = "$(( $(grep -n '^usage() {$' "$ROOT/scripts/setup-rexume.sh" | cut -d: -f1) + 1 ))" ] \
+  && ! grep -q '<<' "$ROOT/scripts/lib/pinned-release.sh" "$ROOT/scripts/lib/pi-profiles-lock.sh"
+res "setup-rexume.sh and its libraries use a heredoc only in usage()"
 
 # --- never touch the Rex server, systemd, or launchd beyond read-only queries -------------------
 if [ ! -s "$UNEXPECTED" ]; then

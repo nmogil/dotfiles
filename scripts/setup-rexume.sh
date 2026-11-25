@@ -14,18 +14,22 @@
 #          the Rex server takes a block ID where a session goes (Rex
 #          0.1.0-preview.23+), with PI_CODING_AGENT_DIR removed from its
 #          environment so it writes the Pi extension to the personal profile
-#          (~/.pi/agent) only. It refuses (fail closed, checked again right
-#          before `rexume install`) while any work profile (~/.pi/agent-*) has
-#          rexume.ts, shares ~/.pi/agent/extensions (same device:inode), or has
-#          an extensions path that doesn't resolve, or while the personal
-#          rexume.ts or extensions path is a symlink install would write
-#          through: rexume reopens Pi without PI_CODING_AGENT_DIR, so a work
-#          conversation would come back under the personal profile.
+#          (~/.pi/agent) only. It refuses on any machine with a work Pi
+#          profile (any ~/.pi/agent-* entry but a plain agent-memory data
+#          directory; checked again right before `rexume install`): Pi profiles
+#          share their extensions directory, and rexume reopens Pi without
+#          PI_CODING_AGENT_DIR, so a work conversation would come back under
+#          the personal profile. It also refuses a personal rexume.ts or
+#          extensions symlink that install would write through. --apply holds
+#          the profiles lock that `./dot pi profiles --apply` also takes, so
+#          the two never interleave (scripts/lib/pi-profiles-lock.sh).
 #
 # Checks are read-only: they run rexume only as `rexume status`, and only a
 # verified binary; ask Homebrew only for `brew --cellar`; and query systemd or
 # launchd without changing anything. --dry-run writes nothing and does no
-# network. Nothing here stops or restarts the Rex server or types into panes.
+# network (no heredocs or here-strings: bash 3.2 writes them to temp files).
+# Daemon-manager and status calls are bounded (DOTFILES_REXUME_CALL_TIMEOUT,
+# default 10s). Nothing here stops or restarts the Rex server or types into panes.
 #
 # Exit codes: 0 ok; 1 problem (differs, failed, refused); 2 usage;
 # 3 (--check only) rexume is not installed at all.
@@ -57,10 +61,13 @@ esac
 
 # shellcheck source=scripts/lib/pinned-release.sh
 . "$ROOT/scripts/lib/pinned-release.sh"
+# shellcheck source=scripts/lib/pi-profiles-lock.sh
+. "$ROOT/scripts/lib/pi-profiles-lock.sh"
 PR_NAME=rexume PR_PINS="$PINS" PR_DOC=docs/rexume.md
 PR_VERIFY_NOTE="sha256- and GitHub-attestation-verified"
 RX_TMP=""
 cleanup() {
+  dotfiles_profiles_unlock
   pr_cleanup
   if [ -n "$RX_TMP" ]; then rm -rf -- "$RX_TMP"; fi
 }
@@ -73,6 +80,8 @@ OS="$(uname -s)"
 PI_DIR="$HOME/.pi/agent"
 PI_EXT="$PI_DIR/extensions/rexume.ts"
 REXUME_BIN=""   # set only to a verified binary: Homebrew's, or ~/.local/bin/rexume matching the pin
+CALL_LIMIT="${DOTFILES_REXUME_CALL_TIMEOUT:-10}"
+case "$CALL_LIMIT" in ''|*[!0-9]*|0) CALL_LIMIT=10 ;; esac
 
 # ---------------------------------------------------------------- platform
 mac_setup() {
@@ -131,16 +140,35 @@ job_file() {
   printf '%s' "$cfg/systemd/user/rexume.service"
 }
 
+# bounded <cmd...>: run cmd for at most CALL_LIMIT seconds (macOS has no
+# timeout(1)). Returns its status; one above 128 means it was killed.
+bounded() {
+  local pid watcher rc=0
+  "$@" &
+  pid=$!
+  ( n=0
+    while [ "$n" -lt "$CALL_LIMIT" ]; do sleep 1; n=$((n + 1)); done
+    kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watcher=$!
+  wait "$pid" 2>/dev/null || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
 # daemon_active: 0 when the job runs; otherwise 1 with DAEMON_WHY set.
 daemon_active() {
-  local out
+  local out rc=0
   DAEMON_WHY=""
   if [ "$OS" = Darwin ]; then
     if ! command -v launchctl >/dev/null 2>&1; then
       DAEMON_WHY="launchctl is not on PATH; can't tell whether the rexume daemon is active"; return 1
     fi
-    if out="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
-      && printf '%s\n' "$out" | grep -Eq '^[[:space:]]*state = running[[:space:]]*$'; then
+    out="$(bounded launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" || rc=$?
+    if [ "$rc" -gt 128 ]; then
+      DAEMON_WHY="launchctl print gui/$(id -u)/$LABEL timed out after ${CALL_LIMIT}s"; return 1
+    fi
+    if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -Eq '^[[:space:]]*state = running[[:space:]]*$'; then
       return 0
     fi
     DAEMON_WHY="the rexume daemon is not active (launchctl print gui/$(id -u)/$LABEL)"; return 1
@@ -148,8 +176,26 @@ daemon_active() {
   if ! command -v systemctl >/dev/null 2>&1; then
     DAEMON_WHY="systemctl is not on PATH; can't tell whether the rexume daemon is active"; return 1
   fi
-  systemctl --user is-active --quiet rexume && return 0
-  DAEMON_WHY="the rexume daemon is not active (systemctl --user status rexume)"; return 1
+  bounded systemctl --user is-active --quiet rexume || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1[3-9][0-9]|129|2[0-9][0-9]) DAEMON_WHY="systemctl --user is-active rexume timed out after ${CALL_LIMIT}s" ;;
+    *) DAEMON_WHY="the rexume daemon is not active (systemctl --user status rexume)" ;;
+  esac
+  return 1
+}
+
+# status_call: run `rexume status` (bounded, without PI_CODING_AGENT_DIR);
+# STATUS_OUT gets its stdout and stderr. Fails with STATUS_WHY set.
+status_call() {
+  local rc=0
+  STATUS_WHY=""
+  STATUS_OUT="$(bounded env -u PI_CODING_AGENT_DIR "$REXUME_BIN" status 2>&1)" || rc=$?
+  [ "$rc" != 0 ] || return 0
+  if [ "$rc" -gt 128 ]; then STATUS_WHY="rexume status timed out after ${CALL_LIMIT}s"
+  else STATUS_WHY="rexume status failed: $(printf '%s\n' "$STATUS_OUT" | head -n 1)"
+  fi
+  return 1
 }
 
 # dev_ino <path>: device:inode of what <path> resolves to; fails when it
@@ -159,65 +205,34 @@ dev_ino() {
   stat -L -c '%d:%i' -- "$1" 2>/dev/null || stat -L -f '%d:%i' -- "$1" 2>/dev/null
 }
 
-add_issue() { WP_ISSUES="${WP_ISSUES:+$WP_ISSUES
-}$1"; }
+# work_profiles: sets WORK_PROFILES to the ~/.pi/agent-* entries that are, or
+# might be, Pi profiles (scripts/lib/pi-profiles-lock.sh), space-separated.
+work_profiles() {
+  WORK_PROFILES="$(dotfiles_pi_work_profiles "$HOME/.pi" | tr '\n' ' ')"
+  WORK_PROFILES="${WORK_PROFILES% }"
+}
+WP_MSG="rexume can't be installed on a machine with a work Pi profile"
+wp_refusal() {
+  printf '%s (%s) until Pi profiles stop sharing extensions: its extension would load in the work profile, and rexume reopens Pi without PI_CODING_AGENT_DIR. See docs/rexume.md (work profile).' \
+    "$WP_MSG" "$WORK_PROFILES"
+}
 
-# work_profile_issues <strict 0|1>: sets WP_ISSUES to one line per reason a
-# work Pi profile (~/.pi/agent-*) has, or could get, rexume.ts. Always: a work
-# profile with extensions/rexume.ts, and a symlink at the personal rexume.ts
-# (install writes through it). With strict (before `rexume install`), it also
-# fails closed: a work profile or extensions path that doesn't resolve (install
-# could create its target), a work profile that is the personal one, a work
-# extensions directory with the personal one's device:inode, and a dangling
-# personal profile or extensions symlink.
-work_profile_issues() {
-  local strict="$1" d ext id pid peid
-  WP_ISSUES=""
+# personal_issues <strict 0|1>: sets PI_ISSUES for personal-profile paths
+# rexume install would write through: a symlink at rexume.ts and, with strict,
+# a ~/.pi/agent or ~/.pi/agent/extensions symlink that doesn't resolve (install
+# would create its target).
+personal_issues() {
+  PI_ISSUES=""
   if [ -L "$PI_EXT" ]; then
-    add_issue "$PI_EXT is a symlink ($(readlink "$PI_EXT")); rexume install would write through it"
+    PI_ISSUES="$PI_EXT is a symlink ($(readlink "$PI_EXT")); rexume install would write through it"
   fi
-  if [ "$strict" = 1 ]; then
-    if [ -L "$PI_DIR" ] && [ ! -e "$PI_DIR" ]; then
-      add_issue "$PI_DIR is a symlink that doesn't resolve; rexume install could create its target"
-    fi
-    if [ -L "$PI_DIR/extensions" ] && [ ! -e "$PI_DIR/extensions" ]; then
-      add_issue "$PI_DIR/extensions is a symlink that doesn't resolve ($(readlink "$PI_DIR/extensions")); rexume install would create its target"
-    fi
+  [ "$1" = 1 ] || return 0
+  if [ -L "$PI_DIR" ] && [ ! -e "$PI_DIR" ]; then
+    PI_ISSUES="${PI_ISSUES:+$PI_ISSUES; }$PI_DIR is a symlink that doesn't resolve; rexume install could create its target"
   fi
-  pid="$(dev_ino "$PI_DIR" || true)"
-  peid="$(dev_ino "$PI_DIR/extensions" || true)"
-  for d in "$HOME"/.pi/agent-*; do
-    [ -e "$d" ] || [ -L "$d" ] || continue
-    ext="$d/extensions"
-    if [ -e "$ext/rexume.ts" ] || [ -L "$ext/rexume.ts" ]; then
-      if [ -n "$peid" ] && [ "$(dev_ino "$ext" || true)" = "$peid" ]; then
-        add_issue "work Pi profile has $ext/rexume.ts (its extensions directory shares $PI_DIR/extensions)"
-      else
-        add_issue "work Pi profile has $ext/rexume.ts"
-      fi
-      continue
-    fi
-    [ "$strict" = 1 ] || continue
-    if [ ! -e "$d" ]; then
-      add_issue "work Pi profile $d is a symlink that doesn't resolve; can't tell where its extensions are"; continue
-    fi
-    id="$(dev_ino "$d" || true)"
-    if [ -z "$id" ] || { [ -n "$pid" ] && [ "$id" = "$pid" ]; }; then
-      add_issue "work Pi profile $d is the personal profile $PI_DIR (or can't be resolved)"; continue
-    fi
-    if [ -L "$ext" ] && [ ! -e "$ext" ]; then
-      add_issue "work Pi profile $d: $ext is a symlink that doesn't resolve ($(readlink "$ext")); rexume install could create its target"
-      continue
-    fi
-    if [ -e "$ext" ] || [ -L "$ext" ]; then
-      id="$(dev_ino "$ext" || true)"
-      if [ -z "$id" ]; then
-        add_issue "work Pi profile $d: $ext can't be resolved"
-      elif [ -n "$peid" ] && [ "$id" = "$peid" ]; then
-        add_issue "work Pi profile $d: $ext shares $PI_DIR/extensions, where rexume install writes rexume.ts"
-      fi
-    fi
-  done
+  if [ -L "$PI_DIR/extensions" ] && [ ! -e "$PI_DIR/extensions" ]; then
+    PI_ISSUES="${PI_ISSUES:+$PI_ISSUES; }$PI_DIR/extensions is a symlink that doesn't resolve ($(readlink "$PI_DIR/extensions")); rexume install would create its target"
+  fi
 }
 
 # binary_status: BIN_RC 0 (verified; REXUME_BIN set), 3 (absent), 1 (problem). Prints why.
@@ -239,16 +254,20 @@ binary_status() {
 
 # ---------------------------------------------------------------- --check
 do_check() {
-  local any=0 problems="" out hooks job
+  local any=0 problems="" hooks job
   binary_status
   [ "$BIN_RC" = 3 ] || any=1
   [ "$BIN_RC" != 1 ] || problems="${problems}
   the rexume binary is not as expected (see above)"
   [ "$BIN_RC" != 3 ] || problems="${problems}
   the rexume binary is not installed"
-  if [ -e "$PI_EXT" ]; then any=1
-  else problems="${problems}
+  if [ -e "$PI_EXT" ] || [ -L "$PI_EXT" ]; then any=1; fi
+  if [ ! -e "$PI_EXT" ]; then problems="${problems}
   $PI_EXT is missing (rexume install writes it when $PI_DIR exists)"
+  fi
+  personal_issues 0
+  if [ -n "$PI_ISSUES" ]; then problems="${problems}
+  $PI_ISSUES"
   fi
   job="$(job_file)"
   [ ! -e "$job" ] || any=1
@@ -256,20 +275,18 @@ do_check() {
   else problems="${problems}
   $DAEMON_WHY"
   fi
-  work_profile_issues 0
-  if [ -n "$WP_ISSUES" ]; then
-    any=1
-    problems="${problems}
-$(printf '%s\n' "$WP_ISSUES" | sed 's/^/  /') — remove it; see docs/rexume.md (work profile)"
-  fi
   if [ "$any" = 0 ]; then
     say "rexume is not installed (./dot rexume --apply)"
     return 3
   fi
+  work_profiles
+  if [ -n "$WORK_PROFILES" ]; then problems="${problems}
+  a work Pi profile exists ($WORK_PROFILES); rexume must not be installed alongside one (see docs/rexume.md, work profile)"
+  fi
   if [ -z "$problems" ] && [ -n "$REXUME_BIN" ]; then
     # The only rexume run in a check: status reads the state database and settings.
-    if out="$(env -u PI_CODING_AGENT_DIR "$REXUME_BIN" status 2>&1)"; then
-      hooks="$(printf '%s\n' "$out" | tr -d ' \t\n' | grep -oE '"claude_hooks_missing":(null|\[[^]]*\])' | sed 's/^"claude_hooks_missing"://' || true)"
+    if status_call; then
+      hooks="$(printf '%s\n' "$STATUS_OUT" | tr -d ' \t\n' | grep -oE '"claude_hooks_missing":(null|\[[^]]*\])' | sed 's/^"claude_hooks_missing"://' || true)"
       case "$hooks" in
         '[]') ;;
         null) problems="${problems}
@@ -281,21 +298,21 @@ $(printf '%s\n' "$WP_ISSUES" | sed 's/^/  /') — remove it; see docs/rexume.md 
       esac
     else
       problems="${problems}
-  rexume status failed: $(printf '%s\n' "$out" | head -n 1)"
+  $STATUS_WHY"
     fi
   fi
   if [ -n "$problems" ]; then
     say "rexume is not fully installed:$problems" >&2
     return 1
   fi
-  say "rexume is installed: binary, daemon active, personal Pi extension; no work Pi profile has it."
+  say "rexume is installed: binary, daemon active, personal Pi extension; no work Pi profile on this machine."
   return 0
 }
 
 # ---------------------------------------------------------------- --apply / --dry-run
 # The Rex server must take a pane's block ID where a session goes (Rex
 # 0.1.0-preview.23+); rexume's hooks and skill rely on it. Read-only listings,
-# with --autostart=false so no server is ever started.
+# with --autostart=false so the CLI never starts a server itself.
 rex_probe() {
   local rex sessions sids sid blocks bid="" err
   rex="$(PATH="$INSTALL_PATH"; command -v rex 2>/dev/null || true)"
@@ -326,14 +343,18 @@ rex_probe() {
 }
 
 # summarize_install <file>: rexume install's JSON summary as one line of
-# field=value, with the non-null notes after it.
+# field=value, with the non-null notes after it. (No heredoc: see the header.)
 summarize_install() {
-  local pairs line key val items="" notes=""
+  local pairs rest line key val items="" notes="" nl='
+'
   pairs="$(tr '\n\t' '  ' < "$1" | grep -oE '"[a-z_]+" *: *("([^"\\]|\\.)*"|null|true|false|-?[0-9]+)' || true)"
   if [ -z "$pairs" ]; then
     say "rexume install printed:"; sed 's/^/  /' "$1"; return 0
   fi
-  while IFS= read -r line; do
+  rest="$pairs$nl"
+  while [ -n "$rest" ]; do
+    line="${rest%%"$nl"*}"
+    rest="${rest#*"$nl"}"
     key="$(printf '%s\n' "$line" | sed -E 's/^"([a-z_]+)".*/\1/')"
     val="$(printf '%s\n' "$line" | sed -E 's/^"[a-z_]+" *: *//; s/^"(.*)"$/\1/')"
     case "$key" in
@@ -344,9 +365,7 @@ summarize_install() {
         continue ;;
     esac
     items="${items:+$items, }$key=$val"
-  done <<EOF
-$pairs
-EOF
+  done
   say "rexume install: $items"
   if [ -n "$notes" ]; then say "notes:$notes"; fi
 }
@@ -364,40 +383,68 @@ run_install() {
 }
 
 # path_conflict <PATH>: prints the first executable rexume on <PATH> ahead of
-# ~/.local/bin (anywhere, when ~/.local/bin isn't on it). Linux only.
+# ~/.local/bin (anywhere, when ~/.local/bin isn't on it). Linux only. Splits
+# PATH with parameter expansion: this runs in --dry-run, which writes nothing.
 path_conflict() {
-  local dir
-  while IFS= read -r dir; do
+  local rest="$1:" dir
+  while [ -n "$rest" ]; do
+    dir="${rest%%:*}"
+    rest="${rest#*:}"
     [ -n "$dir" ] || dir=.
     if [ "$dir" = "$PR_DIR" ] || [ "$dir" = "$PR_DIR/" ] \
       || { [ -d "$PR_DIR" ] && [ "$(dev_ino "$dir" || true)" = "$(dev_ino "$PR_DIR" || true)" ]; }; then
       return 1
     fi
     if [ -f "$dir/rexume" ] && [ -x "$dir/rexume" ]; then printf '%s' "$dir/rexume"; return 0; fi
-  done <<EOF
-$(printf '%s\n' "$1" | tr ':' '\n')
-EOF
+  done
   return 1
 }
 
-# wait_ready: after rexume install, wait (bounded) until the daemon runs and
-# `rexume status` succeeds; status fails until the daemon creates its database.
+# wait_ready: after rexume install, wait until the daemon runs and `rexume
+# status` succeeds (it fails until the daemon creates its database), up to
+# DOTFILES_REXUME_READY_TIMEOUT seconds of elapsed time (default 20). Each
+# call is itself bounded.
 wait_ready() {
-  local limit="${DOTFILES_REXUME_READY_TIMEOUT:-20}" waited=0
+  local limit="${DOTFILES_REXUME_READY_TIMEOUT:-20}" deadline
   case "$limit" in ''|*[!0-9]*) limit=20 ;; esac
+  deadline=$(( $(date +%s) + limit ))
+  READY_WHY=""
   while :; do
-    if daemon_active && READY_ERR="$(env -u PI_CODING_AGENT_DIR "$REXUME_BIN" status 2>&1 >/dev/null)"; then
-      return 0
+    if daemon_active; then
+      if status_call; then return 0; fi
+      READY_WHY="$STATUS_WHY"
+    else
+      READY_WHY="$DAEMON_WHY"
     fi
-    [ "$waited" -lt "$limit" ] || return 1
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
     sleep 1
-    waited=$((waited + 1))
   done
 }
 
 do_apply() {
   local rc=0 need_brew=0 found preview
-  # 1. What is installed now (read-only).
+  # 1. Take the profiles lock (shared with ./dot pi profiles --apply) for the
+  #    whole check-and-write; --dry-run writes nothing, so it takes none.
+  if [ "$MODE" = --apply ]; then
+    dotfiles_profiles_lock "$HOME/.pi" rexume || exit 1
+  fi
+
+  # 2. No rexume on a machine with a work Pi profile (fail closed).
+  work_profiles
+  if [ -n "$WORK_PROFILES" ]; then
+    if [ "$MODE" = --dry-run ]; then
+      say "--apply would refuse: $(wp_refusal)"
+      return 0
+    fi
+    die "refusing: $(wp_refusal) Nothing changed."
+  fi
+  personal_issues 1
+  if [ -n "$PI_ISSUES" ]; then
+    if [ "$MODE" = --dry-run ]; then say "--apply would refuse: $PI_ISSUES"; return 0; fi
+    die "refusing: $PI_ISSUES. Nothing changed."
+  fi
+
+  # 3. What is installed now (read-only).
   if [ "$OS" = Darwin ]; then
     pr_brew_classify "$FORMULA" || rc=$?
     case "$rc" in
@@ -407,26 +454,15 @@ do_apply() {
     esac
   fi
 
-  # 2. Never give a work Pi profile the extension.
-  work_profile_issues 1
-  if [ -n "$WP_ISSUES" ]; then
-    printf '%s\n' "$WP_ISSUES" | sed 's/^/  /' >&2
-    if [ "$MODE" = --dry-run ]; then
-      say "--apply would refuse: a work Pi profile would load rexume's extension (see docs/rexume.md, work profile)."
-      return 0
-    fi
-    die "refusing to run rexume install: a work Pi profile would load rexume's extension, and rexume reopens Pi without PI_CODING_AGENT_DIR, so its conversations would come back under the personal profile. See docs/rexume.md (work profile); nothing changed."
-  fi
-
-  # 3. The PATH rexume install records for the daemon. Its hooks run `rexume`
+  # 4. The PATH rexume install records for the daemon. Its hooks run `rexume`
   #    by name, so on Linux ~/.local/bin must be on it.
   INSTALL_PATH="$PATH"
   if [ "$OS" = Linux ]; then
     case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) INSTALL_PATH="$HOME/.local/bin:$PATH" ;; esac
   fi
 
-  # 4. Another rexume that agent runtimes (or the daemon) would run instead:
-  #    the hooks run `rexume` by name on the caller's PATH. (macOS: step 1.)
+  # 5. Another rexume that agent runtimes (or the daemon) would run instead:
+  #    the hooks run `rexume` by name on the caller's PATH. (macOS: step 3.)
   if [ "$OS" = Linux ] && found="$(path_conflict "$PATH")"; then
     die "$found comes before $PR_DIR/rexume on PATH (or $PR_DIR isn't on PATH); rexume's hooks run rexume by name. Remove it or fix PATH; nothing changed."
   fi
@@ -445,7 +481,7 @@ do_apply() {
     return 0
   fi
 
-  # 5. Preflight before anything is installed.
+  # 6. Preflight before anything is installed.
   if [ "$OS" = Linux ]; then
     [ -n "${XDG_RUNTIME_DIR:-}" ] \
       || die "XDG_RUNTIME_DIR is not set, so rexume install can't find the Rex server or the systemd user manager. Run this from a login session; nothing changed."
@@ -456,7 +492,7 @@ do_apply() {
   fi
   rex_probe || die "not running rexume install; nothing changed."
 
-  # 6. The binary.
+  # 7. The binary.
   if [ "$OS" = Darwin ]; then
     if [ "$need_brew" = 1 ]; then
       command -v brew >/dev/null 2>&1 || die "Homebrew is required on macOS (./dot setup mac)"
@@ -479,27 +515,20 @@ do_apply() {
     fi
   fi
 
-  # 7. Hooks, extensions, daemon, with the work-profile guard repeated right
-  #    before (the binary step can take a while).
-  work_profile_issues 1
-  if [ -n "$WP_ISSUES" ]; then
-    printf '%s\n' "$WP_ISSUES" | sed 's/^/  /' >&2
-    die "refusing to run rexume install: a work Pi profile would load rexume's extension (changed during this run). See docs/rexume.md (work profile)."
-  fi
+  # 8. Hooks, extensions, daemon. The profile checks run again right before:
+  #    the lock keeps ./dot pi profiles out, but not a hand-made profile.
+  work_profiles
+  if [ -n "$WORK_PROFILES" ]; then die "refusing to run rexume install: $(wp_refusal) (It appeared during this run.)"; fi
+  personal_issues 1
+  if [ -n "$PI_ISSUES" ]; then die "refusing to run rexume install: $PI_ISSUES (changed during this run)."; fi
   run_install
 
-  # 8. Re-check the work profiles, wait for the daemon, then check everything.
-  work_profile_issues 0
-  if [ -n "$WP_ISSUES" ]; then
-    printf '%s\n' "$WP_ISSUES" | sed 's/^/  /' >&2
-    die "rexume install left rexume.ts in a work Pi profile; delete it now (see docs/rexume.md, work profile)."
-  fi
+  # 9. Wait (bounded) for the daemon, then check everything.
   if [ "$OS" = Linux ] && [ "$INSTALL_PATH" != "$PATH" ]; then
     say "note: $HOME/.local/bin is not on this shell's PATH (.zshrc adds it); it was added for rexume install."
   fi
-  READY_ERR=""
   if ! wait_ready; then
-    say "rexume: the rexume daemon is not ready after ${DOTFILES_REXUME_READY_TIMEOUT:-20}s: ${DAEMON_WHY:-$(printf '%s\n' "$READY_ERR" | head -n 1)}" >&2
+    say "rexume: the rexume daemon is not ready after ${DOTFILES_REXUME_READY_TIMEOUT:-20}s: $READY_WHY" >&2
   fi
   rc=0; do_check || rc=$?
   return "$rc"
