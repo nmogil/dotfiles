@@ -15,8 +15,9 @@ sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasu
 
 OUT="$TMP/out"
 REPO="$TMP/repo"; STUB="$TMP/stub"; REL="$TMP/release"
-mkdir -p "$REPO/scripts" "$REPO/config/rexboard" "$STUB" "$REL" || die mkdir
+mkdir -p "$REPO/scripts/lib" "$REPO/config/rexboard" "$STUB" "$REL" || die mkdir
 cp "$ROOT/scripts/setup-rexboard.sh" "$REPO/scripts/" || die "copy installer"
+cp "$ROOT/scripts/lib/pinned-release.sh" "$REPO/scripts/lib/" || die "copy pinned-release library"
 
 # Fixture release: <archive>/<dir>/rexboard, as upstream packages it.
 ARCHIVE=rexboard-v9.9.9-x86_64-unknown-linux-gnu.tar.gz

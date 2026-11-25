@@ -1,0 +1,17 @@
+# Pinned rexume release for Linux (x86_64). Data only: read by
+# scripts/setup-rexume.sh, never sourced. See docs/rexume.md.
+# Upstream: https://github.com/Entwining/rexume (MIT). The archive checksum
+# matches the release's .sha256 asset; the binary checksum is of bin/rexume
+# inside that archive. Before installing, the archive must also pass
+#   gh attestation verify <archive> --repo REXUME_ATTESTATION_REPO \
+#     --signer-workflow REXUME_ATTESTATION_SIGNER_WORKFLOW
+REXUME_VERSION=0.1.28
+REXUME_RELEASE_URL=https://github.com/Entwining/rexume/releases/download/v0.1.28
+REXUME_LINUX_X86_64_ARCHIVE=rexume-0.1.28-x86_64-unknown-linux-musl.tar.gz
+REXUME_LINUX_X86_64_ARCHIVE_SHA256=78ba847e9c48f2e1e8702825a09376e1c011d876474b5ee8b5b08179c9a3975b
+REXUME_LINUX_X86_64_BINARY_MEMBER=rexume-0.1.28-x86_64-unknown-linux-musl/bin/rexume
+REXUME_LINUX_X86_64_BINARY_SHA256=c945eb7d13817a31e95a536e74623ab938ffe0bec138226644a352d964a6c77d
+REXUME_ATTESTATION_REPO=Entwining/rexume
+REXUME_ATTESTATION_SIGNER_WORKFLOW=Entwining/rexume/.github/workflows/publish.yml
+# macOS uses Homebrew (see Brewfile; Apple Silicon, macOS 15+); Homebrew manages that version.
+REXUME_BREW_FORMULA=entwining/tap/rexume

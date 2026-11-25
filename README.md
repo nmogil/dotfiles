@@ -151,6 +151,8 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
 | `config/rexboard/release.pins`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
+| `config/rexume/release.pins`, `scripts/setup-rexume.sh` | rexume, which reopens agent conversations after a Rex restart and returns worker results (opt-in; Mac: Brewfile; Linux: pinned, checksum- and attestation-verified; `./dot rexume`, `docs/rexume.md`) |
+| `scripts/lib/pinned-release.sh` | Shared pinned-release installer (checksums, safe publish, backups) used by rexboard and rexume |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
 | `server/` | VPS memory guardrails (systemd drop-ins, zram, sysctl) + Herdr helper scripts |
@@ -414,6 +416,22 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 your Rex hosts by what needs you. The Mac gets it from the `Brewfile`; Linux
 installs a pinned, checksum-verified release with `./dot rexboard --apply`.
 Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
+
+## rexume
+
+[rexume](https://github.com/Entwining/rexume) reopens the agent conversation
+in each Rex pane after the Rex server restarts, and tells orchestrating agents
+when their workers finish. It is opt-in and needs the Rex server 0.1.0-preview.23
+or later; `setup-linux.sh` does not run it:
+
+```bash
+./dot rexume            # dry-run
+./dot rexume --apply    # binary (Mac: Homebrew; Linux: pinned + attested), then `rexume install`
+./dot rexume --check
+```
+
+The work Pi profile never gets rexume's extension, and `--apply` refuses
+while it would. See [`docs/rexume.md`](docs/rexume.md).
 
 ## Manual Steps After Setup
 

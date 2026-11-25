@@ -34,6 +34,8 @@ in a Rex pane report on their own.
   verifies the backup. Symlinks and directories are refused. The status covers
   `~/.local/bin/rexboard` and flags another `rexboard` ahead of it on PATH.
   Upstream publishes no other Linux build. `setup-linux.sh` offers this step.
+  The download, verification and publish code is shared with rexume in
+  `scripts/lib/pinned-release.sh`.
 
 The release has no GitHub attestation, so the pins are the trust anchor. The
 archive checksum matches the release's `SHA256SUMS`; the binary checksum is of

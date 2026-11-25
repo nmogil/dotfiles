@@ -75,6 +75,9 @@ Usage: ./dot <command> [args]
   rexboard [flags]     Install/check rexboard (Mac: Homebrew; Linux: pinned,
                        checksum-verified release; --apply/--check/--dry-run;
                        see docs/rexboard.md)
+  rexume [flags]       Install/check rexume: reopens agent conversations after a
+                       Rex restart (Mac: Homebrew; Linux: pinned, attested release;
+                       opt-in, needs Rex preview.23+; see docs/rexume.md)
   rex upgrade [args]   Restart Rex onto the installed version and resume agents
                        (no args: show the plan only; 'run' to do it)
   rex config [flags]   Install/check Mac Rex image paste (--apply/--check/--force;
@@ -339,6 +342,7 @@ case "$cmd" in
       *) echo "dot: rex needs 'install', 'upgrade', or 'config'" >&2; usage; exit 1 ;;
     esac ;;
   rexboard) run scripts/setup-rexboard.sh "$@" ;;
+  rexume)   run scripts/setup-rexume.sh "$@" ;;
   chezmoi) chezmoi_wrap "$@" ;;
   *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;
 esac

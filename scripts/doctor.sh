@@ -46,7 +46,7 @@ for f in "${required[@]}"; do
 done
 
 # --- scripts executable ---
-for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-rex-safe-upgrade.sh scripts/setup-rexboard.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
+for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-rex-safe-upgrade.sh scripts/setup-rexboard.sh scripts/setup-rexume.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
   [ -e "$ROOT/$s" ] || continue
   if [ -x "$ROOT/$s" ]; then PASS "executable: $s"; else WARN "not executable: $s (chmod +x $s)"; fi
 done
@@ -120,6 +120,19 @@ if have rex || have rexboard || [ -e "$HOME/.local/bin/rexboard" ]; then
     0) PASS "rexboard: $rexboard_msg" ;;
     3) WARN "rexboard not installed (optional: ./dot rexboard --apply)" ;;
     *) WARN "rexboard: $(printf '%s' "$rexboard_msg" | head -n 1)" ;;
+  esac
+fi
+
+# rexume (opt-in): checked only where Rex or rexume is present. The check is
+# read-only (it runs rexume only as `rexume status`).
+if have rex || have rexume || [ -e "$HOME/.local/bin/rexume" ]; then
+  rexume_rc=0
+  rexume_msg="$("$ROOT/scripts/setup-rexume.sh" --check 2>&1)" || rexume_rc=$?
+  case "$rexume_rc" in
+    0) PASS "rexume: $(printf '%s' "$rexume_msg" | tail -n 1)" ;;
+    3) WARN "rexume not installed (optional; needs Rex preview.23+: ./dot rexume --apply)" ;;
+    *) rexume_why="$(printf '%s\n' "$rexume_msg" | sed -n '/^rexume is not fully installed:/{n;s/^ *//;p;q;}')"
+       WARN "rexume: ${rexume_why:-$(printf '%s\n' "$rexume_msg" | head -n 1)} (./dot rexume --check)" ;;
   esac
 fi
 

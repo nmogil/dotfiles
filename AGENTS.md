@@ -40,6 +40,8 @@ and dispatches to them.
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
 | rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.pins` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
+| rexume (reopen agent conversations after a Rex restart; opt-in, Rex preview.23+) | `Brewfile` (Mac) + `config/rexume/release.pins` + `scripts/setup-rexume.sh` (Linux: pinned, checksum- and attestation-verified; never into a work Pi profile; see `docs/rexume.md`) |
+| Pinned Linux release installs (shared) | `scripts/lib/pinned-release.sh` (used by `setup-rexboard.sh` and `setup-rexume.sh`) |
 | Rex server upgrades (resume agents after restart) | `scripts/rex-safe-upgrade.py` + `templates/pi-rex/` + `scripts/setup-rex-safe-upgrade.sh` (see `docs/rex-safe-upgrade.md`) |
 | Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |
 | Future chezmoi migration | `docs/chezmoi-plan.md` (not applied yet) |
@@ -85,7 +87,8 @@ Package manifests under `packages/` are documentation + input for
 bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh \
   scripts/setup-pi-agent.sh \
   scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-claude-memory-hooks.sh \
-  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/setup-rexboard.sh scripts/update.sh \
+  scripts/setup-rex-safe-upgrade.sh scripts/setup-rex-config.sh scripts/setup-rexboard.sh scripts/setup-rexume.sh \
+  scripts/lib/pinned-release.sh scripts/update.sh \
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
@@ -97,6 +100,7 @@ bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempote
 python3 scripts/tests/rex-safe-upgrade.test.py  # Rex upgrade planning + installer
 python3 scripts/tests/rex-config.test.py   # Mac Rex image-paste installer + conflict/backup checks
 bash scripts/tests/rexboard.test.sh        # rexboard installer: pins, checksums, Homebrew path
+bash scripts/tests/rexume.test.sh          # rexume installer: attestation, Rex probe, work-profile guard, checks
 node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
@@ -106,7 +110,7 @@ node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 
 CI (`.github/workflows/ci.yml`) runs `bash -n` on every tracked shell script and
 all `scripts/tests/*.test.{sh,py,mjs}` on Ubuntu and macOS for every PR and push
-to `main` (plus `update.test.sh` and `pi-version.test.sh` under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
+to `main` (plus the update, rexboard, rexume and pi-version suites under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
 installed Pi, a live Rex, Linux `/proc` (skipped on macOS), PyYAML — print a
 skip reason instead of failing. Keep new tests hermetic (temp `HOME`, stubs).
 
