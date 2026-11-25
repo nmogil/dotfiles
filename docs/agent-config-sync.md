@@ -109,11 +109,14 @@ contains the full curated setup and is not suitable for public redistribution.
 
 Current pins:
 
-- `@earendil-works/pi-coding-agent`: floats to the latest release; at least
-  `PI_MIN_VERSION` (`scripts/lib/pi-cli.sh`) and the baseline's `piVersion`
-- `@ogulcancelik/pi-codex-subagents@0.3.2`
+- `@ogulcancelik/pi-codex-subagents@0.3.5`
 - the exact personal-profile package list in
   `dotfiles-private/pi-scaffold/agent/settings.example.json`
+
+Not pinned: the Pi CLI (`@earendil-works/pi-coding-agent`) floats to the
+latest release (`./dot update` runs `pi update --self`); it must be a global
+npm install at least `PI_MIN_VERSION` (`scripts/lib/pi-cli.sh`) and the
+baseline's `piVersion`.
 
 The scaffold never includes `auth.json`, live `settings.json`, private MCP
 servers, sessions, package caches, or trust state.

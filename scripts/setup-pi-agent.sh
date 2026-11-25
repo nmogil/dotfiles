@@ -91,17 +91,6 @@ resolve_path() {
   printf '%s/%s\n' "$dir" "$(basename "$src")"
 }
 
-# Overrides the node-based check in lib/pi-cli.sh: during install, node may not
-# be on PATH yet, so resolve symlinks in the shell.
-pi_uses_npm_layout() {
-  local resolved
-  resolved="$(resolve_path "$1" 2>/dev/null || true)"
-  case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 find_standalone_npm() {
   local dir node_bin npm_cli version
   if [ -n "${PI_NPM_NODE:-}" ] || [ -n "${PI_NPM_CLI:-}" ]; then
@@ -153,8 +142,8 @@ EOF
     case "$current:$resolved" in
       *"/.vite-plus/"*) echo "Current Pi uses Vite+: $current (migration needed)" ;;
       *)
-        version="$(pi --version 2>/dev/null || true)"
-        if pi_uses_npm_layout "$current"; then
+        if pi_npm_version "$current"; then
+          version="$PI_NPM_VERSION"
           if pi_version_at_least "$version" "$PI_MIN_VERSION"; then
             echo "Pi npm installation already active: $current ($version; minimum $PI_MIN_VERSION)"
             echo "./dot update keeps it on the latest release (pi update --self)."
@@ -162,7 +151,7 @@ EOF
           fi
           echo "$(pi_too_old_hint "$version" "$PI_MIN_VERSION"); it will be replaced: $current"
         else
-          echo "Current Pi is not the npm package and will be replaced: $current"
+          echo "Current Pi will be replaced: $PI_NPM_PROBLEM"
         fi
         ;;
     esac
@@ -188,11 +177,11 @@ EOF
         echo "setup-pi-agent: npm installed Pi but no executable was found at $npm_pi" >&2
         exit 1
       }
-      pi_uses_npm_layout "$npm_pi" || {
-        echo "setup-pi-agent: npm Pi layout verification failed: $npm_pi" >&2
+      pi_npm_version "$npm_pi" || {
+        echo "setup-pi-agent: npm Pi verification failed: $PI_NPM_PROBLEM" >&2
         exit 1
       }
-      version="$("$npm_pi" --version 2>/dev/null || true)"
+      version="$PI_NPM_VERSION"
       pi_version_at_least "$version" "$PI_MIN_VERSION" || {
         echo "setup-pi-agent: $(pi_too_old_hint "$version" "$PI_MIN_VERSION")" >&2
         exit 1
@@ -217,12 +206,13 @@ EOF
           exit 1
           ;;
       esac
-      version="$(pi --version 2>/dev/null || true)"
-      pi_uses_npm_layout "$current" && pi_version_at_least "$version" "$PI_MIN_VERSION" || {
-        echo "setup-pi-agent: active Pi ($current, ${version:-unknown}) is not the npm layout at version >= $PI_MIN_VERSION" >&2
+      version=""
+      ! pi_npm_version "$current" || version="$PI_NPM_VERSION"
+      pi_version_at_least "$version" "$PI_MIN_VERSION" || {
+        echo "setup-pi-agent: active Pi ($current, ${version:-unknown}) is not a global npm install at version >= $PI_MIN_VERSION${PI_NPM_PROBLEM:+: $PI_NPM_PROBLEM}" >&2
         exit 1
       }
-      echo "Pi npm installation active: $(command -v pi) ($(pi --version))"
+      echo "Pi npm installation active: $current ($version)"
       ;;
     *) echo "Skipped. Run 'npm install -g $package' when ready." ;;
   esac

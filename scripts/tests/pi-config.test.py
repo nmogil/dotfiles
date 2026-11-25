@@ -21,9 +21,19 @@ class PiConfigTest(unittest.TestCase):
         self.bundle = self.root / "private" / "pi-config"
         binary = self.root / "bin"
         binary.mkdir()
-        (binary / "pi").write_text("#!/bin/sh\nprintf '1.4.0\\n'\n")
-        (binary / "pi").chmod(0o755)
-        self.env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"],
+        # Pi as a global npm install: <prefix>/bin/pi -> ../lib/node_modules/<pkg>/dist/cli.js.
+        # Its version lives in the package's package.json; every launch is logged.
+        self.prefix = self.root / "npm"
+        self.package = self.prefix / "lib/node_modules/@earendil-works/pi-coding-agent"
+        self.launches = self.root / "pi-launches"
+        cli = self.package / "dist/cli.js"
+        cli.parent.mkdir(parents=True)
+        cli.write_text(f"#!/bin/sh\necho \"$*\" >> '{self.launches}'\nprintf '0.0.0-launched\\n'\n")
+        cli.chmod(0o755)
+        (self.prefix / "bin").mkdir()
+        (self.prefix / "bin/pi").symlink_to("../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
+        self.set_pi_version("1.4.0")
+        self.env = dict(os.environ, PATH=os.pathsep.join([str(self.prefix / "bin"), str(binary), os.environ["PATH"]]),
                         DOTFILES_PI_BLOCKLIST=str(self.root / "blocklist"))
         self.put(self.mac, ".pi/agent/settings.json", json.dumps({
             "theme": "catppuccin-macchiato", "defaultModel": "test-model",
@@ -185,7 +195,7 @@ class PiConfigTest(unittest.TestCase):
         result = self.run_cli("packages", self.vps)
         self.assertIn("would install " + source, result.stdout)
         # An explicit package refresh must run even when a floating package exists.
-        binary = self.root / "bin/pi"
+        binary = self.prefix / "bin/pi"  # writes through the symlink to dist/cli.js
         binary.write_text("#!/usr/bin/env python3\nimport json, pathlib, sys\n"
                           "if sys.argv[1:] == ['--version']: print('1.4.0')\n"
                           "else: pathlib.Path(__file__).with_name('calls.json').write_text(json.dumps(sys.argv[1:]))\n")
@@ -208,7 +218,63 @@ class PiConfigTest(unittest.TestCase):
         self.assertEqual((self.vps / ".pi/agent/skills/test/local-note.txt").read_text(), "keep")
 
     def set_pi_version(self, version):
-        (self.root / "bin/pi").write_text(f"#!/bin/sh\nprintf '{version}\\n'\n")
+        (self.package / "package.json").write_text(json.dumps(
+            {"name": "@earendil-works/pi-coding-agent", "version": version}, indent="\t"))
+
+    def test_read_only_commands_never_launch_pi(self):
+        # Pi's entry point can write (compile cache, settings lock) even for --version,
+        # so read-only paths read the installed package.json instead.
+        self.run_cli("capture")
+        self.run_cli("capture", apply=True)
+        self.launches.unlink(missing_ok=True)
+        self.run_cli("apply", self.vps)
+        self.run_cli("packages", self.vps)
+        self.run_cli("check", self.vps, expected=1)
+        self.run_cli("apply", self.vps, apply=True)
+        self.run_cli("check", self.vps)
+        self.assertFalse(self.launches.exists(), self.launches.read_text() if self.launches.exists() else "")
+
+    def test_unreadable_pi_metadata_is_reported_not_guessed(self):
+        self.run_cli("capture", apply=True)
+        (self.package / "package.json").write_text("{not json")
+        result = self.run_cli("apply", self.vps)
+        self.assertIn("Pi CLI: version gate not previewed", result.stdout)
+        self.assertIn("minimum 1.4.0", result.stdout)
+        self.run_cli("apply", self.vps, apply=True, expected=2)
+        self.assertFalse(self.vps.exists())
+        self.run_cli("check", self.vps, expected=2)
+        (self.package / "package.json").unlink()
+        self.assertIn("version gate not previewed", self.run_cli("packages", self.vps).stdout)
+        self.assertFalse(self.launches.exists())
+
+    def test_pi_outside_a_global_npm_install_is_refused(self):
+        self.run_cli("capture", apply=True)
+        other = self.root / "other"
+        other.mkdir()
+        (other / "pi").write_text("#!/bin/sh\nprintf '1.4.0\\n'\n")
+        (other / "pi").chmod(0o755)
+        self.env["PATH"] = str(other) + os.pathsep + self.env["PATH"]
+        result = self.run_cli("apply", self.vps, apply=True, expected=2)
+        self.assertIn("global npm install", result.stderr)
+        self.assertFalse(self.vps.exists())
+
+    def test_capture_records_the_installed_package_version(self):
+        self.set_pi_version("1.10.2")
+        self.run_cli("capture", apply=True)
+        self.assertEqual(json.loads((self.bundle / "manifest.json").read_text())["piVersion"], "1.10.2")
+        self.set_pi_version("1.10")
+        self.run_cli("capture", expected=2)
+        self.assertFalse(self.launches.exists())
+
+    def test_manifest_minimum_uses_the_shared_version_grammar(self):
+        self.run_cli("capture", apply=True)
+        manifest_path = self.bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for bad in ("1.4.0-beta.1", "1234567.0.0", "\u0661.4.0", "1.4"):
+            manifest["piVersion"] = bad
+            manifest_path.write_text(json.dumps(manifest))
+            result = self.run_cli("check", self.vps, expected=2)
+            self.assertIn("invalid Pi baseline manifest", result.stderr)
 
     def test_older_pi_than_the_minimum_refuses_apply(self):
         self.run_cli("capture", apply=True)  # manifest piVersion (the minimum) = 1.4.0
@@ -246,9 +312,10 @@ class PiConfigTest(unittest.TestCase):
 
     def test_unparsable_installed_version_is_refused(self):
         self.run_cli("capture", apply=True)
-        self.set_pi_version("1.4.0-beta.1")
-        self.run_cli("apply", self.vps, apply=True, expected=2)
-        self.assertFalse(self.vps.exists())
+        for junk in ("1.4.0-beta.1", "1234567.0.0", "\u0661.\u0664.0"):
+            self.set_pi_version(junk)
+            self.run_cli("apply", self.vps, apply=True, expected=2)
+            self.assertFalse(self.vps.exists())
 
     def test_tampered_bundle_fails_before_any_writes(self):
         self.run_cli("capture", apply=True)
@@ -434,9 +501,80 @@ class PiVersionHelperTest(unittest.TestCase):
 
     def test_parse_rejects_non_release_versions(self):
         self.assertEqual(self.module.parse("1.10.0"), (1, 10, 0))
-        for junk in ("", "1.6", "1.6.0.1", "v1.6.0", "1.6.0-beta.1", " 1.6.0", "1.x.0", None, 160):
+        self.assertEqual(self.module.parse("999999.0.08"), (999999, 0, 8))
+        for junk in ("", "1.6", "1.6.0.1", "v1.6.0", "1.6.0-beta.1", " 1.6.0", "1.6.0\n", "1.x.0", None, 160,
+                     "1234567.0.0", "1.0.1234567", "\u0661.\u0666.\u0660", "1.\uff16.0", "+1.6.0", "1._6.0"):
             with self.assertRaises(ValueError, msg=repr(junk)):
                 self.module.parse(junk)
+
+    def make_install(self, root, prefix_rel, bin_rel=None, package_rel=None, version="1.6.1"):
+        """Build <root>/<prefix_rel>/lib/node_modules/<pkg> (or package_rel) and a bin/pi symlink."""
+        root = Path(root)
+        package = root / (package_rel or f"{prefix_rel}/lib/node_modules/@earendil-works/pi-coding-agent")
+        cli = package / "dist/bundle/cli.js"
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.write_text("#!/bin/sh\nexit 99\n")
+        cli.chmod(0o755)
+        (package / "package.json").write_text(json.dumps({"name": "@earendil-works/pi-coding-agent", "version": version}))
+        pi = root / (bin_rel or f"{prefix_rel}/bin/pi")
+        pi.parent.mkdir(parents=True, exist_ok=True)
+        pi.symlink_to(os.path.relpath(cli, pi.parent))
+        return pi
+
+    def test_installed_version_reads_package_json_of_a_global_npm_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pi = self.make_install(tmp, "usr")
+            self.assertEqual(self.module.installed_version(str(pi)), "1.6.1")
+            # The same install reached through a symlinked PATH directory still counts.
+            (Path(tmp) / "linkbin").symlink_to(Path(tmp) / "usr/bin")
+            self.assertEqual(self.module.installed_version(str(Path(tmp) / "linkbin/pi")), "1.6.1")
+
+    def test_installed_version_rejects_unsupported_layouts(self):
+        not_npm = self.module.NotNpmLayout
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = {
+                "project-local": self.make_install(
+                    tmp, "", bin_rel="proj/node_modules/.bin/pi",
+                    package_rel="proj/node_modules/@earendil-works/pi-coding-agent"),
+                "project under lib": self.make_install(
+                    tmp, "", bin_rel="code/lib/node_modules/.bin/pi",
+                    package_rel="code/lib/node_modules/@earendil-works/pi-coding-agent"),
+                "pnpm": self.make_install(
+                    tmp, "", bin_rel="pnpm/bin/pi",
+                    package_rel="pnpm/global/5/node_modules/.pnpm/@earendil-works+pi-coding-agent@1.6.1/"
+                                "node_modules/@earendil-works/pi-coding-agent"),
+                "vite-plus": self.make_install(tmp, ".vite-plus"),
+                "bin outside the prefix": self.make_install(
+                    tmp, "elsewhere", bin_rel="stray/pi"),
+            }
+            for name, pi in cases.items():
+                with self.assertRaises(not_npm, msg=name):
+                    self.module.installed_version(str(pi))
+            plain = Path(tmp) / "plain/pi"
+            plain.parent.mkdir()
+            plain.write_text("#!/bin/sh\necho 1.6.1\n")
+            plain.chmod(0o755)
+            with self.assertRaises(not_npm):
+                self.module.installed_version(str(plain))
+            good = self.make_install(tmp, "good")
+            with self.assertRaises(not_npm):  # relative paths are never trusted
+                self.module.installed_version(os.path.relpath(good))
+            with self.assertRaises(not_npm):
+                self.module.installed_version(str(Path(tmp) / "missing/bin/pi"))
+
+    def test_installed_version_requires_valid_metadata(self):
+        unavailable = self.module.MetadataUnavailable
+        with tempfile.TemporaryDirectory() as tmp:
+            pi = self.make_install(tmp, "usr")
+            package_json = Path(tmp) / "usr/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
+            for content in ("{broken", "[]", json.dumps({"name": "other", "version": "1.6.1"}),
+                            json.dumps({"name": "@earendil-works/pi-coding-agent", "version": "1.6"})):
+                package_json.write_text(content)
+                with self.assertRaises(unavailable, msg=content):
+                    self.module.installed_version(str(pi))
+            package_json.unlink()
+            with self.assertRaises(unavailable):
+                self.module.installed_version(str(pi))
 
 
 if __name__ == "__main__":

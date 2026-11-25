@@ -207,18 +207,25 @@ remove_legacy_settings_packages() {
   fi
 }
 
-# pi_runtime_matches: Pi uses the npm layout at version >= PI_MIN_VERSION.
-# Sets PI_RUNTIME_VERSION and, on failure, PI_RUNTIME_PROBLEM.
-PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
+# pi_runtime_matches: Pi is a global npm install at version >= PI_MIN_VERSION,
+# read from its package.json (Pi is not launched for a check). Sets PI_EXEC
+# (the verified absolute path, which --apply runs), PI_RUNTIME_VERSION, and
+# on failure PI_RUNTIME_PROBLEM.
+PI_EXEC="" PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
 pi_runtime_matches() {
-  local pi_path
-  PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
-  pi_path="$(command -v "$PI_BIN" 2>/dev/null || true)"
-  if [ -z "$pi_path" ] || ! pi_uses_npm_layout "$pi_path"; then
-    PI_RUNTIME_PROBLEM="Pi must use the npm layout at version >= $PI_MIN_VERSION (./dot pi install)"
+  local rc=0
+  PI_EXEC="" PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
+  PI_EXEC="$(command -v "$PI_BIN" 2>/dev/null || true)"
+  if [ -z "$PI_EXEC" ]; then
+    PI_RUNTIME_PROBLEM="Pi not found ($PI_BIN); ./dot pi install"
     return 1
   fi
-  PI_RUNTIME_VERSION="$("$PI_BIN" --version 2>/dev/null || true)"
+  pi_npm_version "$PI_EXEC" || rc=$?
+  case "$rc" in
+    0) PI_RUNTIME_VERSION="$PI_NPM_VERSION" ;;
+    1) PI_RUNTIME_PROBLEM="Pi must be a global npm install at version >= $PI_MIN_VERSION: $PI_NPM_PROBLEM"; return 1 ;;
+    *) PI_RUNTIME_PROBLEM="Pi version unavailable (minimum $PI_MIN_VERSION): $PI_NPM_PROBLEM"; return 1 ;;
+  esac
   if ! pi_version_at_least "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION"; then
     PI_RUNTIME_PROBLEM="$(pi_too_old_hint "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION")"
     return 1
@@ -348,7 +355,7 @@ EOF
     trap 'rollback_legacy_state' ERR
     archive_legacy_state
     remove_legacy_settings_packages
-    PI_CODING_AGENT_DIR="$AGENT_DIR" "$PI_BIN" install "$PACKAGE_SOURCE"
+    PI_CODING_AGENT_DIR="$AGENT_DIR" "$PI_EXEC" install "$PACKAGE_SOURCE"
     echo
     if ! check_installation; then
       rollback_legacy_state

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Tests for the shared Pi CLI helpers (scripts/lib/pi-cli.sh): the minimum-version
-# compare (numeric x.y.z, works on macOS /bin/bash 3.2) and the gates that use
-# it through `./dot packages check` and `./dot pi doctor`. Hermetic: temp HOME,
-# a stub npm-layout `pi`, and a PATH without Homebrew.
+# compare (numeric x.y.z, works on macOS /bin/bash 3.2), the global-npm-install
+# check that reads the version from package.json without launching Pi, and the
+# gates that use them through `./dot packages check` and `./dot pi doctor`.
+# Hermetic: temp HOME, stub npm-layout installs, and a PATH without Homebrew.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,16 +29,30 @@ expect_yes 1.10.0 1.9.0      # numeric, not lexical
 expect_no  1.9.0 1.10.0
 expect_yes 1.6.10 1.6.9
 expect_yes 1.08.0 1.7.0      # leading zeros are decimal, not octal
-for junk in '' 1.6 1.6.0.1 v1.6.0 1.6.0-beta.1 'pi 1.6.0' 1.x.0 ' 1.6.0'; do
-  if at_least "$junk" 1.0.0; then bad "unparsable installed '$junk' is refused"; else ok "unparsable installed '$junk' is refused"; fi
+expect_yes 999999.999999.999999 999999.999999.999998   # 6 digits per component
+# Same grammar as scripts/lib/pi_version.py: ASCII digits, 1-6 per component.
+for junk in '' 1.6 1.6.0.1 v1.6.0 1.6.0-beta.1 'pi 1.6.0' 1.x.0 ' 1.6.0' '1.6.0 ' \
+  1234567.0.0 1.0.1234567 99999999999999999999.0.0 '١.٦.٠' '1.６.0' +1.6.0; do
+  if at_least "$junk" 0.0.0; then bad "unparsable installed '$junk' is refused"; else ok "unparsable installed '$junk' is refused"; fi
 done
 if at_least 1.6.0 bogus; then bad "unparsable minimum is refused"; else ok "unparsable minimum is refused"; fi
+if at_least 1.6.0 1234567.0.0; then bad "oversized minimum is refused"; else ok "oversized minimum is refused"; fi
 case "$PI_MIN_VERSION" in
   [0-9]*.[0-9]*.[0-9]*) ok "PI_MIN_VERSION is x.y.z ($PI_MIN_VERSION)" ;;
   *) bad "PI_MIN_VERSION is x.y.z ($PI_MIN_VERSION)" ;;
 esac
+# The Python parser agrees with the bash one on every edge input above.
+agree=1
+for v in 1.6.0 1.08.0 999999.0.0 1234567.0.0 1.6 v1.6.0 1.6.0-beta.1 '١.٦.٠' '1.６.0' +1.6.0 ' 1.6.0'; do
+  if at_least "$v" 0.0.0; then b=1; else b=0; fi
+  p="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import pi_version
+try: pi_version.parse(sys.argv[2]); print(1)
+except ValueError: print(0)' "$ROOT/scripts/lib" "$v")"
+  [ "$b" = "$p" ] || { agree=0; OUT="bash=$b python=$p for '$v'"; }
+done
+[ "$agree" = 1 ] && ok "bash and Python accept exactly the same versions" || bad "bash and Python accept exactly the same versions"
 
-# --- fixtures for ./dot ----------------------------------------------------------
+# --- fixtures --------------------------------------------------------------------
 TMP="$(mktemp -d)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 TMP="$(cd "$TMP" && pwd -P)"
@@ -46,19 +61,58 @@ mkdir -p "$HOME" "$TMP/bin" "$TMP/other" || exit 2
 : > "$TMP/empty.env"
 export DOTFILES_LOCAL_ENV="$TMP/empty.env" DOTFILES_PI_SCAFFOLD_DIR="$TMP/no-scaffold" \
   DOTFILES_PI_CONFIG_DIR="$TMP/no-pi-config" DOTFILES_PI_BLOCKLIST="$TMP/no-blocklist"
-NPM_PI="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
-mkdir -p "$(dirname "$NPM_PI")" || exit 2
-printf '%s\n' '#!/bin/sh' 'echo "${STUB_PI_VERSION:-0.0.0}"' > "$NPM_PI"
-cp "$NPM_PI" "$TMP/other/pi"
-chmod +x "$NPM_PI" "$TMP/other/pi"
-ln -s "$NPM_PI" "$TMP/bin/pi"
+LAUNCHES="$TMP/pi-launches"
+# make_install <package-dir> <bin>: a stub Pi package (every launch is logged)
+# with package.json, reached through the <bin> symlink.
+make_install() {
+  mkdir -p "$1/dist/bundle" "$(dirname "$2")" || exit 2
+  printf '#!/bin/sh\necho "$*" >> "%s"\necho 0.0.0\n' "$LAUNCHES" > "$1/dist/bundle/cli.js"
+  chmod +x "$1/dist/bundle/cli.js"
+  set_version "$1" 1.6.1
+  ln -s "$1/dist/bundle/cli.js" "$2"
+}
+set_version() {  # set_version <package-dir> <version>
+  printf '{\n\t"name": "@earendil-works/pi-coding-agent",\n\t"version": "%s"\n}\n' "$2" > "$1/package.json"
+}
+PKGDIR="$TMP/lib/node_modules/@earendil-works/pi-coding-agent"
+make_install "$PKGDIR" "$TMP/bin/pi"
+printf '%s\n' '#!/bin/sh' "echo \"\$*\" >> \"$LAUNCHES\"" 'echo 99.0.0' > "$TMP/other/pi"
+chmod +x "$TMP/other/pi"
 # npm: present (enables the npm.global section); every other package is missing.
 printf '%s\n' '#!/bin/sh' 'exit 1' > "$TMP/bin/npm" && chmod +x "$TMP/bin/npm"
-NODE="$(command -v node)" && ln -s "$NODE" "$TMP/bin/node" || { echo "FAIL node is required"; exit 1; }
+PY="$(command -v python3)" && ln -s "$PY" "$TMP/bin/python3" || { echo "FAIL python3 is required"; exit 1; }
 HPATH="$TMP/bin:/usr/bin:/bin"
 PKG="@earendil-works/pi-coding-agent"
 
-packages() { OUT="$(PATH="$HPATH" STUB_PI_VERSION="$1" "$ROOT/dot" packages check 2>&1)"; }
+# --- pi_npm_version <path>: 0 version read, 1 unsupported layout, 2 no metadata ---
+npm_version() { rc=0; pi_npm_version "$1" || rc=$?; }
+npm_version "$TMP/bin/pi"
+[ "$rc" = 0 ] && [ "$PI_NPM_VERSION" = 1.6.1 ] \
+  && ok "pi_npm_version reads package.json of a global npm install" || bad "pi_npm_version reads package.json of a global npm install"
+mkdir -p "$TMP/vp/.vite-plus" "$TMP/proj" "$TMP/pnpm/bin"
+make_install "$TMP/vp/.vite-plus/lib/node_modules/$PKG" "$TMP/vp/.vite-plus/bin/pi"
+make_install "$TMP/proj/node_modules/$PKG" "$TMP/proj/node_modules/.bin/pi"
+make_install "$TMP/pnpm/global/5/node_modules/.pnpm/@earendil-works+pi-coding-agent@1.6.1/node_modules/$PKG" "$TMP/pnpm/bin/pi"
+make_install "$TMP/elsewhere/lib/node_modules/$PKG" "$TMP/stray/pi"
+for unsupported in "$TMP/vp/.vite-plus/bin/pi" "$TMP/proj/node_modules/.bin/pi" "$TMP/pnpm/bin/pi" \
+  "$TMP/stray/pi" "$TMP/other/pi" "$TMP/missing/pi"; do
+  npm_version "$unsupported"
+  [ "$rc" = 1 ] && [ -n "$PI_NPM_PROBLEM" ] && ok "unsupported layout refused: ${unsupported#"$TMP"/}" \
+    || bad "unsupported layout refused: ${unsupported#"$TMP"/} (rc=$rc)"
+done
+rc=0; (cd "$TMP" && pi_npm_version bin/pi) || rc=$?
+[ "$rc" = 1 ] && ok "a relative pi path is never trusted" || bad "a relative pi path is never trusted (rc=$rc)"
+set_version "$PKGDIR" 1.6
+npm_version "$TMP/bin/pi"
+[ "$rc" = 2 ] && ok "an unparsable package.json version is unavailable metadata" || bad "an unparsable package.json version is unavailable metadata (rc=$rc)"
+rm "$PKGDIR/package.json"
+npm_version "$TMP/bin/pi"
+[ "$rc" = 2 ] && ok "a missing package.json is unavailable metadata" || bad "a missing package.json is unavailable metadata (rc=$rc)"
+set_version "$PKGDIR" 1.6.1
+[ ! -e "$LAUNCHES" ] && ok "pi_npm_version never launches Pi" || bad "pi_npm_version never launches Pi"
+
+# --- ./dot packages check / pi doctor ------------------------------------------------
+packages() { set_version "$PKGDIR" "$1"; OUT="$(PATH="${2:-$HPATH}" "$ROOT/dot" packages check 2>&1)"; }
 pi_line() { printf '%s\n' "$OUT" | grep -F -- "$PKG"; }
 
 grep -Eq "^$PKG(@latest)?([[:space:]]|$)" "$ROOT/packages/npm.global" \
@@ -76,12 +130,15 @@ packages 0.0.1
 pi_line | grep -Eq "^  MISMATCH $PKG.*0\.0\.1.*older than the minimum $PI_MIN_VERSION.*pi update" \
   && ok "packages check: older Pi is a mismatch that says to run pi update" \
   || bad "packages check: older Pi is a mismatch that says to run pi update"
-OUT="$(PATH="$TMP/other:$HPATH" STUB_PI_VERSION=99.0.0 "$ROOT/dot" packages check 2>&1)"
-pi_line | grep -Eq "^  MISMATCH $PKG.*not the required npm package layout" \
+packages 99.0.0 "$TMP/other:$HPATH"
+pi_line | grep -Eq "^  MISMATCH $PKG.*not a global npm install" \
   && ok "packages check: a non-npm-layout Pi is a mismatch even when new enough" \
   || bad "packages check: a non-npm-layout Pi is a mismatch even when new enough"
+packages 1.6
+pi_line | grep -Eq "^  MISMATCH $PKG.*version unavailable" \
+  && ok "packages check: unreadable Pi metadata is a mismatch" || bad "packages check: unreadable Pi metadata is a mismatch"
 
-doctor() { OUT="$(PATH="${2:-$HPATH}" STUB_PI_VERSION="$1" "$ROOT/dot" pi doctor 2>&1)"; }
+doctor() { set_version "$PKGDIR" "$1"; OUT="$(PATH="${2:-$HPATH}" "$ROOT/dot" pi doctor 2>&1)"; }
 doctor 99.0.0
 printf '%s\n' "$OUT" | grep -Eq "ok   Pi CLI present: .*99\.0\.0.*minimum $PI_MIN_VERSION" \
   && ok "pi doctor: newer Pi is ok" || bad "pi doctor: newer Pi is ok"
@@ -92,8 +149,10 @@ doctor 0.0.1
 printf '%s\n' "$OUT" | grep -Eq "WARN Pi 0\.0\.1 is older than the minimum $PI_MIN_VERSION.*pi update" \
   && ok "pi doctor: older Pi warns and says to run pi update" || bad "pi doctor: older Pi warns and says to run pi update"
 doctor 99.0.0 "$TMP/other:$HPATH"
-printf '%s\n' "$OUT" | grep -Fq "WARN Pi 99.0.0 is not the required npm package layout" \
+printf '%s\n' "$OUT" | grep -Fq "WARN Pi at $TMP/other/pi is not the required npm package layout" \
   && ok "pi doctor: a non-npm-layout Pi warns" || bad "pi doctor: a non-npm-layout Pi warns"
+[ ! -e "$LAUNCHES" ] && ok "packages check and pi doctor never launch Pi" \
+  || { OUT="$(cat "$LAUNCHES")"; bad "packages check and pi doctor never launch Pi"; }
 
 printf '\n== pi-version tests: %d pass, %d fail ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

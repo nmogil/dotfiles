@@ -43,18 +43,19 @@ case "$1" in
   prefix) echo "$STUB_PREFIX" ;;
   install)
     printf '%s\n' "$*" >> "$STUB_NPM_LOG"
-    pkg_dir="$STUB_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent/dist"
-    mkdir -p "$pkg_dir" "$STUB_PREFIX/bin"
-    printf '#!/bin/sh\necho %s\n' "$STUB_NEW_VERSION" > "$pkg_dir/cli.js"
-    chmod +x "$pkg_dir/cli.js"
-    ln -sf "$pkg_dir/cli.js" "$STUB_PREFIX/bin/pi" ;;
+    pkg_dir="$STUB_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"
+    mkdir -p "$pkg_dir/dist" "$STUB_PREFIX/bin"
+    printf '#!/bin/sh\necho "pi launched: $*" >> "%s"\n' "$STUB_NPM_LOG.launches" > "$pkg_dir/dist/cli.js"
+    printf '{"name": "@earendil-works/pi-coding-agent", "version": "%s"}\n' "$STUB_NEW_VERSION" > "$pkg_dir/package.json"
+    chmod +x "$pkg_dir/dist/cli.js"
+    ln -sf ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js "$STUB_PREFIX/bin/pi" ;;
   *) exit 2 ;;
 esac
 SH
 : > "$TMP/npm-bin/npm-cli.js"
 chmod +x "$TMP/npm-bin/node"
 pi_install() {  # pi_install <new-version> [answer]
-  rm -rf "$PREFIX" "$TMP/npm.log"
+  rm -rf "$PREFIX" "$TMP/npm.log" "$TMP/npm.log.launches"
   INSTALL_RC=0
   INSTALL_OUT="$(printf '%s\n' "${2:-y}" | HOME="$INSTALL_HOME" PATH="/usr/bin:/bin" \
     DOTFILES_LOCAL_ENV="$TMP/empty.env" PI_NPM_NODE="$TMP/npm-bin/node" PI_NPM_CLI="$TMP/npm-bin/npm-cli.js" \
@@ -81,7 +82,8 @@ pi_install 99.0.0 n
 # current); one below the minimum is replaced with the latest.
 pi_install 99.0.0
 active() {  # active <current-version>: rerun --install with that Pi on PATH
-  printf '#!/bin/sh\necho %s\n' "$1" > "$PREFIX/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  printf '{"name": "@earendil-works/pi-coding-agent", "version": "%s"}\n' "$1" \
+    > "$PREFIX/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
   rm -f "$TMP/npm.log"
   INSTALL_RC=0
   INSTALL_OUT="$(printf 'y\n' | HOME="$INSTALL_HOME" PATH="$PREFIX/bin:/usr/bin:/bin" \
@@ -97,4 +99,6 @@ active 0.0.1
 [ "$INSTALL_RC" = 0 ] && [ -s "$TMP/npm.log" ] \
   && printf '%s\n' "$INSTALL_OUT" | grep -Fq "Pi 0.0.1 is older than the minimum $PI_MIN_VERSION" \
   || { printf '%s\n' "$INSTALL_OUT"; echo 'FAIL pi install: replaces an active Pi below the minimum'; exit 1; }
+[ ! -e "$TMP/npm.log.launches" ] \
+  || { cat "$TMP/npm.log.launches"; echo 'FAIL pi install: versions come from package.json, Pi is never launched'; exit 1; }
 printf '%s\n' 'ok   pi install: npm @latest, newer/equal accepted, older refused/replaced, declining installs nothing'

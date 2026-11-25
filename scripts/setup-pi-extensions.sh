@@ -97,11 +97,13 @@ if mode == "--dry-run" or not failed:
 
 # The scaffold's Pi dependency is a MINIMUM: Pi floats to the latest release.
 minimum_pi = json.loads((scaffold / "package.json").read_text())["dependencies"]["@earendil-works/pi-coding-agent"]
-pi_path = Path(shutil.which(pi) or pi).resolve()
-if not re.search(r"/node_modules/@earendil-works/pi-coding-agent/dist/(?:bundle/)?cli\.js$", str(pi_path)) or "/.vite-plus/" in str(pi_path):
-    raise SystemExit("Pi must use the npm layout; run ./dot pi install first")
+# Only a global npm install is supported; its version comes from package.json
+# (Pi is not launched to ask), and the same absolute path runs the installs.
+pi = shutil.which(pi) or pi
 try:
-    pi_version.require(subprocess.check_output([pi, "--version"], text=True).strip(), minimum_pi)
+    pi_version.require(pi_version.installed_version(pi), minimum_pi)
+except pi_version.NotNpmLayout as error:
+    raise SystemExit(f"Pi must be a global npm install; run ./dot pi install first: {error}")
 except ValueError as error:
     raise SystemExit(str(error))
 backups = agent / "backups"

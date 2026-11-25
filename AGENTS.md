@@ -31,8 +31,8 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
-| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, `pi update --self` (npm layout only), re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
-| Pi CLI minimum version | `PI_MIN_VERSION` in `scripts/lib/pi-cli.sh` (bash compare); `scripts/lib/pi_version.py` (Python). Pi floats to latest; gates are "installed >= minimum", never exact |
+| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, `pi update --self` (global npm installs only), then re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
+| Pi CLI minimum version | `PI_MIN_VERSION` in `scripts/lib/pi-cli.sh` (bash compare); `scripts/lib/pi_version.py` (Python, also the global-npm/package.json reader). Pi floats to latest; gates are "installed >= minimum", never exact; versions come from package.json — read-only paths never launch Pi |
 | CI (Ubuntu + macOS) | `.github/workflows/ci.yml` |
 | Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
 | Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |

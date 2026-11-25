@@ -448,13 +448,17 @@ Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
    remaining steps; it receives the checkout paths, pre- and post-update
    commit IDs, and remotes, and re-verifies them (missing or mismatched state
    means "don't apply"; freshness it cannot re-establish needs `--yes`).
-2. **Pi CLI** — first in the Pi section: `pi update --self --no-approve`
-   (run from `$HOME`) moves Pi to the latest release, reported as
-   `Pi CLI — 1.6.0 → 1.6.1` or `Pi CLI — 1.6.1 (latest)`. It runs only when
-   `pi` is installed with the npm package layout (otherwise a skip line), does
-   not depend on the repos, and a failure is a warning, not a stop: the Pi
-   config version gate below decides. Running Pi sessions keep the old version
-   until you restart them. `--dry-run` never runs it. The dotfiles require
+2. **Pi CLI** — after the updater hand-off and *before* the checkouts are
+   re-verified (so a checkout that changes during the long npm update is not
+   applied from): `pi update --self --no-approve`, run from `$HOME` by the
+   same absolute path that was checked, moves Pi to the latest release,
+   reported as `Pi CLI — 1.6.0 → 1.6.1` or `Pi CLI — 1.6.1 (latest)` (only when
+   Pi says it is already up to date; otherwise "unchanged" is a warning). It
+   runs only when `pi` is an absolute global npm install (otherwise a skip
+   line), does not depend on the repos, and a failure is a warning, not a
+   stop: the Pi config version gate below decides. Versions are read from the
+   package's `package.json`. Running Pi sessions keep the old version until
+   you restart them. `--dry-run` never launches Pi at all. The dotfiles require
    *at least* a minimum Pi version (the baseline manifest's `piVersion`, the
    scaffold's dependency, and `PI_MIN_VERSION` in `scripts/lib/pi-cli.sh`),
    never an exact one.

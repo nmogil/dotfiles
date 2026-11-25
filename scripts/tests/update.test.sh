@@ -42,44 +42,65 @@ exec "$REAL_UNAME" "\$@"
 EOF
 chmod +x "$TMP/bin/uname" || die "chmod"
 printf '#!/bin/sh\nexit 0\n' > "$TMP/bin/rex" && chmod +x "$TMP/bin/rex" || die "rex stub"
-# pi: an npm-layout stub (bin/pi -> node_modules/.../dist/cli.js). Its version
-# lives in $STUB_PI_STATE (default 1.6.0). `pi update` is logged to $STUB_LOG
-# (with its working directory), moves to $STUB_PI_LATEST when that differs,
-# and fails with STUB_PI_UPDATE_FAIL. use_pi swaps in a non-npm stub or none.
-PI_NPM_CLI="$TMP/pinpm/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
-mkdir -p "$(dirname "$PI_NPM_CLI")" "$TMP/plainpi" || die "mkdir"
-cat > "$PI_NPM_CLI" <<'EOF' || die "pi stub"
+# pi: a global npm install stub: $TMP/pinpm/bin/pi -> ../lib/node_modules/<pkg>/
+# dist/cli.js, version in the package's package.json (pi_pkg_version sets it;
+# 1.6.0 after fresh). EVERY launch is logged to $PI_LAUNCHES, so a test can
+# prove a run never started Pi. `pi update` is also logged to $STUB_LOG (with
+# its working directory), moves to $STUB_PI_LATEST when that differs, fails
+# with STUB_PI_UPDATE_FAIL, exits 0 without updating or confirming with
+# STUB_PI_UNCONFIRMED, and appends to the file $STUB_PI_DIRTY (simulating a
+# checkout that changes while it runs). use_pi swaps in a non-npm stub or none.
+PI_PREFIX="$TMP/pinpm"
+PI_PKG="$PI_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"
+PI_LAUNCHES="$TMP/pi.launches"
+mkdir -p "$PI_PKG/dist" "$PI_PREFIX/bin" "$TMP/plainpi" || die "mkdir"
+pi_pkg_version() {  # pi_pkg_version [<version>]: set or print the installed version
+  if [ "$#" = 1 ]; then
+    printf '{\n\t"name": "@earendil-works/pi-coding-agent",\n\t"version": "%s"\n}\n' "$1" > "$PI_PKG/package.json" \
+      || die "package.json"
+  else
+    sed -n 's/^.*"version": "\(.*\)".*$/\1/p' "$PI_PKG/package.json"
+  fi
+}
+cat > "$PI_PKG/dist/cli.js" <<EOF || die "pi stub"
 #!/bin/sh
-version=1.6.0
-[ -z "${STUB_PI_STATE:-}" ] || [ ! -f "$STUB_PI_STATE" ] || version="$(cat "$STUB_PI_STATE")"
-case "${1:-}" in
-  --version) echo "$version" ;;
+printf '%s @ %s\n' "\$*" "\$PWD" >> "$PI_LAUNCHES"
+pkg="$PI_PKG/package.json"
+version="\$(sed -n 's/^.*"version": "\(.*\)".*\$/\1/p' "\$pkg")"
+case "\${1:-}" in
+  --version) echo "\$version" ;;
   update)
-    [ -z "${STUB_LOG:-}" ] || printf 'pi-cli %s @ %s\n' "$*" "$PWD" >> "$STUB_LOG"
-    if [ -n "${STUB_PI_UPDATE_FAIL:-}" ]; then
+    [ -z "\${STUB_LOG:-}" ] || printf 'pi-cli %s @ %s\n' "\$*" "\$PWD" >> "\$STUB_LOG"
+    [ -z "\${STUB_PI_DIRTY:-}" ] || echo "changed during pi update" >> "\$STUB_PI_DIRTY"
+    if [ -n "\${STUB_PI_UPDATE_FAIL:-}" ]; then
       echo "Error: Could not determine latest pi version: stub network down" >&2; exit 1
     fi
-    if [ -n "${STUB_PI_LATEST:-}" ] && [ "$STUB_PI_LATEST" != "$version" ]; then
-      echo "$STUB_PI_LATEST" > "$STUB_PI_STATE" || exit 1
-      echo "Updated pi from $version to $STUB_PI_LATEST"
+    if [ -n "\${STUB_PI_UNCONFIRMED:-}" ]; then
+      echo "Ran npm install -g @earendil-works/pi-coding-agent@9.9.9, but \\\`pi --version\\\` reports \$version, not 9.9.9."
+      exit 0
+    fi
+    if [ -n "\${STUB_PI_LATEST:-}" ] && [ "\$STUB_PI_LATEST" != "\$version" ]; then
+      printf '{\n\t"name": "@earendil-works/pi-coding-agent",\n\t"version": "%s"\n}\n' "\$STUB_PI_LATEST" > "\$pkg" || exit 1
+      echo "Updated pi from \$version to \$STUB_PI_LATEST"
     else
-      echo "pi is already up to date (v$version)"
+      echo "pi is already up to date (v\$version)"
     fi ;;
-  *) echo "stub pi: unsupported $*" >&2; exit 2 ;;
+  *) echo "stub pi: unsupported \$*" >&2; exit 2 ;;
 esac
 EOF
 printf '#!/bin/sh\n[ "$1" = --version ] && echo 1.6.0 && exit 0\necho "plain pi $*" >> "$STUB_LOG"; exit 0\n' \
   > "$TMP/plainpi/pi" || die "plain pi stub"
-chmod +x "$PI_NPM_CLI" "$TMP/plainpi/pi" || die "chmod"
-use_pi() {  # use_pi npm|plain|none: the pi update.sh finds first on PATH
-  rm -f "$TMP/bin/pi" || die "rm pi"
+chmod +x "$PI_PKG/dist/cli.js" "$TMP/plainpi/pi" || die "chmod"
+use_pi() {  # use_pi npm|plain|none: what update.sh finds as pi on PATH
+  rm -f "$PI_PREFIX/bin/pi" || die "rm pi"
   case "$1" in
-    npm) ln -s "$PI_NPM_CLI" "$TMP/bin/pi" ;;
-    plain) ln -s "$TMP/plainpi/pi" "$TMP/bin/pi" ;;
+    npm) ln -s ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js "$PI_PREFIX/bin/pi" ;;
+    plain) cp "$TMP/plainpi/pi" "$PI_PREFIX/bin/pi" ;;
   esac || die "use_pi $1"
 }
+pi_pkg_version 1.6.0
 use_pi npm
-export PATH="$TMP/bin:$PATH"
+export PATH="$PI_PREFIX/bin:$TMP/bin:$PATH"
 
 # git wrapper (on PATH only while update.sh runs): logs every invocation to
 # $STUB_GIT_LOG and fails the subcommand named by $STUB_GIT_FAIL.
@@ -108,7 +129,7 @@ chmod +x "$TMP/gitstub/git" || die "chmod"
 # guarded apply reports a local change and exits 3. STUB_REX_REPLACE makes the
 # Rex preview report a differing file; STUB_REAL_REX runs the real
 # scripts/setup-rex-config.sh instead, and STUB_REAL_PI the real
-# scripts/sync-pi-config.sh (with the stub `pi` above, 1.6.0 unless updated). STUB_TMP_WATCH: record what exists in
+# scripts/sync-pi-config.sh (with the stub `pi` above). STUB_TMP_WATCH: record what exists in
 # that directory at each call.
 STUB_DOT="$TMP/stub-dot"
 cat > "$STUB_DOT" <<'EOF' || die "dot stub"
@@ -156,10 +177,10 @@ if [ -n "${STUB_LOCAL_CHANGE:-}" ] && [ "${guard%% *}" = protect ]; then
 fi
 case "$*" in
   "pi config apply"*|"pi config check")
-    echo "Pi CLI: 1.6.0 (baseline 1.6.0)"
+    echo "Pi CLI: 1.6.0 (minimum 1.6.0)"
     echo "drift  .pi/agent/example.ts"
     echo "3 managed files; 1 differ; 0 retired. Unmanaged files preserved." ;;
-  "pi config packages"*) echo "Pi CLI: 1.6.0 (baseline 1.6.0)"; echo "would install npm:example@1.0.0" ;;
+  "pi config packages"*) echo "Pi CLI: 1.6.0 (minimum 1.6.0)"; echo "would install npm:example@1.0.0" ;;
   "rex config --apply")
     if [ -n "${STUB_REX_APPLY_DIFFERS:-}" ]; then
       echo "Existing config differs: /x/init.lua. Review first; --force makes backups." >&2; exit 1
@@ -249,7 +270,8 @@ fresh() {  # rebuild remotes + clones for one scenario
   : > "$TMP/calls" || die "calls"
   rm -f "$TMP"/calls.* || die "cleanup"
   : > "$TMP/gitlog" || die "gitlog"
-  rm -f "$TMP/pi.version" || die "cleanup"
+  rm -f "$PI_LAUNCHES" || die "cleanup"
+  pi_pkg_version 1.6.0
   use_pi npm
 }
 
@@ -257,7 +279,6 @@ fresh() {  # rebuild remotes + clones for one scenario
 # under this suite's bash, with the git wrapper on PATH.
 run_update() {
   (cd "$TMP/public" && PATH="$TMP/gitstub:$PATH" STUB_LOG="$TMP/calls" STUB_GIT_LOG="$TMP/gitlog" \
-    STUB_PI_STATE="$TMP/pi.version" \
     STUB_UNAME="${STUB_UNAME:-Darwin}" REX_BIN="${TEST_REX_BIN-$TMP/bin/rex}" \
     "$BASH" scripts/update.sh "$@") > "$OUT" 2>&1 < /dev/null
   RC=$?
@@ -332,7 +353,7 @@ has "✓" && has "Repos" && has "Pi config" && has "Rex" \
   && grep -Eq '^Summary: 10 ok, 0 warnings, 0 failed, 0 skipped' "$OUT" \
   && ok "one line per step with section headers and a summary line" \
   || bad "one line per step with section headers and a summary line"
-has "3 managed files; 1 differ" && has "    drift  .pi/agent/example.ts" && ! grep -q '^Pi CLI' "$OUT" \
+has "3 managed files; 1 differ" && has "    drift  .pi/agent/example.ts" && ! has "Pi CLI: 1.6.0 (minimum" \
   && ok "step output is summarized and indented, not dumped raw" \
   || bad "step output is summarized and indented, not dumped raw"
 grep -q $'\033' "$OUT" && bad "no color when stdout is not a TTY" || ok "no color when stdout is not a TTY"
@@ -587,7 +608,7 @@ fresh
 STUB_PI_LATEST=1.6.1 run_update
 if [ "$RC" = 0 ] && has "✓ Pi CLI — 1.6.0 → 1.6.1" && has "running Pi sessions keep 1.6.0 until restarted" \
   && [ "$(head -n 1 "$TMP/calls")" = "pi-cli update --self --no-approve @ $HOME" ] \
-  && [ "$(cat "$TMP/pi.version")" = 1.6.1 ] && called "pi config apply --apply"; then
+  && [ "$(pi_pkg_version)" = 1.6.1 ] && called "pi config apply --apply"; then
   ok "Pi CLI: pi update --self --no-approve runs from \$HOME before the Pi apply and reports old → new"
 else bad "Pi CLI: pi update --self --no-approve runs from \$HOME before the Pi apply and reports old → new"; show_calls; fi
 
@@ -609,19 +630,19 @@ else bad "Pi CLI: a failed update is a warning and the run continues (the apply 
 fresh
 STUB_PI_LATEST=1.6.1 run_update --dry-run
 if [ "$RC" = 0 ] && has "- Pi CLI: 1.6.0 installed; a real run runs pi update --self" \
-  && ! grep -q '^pi-cli' "$TMP/calls" && [ ! -e "$TMP/pi.version" ]; then
+  && ! grep -q '^pi-cli' "$TMP/calls" && [ "$(pi_pkg_version)" = 1.6.0 ] && [ ! -e "$PI_LAUNCHES" ]; then
   ok "Pi CLI: --dry-run never runs pi update and writes nothing"
 else bad "Pi CLI: --dry-run never runs pi update and writes nothing"; show_calls; fi
 
 fresh
 STUB_PI_LATEST=1.6.1 run_update --dry-run --fetch
-! grep -q '^pi-cli' "$TMP/calls" && [ ! -e "$TMP/pi.version" ] \
+! grep -q '^pi-cli' "$TMP/calls" && [ "$(pi_pkg_version)" = 1.6.0 ] && [ ! -e "$PI_LAUNCHES" ] \
   && ok "Pi CLI: --dry-run --fetch never runs pi update either" \
   || { bad "Pi CLI: --dry-run --fetch never runs pi update either"; show_calls; }
 
 fresh; use_pi plain
 STUB_PI_LATEST=1.6.1 run_update
-if [ "$RC" = 0 ] && has "- Pi CLI: not updated — $TMP/bin/pi is not the npm package layout" \
+if [ "$RC" = 0 ] && has "- Pi CLI: not updated — $PI_PREFIX/bin/pi is not a global npm install" \
   && ! grep -q '^plain pi' "$TMP/calls" && ! grep -q '^pi-cli' "$TMP/calls" && called "pi config apply --apply"; then
   ok "Pi CLI: skipped (never run) when pi is not the npm package layout"
 else bad "Pi CLI: skipped (never run) when pi is not the npm package layout"; show_calls; fi
@@ -645,6 +666,45 @@ STUB_PI_LATEST=1.6.1 run_update
 if has "! dotfiles: skipped" && has "✓ Pi CLI — 1.6.0 → 1.6.1" && ! called "pi config apply --apply"; then
   ok "Pi CLI: updated even when the repos are not verified (it does not come from the repos)"
 else bad "Pi CLI: updated even when the repos are not verified (it does not come from the repos)"; show_calls; fi
+
+fresh
+STUB_PI_UNCONFIRMED=1 run_update
+if [ "$RC" = 0 ] && has "! Pi CLI — 1.6.0 unchanged" && ! has "(latest)" \
+  && has "    Ran npm install -g" && called "pi config apply --apply"; then
+  ok "Pi CLI: a zero exit that leaves the version unchanged without confirming it is 'unchanged', not 'latest'"
+else bad "Pi CLI: a zero exit that leaves the version unchanged without confirming it is 'unchanged', not 'latest'"; show_calls; fi
+
+# A relative PATH entry: the result must not be verified here and run elsewhere.
+fresh
+PATH="../pinpm/bin:$PATH" run_update
+if [ "$RC" = 0 ] && has "- Pi CLI: not updated — ../pinpm/bin/pi" && ! grep -q '^pi-cli' "$TMP/calls" \
+  && [ ! -e "$PI_LAUNCHES" ]; then
+  ok "Pi CLI: a relative pi path from PATH is never verified or run"
+else bad "Pi CLI: a relative pi path from PATH is never verified or run"; show_calls; fi
+
+fresh
+rm "$PI_PKG/package.json" || die "rm package.json"
+run_update --dry-run
+if [ "$RC" = 0 ] && has "- Pi CLI: installed version unavailable" && has "the version gate could not be previewed" \
+  && [ ! -e "$PI_LAUNCHES" ]; then
+  ok "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"
+else bad "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"; fi
+
+# The checkouts are (re-)verified AFTER the long Pi/npm update, so a checkout
+# that changes while it runs is not applied from.
+fresh; push_upstream public; push_upstream private
+STUB_PI_LATEST=1.6.1 STUB_PI_DIRTY="$TMP/public/README.md" run_update
+if has "✓ Pi CLI — 1.6.0 → 1.6.1" && has "apply + packages skipped — dotfiles not verified (uncommitted changes)" \
+  && has "image paste config apply skipped — dotfiles not verified (uncommitted changes)" \
+  && ! grep -q -- '--apply' "$TMP/calls"; then
+  ok "Pi CLI: a public checkout that changes during the Pi update is not applied from"
+else bad "Pi CLI: a public checkout that changes during the Pi update is not applied from"; show_calls; fi
+fresh; push_upstream private
+STUB_PI_LATEST=1.6.1 STUB_PI_DIRTY="$TMP/private/pi-config/manifest.json" run_update
+if has "apply + packages skipped — dotfiles-private not verified (uncommitted changes)" \
+  && ! called "pi config apply --apply" && ! called "pi config packages --apply"; then
+  ok "Pi CLI: a private checkout that changes during the Pi update is not applied from"
+else bad "Pi CLI: a private checkout that changes during the Pi update is not applied from"; show_calls; fi
 
 # --- 7: uncaptured live Pi changes are protected ----------------------------------
 # Apply runs guarded (--protect-local) against the PREVIOUS baseline: the
@@ -770,6 +830,21 @@ if [ "$RC" = 0 ] && [ "$(cat "$HOME/.pi/agent/extensions/new.ts")" = 'export con
   && has "✓ apply" && has "✓ check"; then
   ok "real Pi tool: the same update without a local copy installs the new file"
 else bad "real Pi tool: the same update without a local copy installs the new file"; fi
+
+# No dry-run path launches Pi (its entry point can write a compile cache or a
+# settings lock even for --version): the real sync tool reads package.json.
+fresh; real_pi_fixture
+rm -f "$PI_LAUNCHES"
+STUB_REAL_PI=1 run_update --dry-run
+if [ "$RC" = 0 ] && [ ! -e "$PI_LAUNCHES" ] && has "- Pi CLI: 1.6.0 installed" && has "✓ apply (preview)" \
+  && called "pi config check"; then
+  ok "real Pi tool: --dry-run (Pi CLI, apply/packages previews, check) never launches Pi"
+else bad "real Pi tool: --dry-run (Pi CLI, apply/packages previews, check) never launches Pi"; cat "$PI_LAUNCHES" 2>/dev/null; fi
+rm -f "$PI_LAUNCHES"
+STUB_REAL_PI=1 run_update
+if [ "$RC" = 0 ] && [ "$(cat "$PI_LAUNCHES")" = "update --self --no-approve @ $HOME" ]; then
+  ok "real Pi tool: a real run launches Pi only for pi update --self"
+else bad "real Pi tool: a real run launches Pi only for pi update --self"; cat "$PI_LAUNCHES" 2>/dev/null; fi
 
 # Real Pi tool: a clean update whose apply was gated off once still applies on
 # the retry (live = A, incoming = B, last applied = A).

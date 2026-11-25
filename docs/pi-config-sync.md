@@ -97,7 +97,12 @@ Package drift never blocks. Apply backs up what it replaces; a failed
 "Updating".
 
 `manifest.json`'s `piVersion` is a **minimum**: the installed Pi CLI must be
-that version or newer (numeric `x.y.z` compare). Pi itself floats to the latest
+that version or newer (numeric `x.y.z`, 1-6 ASCII digits per component). The
+installed version is read from the global npm install's `package.json`; the
+tool never launches Pi to ask (Pi's entry point can write a compile cache or a
+settings lock even for `--version`). Previews report when that metadata is
+unavailable ("version gate not previewed"); `check` and every `--apply`
+refuse. Pi itself floats to the latest
 release — `./dot update` runs `pi update --self` before applying, and
 `./dot pi install` installs `@latest`. `capture` records the capturing machine's
 Pi version, so a capture on a newer Mac raises the minimum; other machines pick

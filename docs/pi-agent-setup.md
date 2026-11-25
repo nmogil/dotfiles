@@ -50,7 +50,7 @@ an authoritative Pi schema.
 | `agent/skills/coding-agent-account-routing/` | Personal/work inheritance and external-worker account boundary |
 | `agent/skills/subagent-routing/` | Direct-first delegation, model, placement, and fallback policy |
 | `agent/pi-codex-subagents/` | Credential-free Codex subagent policy, config, and worker templates |
-| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.2`; migrates legacy local stacks |
+| `scripts/setup-pi-subagents.sh` | Opt-in installer for pinned `@ogulcancelik/pi-codex-subagents@0.3.5`; migrates legacy local stacks |
 | `agent/themes/catppuccin-macchiato.json` | Public Catppuccin palette, updated to Pi's current `colors` schema |
 | `agent/settings.example.json` | Credential-free defaults with pinned web access and deliberately floating Codex compaction; real file is gitignored |
 | `agent/pi-codex-compaction.json` | Legacy timing settings for Pi older than 0.84.4; current Pi uses settings.json → compaction |
@@ -166,7 +166,7 @@ PI_CODING_AGENT_DIR="$HOME/.pi/agent" \
 ## Installing Pi subagents
 
 The optional subagent stack is pinned to
-`@ogulcancelik/pi-codex-subagents@0.3.2`. Apply the private scaffold first; the
+`@ogulcancelik/pi-codex-subagents@0.3.5`. Apply the private scaffold first; the
 installer refuses to continue unless the reviewed routing policy, `SYSTEM.md`,
 config, and worker templates are present. It migrates the superseded local
 `pi-subagents`/`pi-herdr` stack into `~/.pi/agent/migrations/`, removes stale
@@ -205,7 +205,8 @@ npm install -g @earendil-works/pi-coding-agent@latest
 ```
 
 `./dot pi install` prints the command and prompts before running it. The
-installed version must be at least `PI_MIN_VERSION` (`scripts/lib/pi-cli.sh`);
+installed version — read from the package's `package.json`; the checks never
+launch Pi — must be at least `PI_MIN_VERSION` (`scripts/lib/pi-cli.sh`);
 an active npm Pi that already meets it is left alone. `./dot update` keeps Pi on
 the latest release with `pi update --self`, and `./dot packages check`,
 `./dot pi doctor`, `./dot pi subagents`, and `./dot pi extensions` accept any
@@ -218,7 +219,10 @@ it removes only Vite+'s global Pi package
 with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
 available for project tooling.
 
-The npm layout is intentional. A Pi CLI installed globally through Vite+ was
+The npm layout is intentional, and only a *global* npm install counts: an
+absolute `<prefix>/bin/pi` that resolves to
+`<prefix>/lib/node_modules/@earendil-works/pi-coding-agent/dist/[bundle/]cli.js`.
+Project-local, pnpm, Vite+, and linked installs are refused. A Pi CLI installed globally through Vite+ was
 verified to fail runtime imports used by subagent and other extensions,
 while the npm-installed CLI loaded the pinned source stack.
 Pi is therefore listed in `packages/npm.global`.
