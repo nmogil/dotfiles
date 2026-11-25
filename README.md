@@ -418,44 +418,60 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 
 ```bash
 ./dot update --dry-run           # read-only: cached behind/ahead counts, apply previews, checks
-./dot update --dry-run --fetch   # same, after refreshing remote-tracking refs (git fetch)
+./dot update --dry-run --fetch   # same, after fetching the tracked upstream branches
 ./dot update                     # do it; exits 1 if any step failed
 ```
 
-1. **Repos** — fetch, then fast-forward this repo and the private companion
-   (the parent of `DOTFILES_PI_SCAFFOLD_DIR`) to the exact fetched upstream
-   commit with `git merge --ff-only --no-overwrite-ignore`. A repo that is dirty
-   (untracked non-ignored files count), detached, diverged, or missing is
-   skipped with a warning — never stashed, reset, or forced — and so is a merge
-   that would overwrite an ignored local file. Status/count errors fail closed.
-   The private repo path must be absolute, canonical, and the top of its git
-   checkout, and its remote must be the expected companion: by default the same
-   owner as this repo's `origin` with the name `dotfiles-private` (override
-   with `DOTFILES_PRIVATE_REMOTE` in `local.env`). If the fast-forward changed
-   `scripts/update.sh` or `dot`, the new updater runs the remaining steps.
-2. **Pi config** — when a `pi-config` baseline exists and **both** repos
-   updated cleanly: `./dot pi config apply --apply`, `packages --apply`, then
-   `check` (see [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). Before
-   pulling, it runs `./dot pi config check`; if the live config already differed
-   from the current baseline, that may be uncaptured local work (on the Mac,
+1. **Repos** — for this repo and the private companion (the parent of
+   `DOTFILES_PI_SCAFFOLD_DIR`), fetch exactly the tracked upstream branch from
+   its remote into its remote-tracking ref (`git fetch --refmap= <remote>
+   +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, so configured refspecs
+   and `fetch.all` cannot touch local branches or other remotes), then
+   fast-forward to that fetched commit with `git merge --ff-only
+   --no-overwrite-ignore`. A repo that is dirty (untracked non-ignored files
+   count), detached, diverged, or missing is skipped with a warning — never
+   stashed, reset, or forced — and so is a merge that would overwrite an
+   ignored local file. Status/count errors and a missing upstream branch fail
+   closed. The private repo path must be absolute, canonical, and the top of
+   its git checkout, and its remote must be the expected companion: by default
+   the same owner as this repo's `origin` with the name `dotfiles-private`
+   (override with `DOTFILES_PRIVATE_REMOTE` in `local.env`). If the
+   fast-forward changed `scripts/update.sh` or `dot`, the new updater runs the
+   remaining steps; it receives the checkout paths and commit IDs and
+   re-verifies them (and treats missing or mismatched state as "don't apply").
+2. **Pi config** — right before applying, both checkouts are re-verified (same
+   path and remote, clean, HEAD is the commit just checked), and the baseline
+   (`DOTFILES_PI_CONFIG_DIR`, default `pi-config` beside the scaffold; relative
+   paths are relative to `$HOME`, resolved once and passed to every Pi command)
+   must be inside the private repo, tracked, and free of modified, untracked,
+   or ignored files. Then: `./dot pi config apply --apply`, `packages --apply`,
+   and `check` (see [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). Before
+   pulling, it runs `./dot pi config check`: **file** drift from the current
+   baseline (`drift`/`stale` lines) may be uncaptured local work (on the Mac,
    the source of truth, it usually is), so apply is skipped with a warning —
    review with `./dot pi config apply` (preview) or `./dot pi config capture`
-   on the Mac, or rerun with `--yes`. Apply backs up every file it replaces
-   under `~/.local/state/dotfiles/pi-config-backups/`. Apply and packages are
-   separate steps: if packages fails, Pi is left partially applied (new
-   config, old packages) until you fix it and rerun. It never updates the Pi
-   CLI itself; restart Pi sessions to load package changes.
-3. **Rex** — Mac only, when this repo updated cleanly (plus the private repo
-   when a private Rex overlay exists): `./dot rex config --apply` then
-   `--check`. Existing files that differ are reported as needing manual review
-   (`./dot rex config`, then `--force`); update never passes `--force` and never
-   restarts Rex (run `rex config reload` yourself). Linux reports "skipped (Mac
-   only)". `./dot rex install --check` runs wherever rex-safe-upgrade is
-   installed.
+   on the Mac, or rerun with `--yes`. Package/dependency-only drift does not
+   block (so retrying after a failed package install works); a check that
+   fails to run is reported separately and blocks unless `--yes`, as does
+   having no pre-update baseline while `~/.pi/agent` exists. Apply backs up
+   every file it replaces under `~/.local/state/dotfiles/pi-config-backups/`.
+   Apply and packages are separate steps: if packages fails, Pi is left
+   partially applied (new config, old packages) until you fix it and rerun. It
+   never updates the Pi CLI itself; restart Pi sessions to load package changes.
+3. **Rex** — Mac only, when this repo is verified, plus the private repo when
+   a private Rex overlay exists (`DOTFILES_REX_OVERLAY_DIR`, default `rex/`
+   beside the scaffold; it must likewise be tracked and clean in the private
+   repo): `./dot rex config --apply` then `--check`. Existing files that differ
+   are reported as needing manual review (`./dot rex config`, then `--force`);
+   update never passes `--force` and never restarts Rex (run `rex config
+   reload` yourself). Linux reports "skipped (Mac only)". `./dot rex install
+   --check` runs wherever rex-safe-upgrade is installed.
 
-When a repo is skipped or its fetch fails, the applies that depend on it are
-skipped with a `!` line; read-only checks still run. `--dry-run` never fetches
-and writes nothing to either repo; `--fetch` updates only remote-tracking refs.
+When a repo is skipped or not verified, or its fetch fails, the applies that
+depend on it are skipped with a `!` line; read-only checks still run.
+`--dry-run` never fetches and writes nothing — not to either repo and not even
+temp files (command output is kept in memory); `--fetch` updates only the
+tracked upstream branches' remote-tracking refs (and `FETCH_HEAD`).
 
 Output is ✓ / ! / ✗ per step under a header per section, with command output
 summarized and indented, then a `Summary:` line with counts. Color appears only

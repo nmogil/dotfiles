@@ -31,7 +31,7 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
-| One-command machine update (`./dot update`) | `scripts/update.sh` (fast-forward repos to the fetched commit, apply Pi baseline + Mac Rex config only when the repos they need updated, cheap checks) |
+| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, re-verify checkouts + baseline/overlay provenance, then apply Pi baseline + Mac Rex config, cheap checks) |
 | CI (Ubuntu + macOS) | `.github/workflows/ci.yml` |
 | Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
 | Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |
@@ -97,7 +97,7 @@ node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 ./dot doctor                              # read-only health check
 ./dot pi doctor                           # Pi scaffold checks (read-only)
 ./dot packages check                      # installed vs declared packages
-./dot update --dry-run                    # read-only: no fetch, previews; writes nothing
+./dot update --dry-run                    # read-only: no fetch, previews; writes nothing (not even temp files)
 ```
 
 CI (`.github/workflows/ci.yml`) runs `bash -n` on every tracked shell script and
