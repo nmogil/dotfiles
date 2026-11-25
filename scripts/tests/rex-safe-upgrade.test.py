@@ -12,11 +12,15 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import textwrap
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,10 +65,12 @@ FAKE_REX = textwrap.dedent('''\
         out(b.get(args[-1], {}))
     if cmd[:1] == ["capture"]: print("screen"); sys.exit(0)
     if cmd == ["server", "stop"]:
+        if st["stop_hangs"]: save(); import time; time.sleep(60)
         os.kill(st["server_pid"], signal.SIGTERM)
         st["running"] = None
         for b in blocks():  # Rex restores every pane as a fresh shell
-            b["process"] = {"foreground": {"name": "zsh", "pid": 1, "cwd": b["process"]["foreground"]["cwd"]}}
+            fg = st["restore_as"].get(b["block_id"], {"name": "zsh", "pid": 1})
+            b["process"] = {"foreground": {**fg, "cwd": b["process"]["foreground"]["cwd"]}}
             b["program_status"] = {"records": []}
         if st["reconnect"]: st.update(running=st["comes_back_as"], instance="new")
         out({})
@@ -93,6 +99,36 @@ FAKE_REX = textwrap.dedent('''\
     sys.stderr.write("fake rex: unsupported %r\\n" % args); sys.exit(2)
 ''')
 
+# rexume's systemd user unit, as `systemctl --user` sees it. Calls go into the
+# fake rex's call list, so their order against `rex server stop` is checkable.
+FAKE_SYSTEMCTL = textwrap.dedent('''\
+    #!/usr/bin/env python3
+    import json, os, sys
+    path = os.environ["FAKE_REX_STATE"]
+    st = json.load(open(path))
+    args = sys.argv[1:]
+    st["calls"].append(["systemctl", *args])
+    st["systemctl_runtime_dirs"].append(os.environ.get("XDG_RUNTIME_DIR"))
+    def done(code, text=None):
+        json.dump(st, open(path, "w"))
+        if text: print(text)
+        sys.exit(code)
+    if args[:1] != ["--user"] or args[2:] != ["rexume"]: done(1)
+    if args[1] == "is-active": done(0 if st["rexume"] == "active" else 3, st["rexume"])
+    if args[1] == "stop":
+        if st["rexume_stop_fails"]: done(1)
+        st["rexume"] = "inactive"; done(0)
+    if args[1] == "start": st["rexume"] = "active"; done(0)
+    done(1)
+''')
+
+# A stand-in for Pi: `node` with argv0 `pi`, as Pi shows up in /proc.
+FAKE_PI = textwrap.dedent('''\
+    #!/usr/bin/env python3
+    import os, sys
+    os.execv(sys.argv[1], ["pi", "60"])
+''')
+
 S = 'session:00000000-0000-0000-0000-000000000001'
 W = 'window:00000000-0000-0000-0000-000000000002'
 ENDPOINT = 'unix:///tmp/fake-rex.sock'
@@ -102,11 +138,25 @@ def start_ticks(pid):
     return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
 
 
-def detached_pid(argv):
+def detached_pid(argv, env=None):
     """A real process the test doesn't parent, so it vanishes from /proc when killed."""
     p = subprocess.run(['bash', '-c', 'exec "$@" >/dev/null 2>&1 & echo $!', '_', *argv],
-                       capture_output=True, text=True, check=True)
+                       capture_output=True, text=True, check=True, env=env)
     return int(p.stdout)
+
+
+def children(pid):
+    out = subprocess.run(['pgrep', '-P', str(pid)], capture_output=True, text=True).stdout
+    return [int(x) for x in out.split()]
+
+
+def wait_until(pred, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return False
 
 
 # The planner and restart workflow inspect real processes through /proc
@@ -122,8 +172,12 @@ class Base(unittest.TestCase):
         self.home = Path(tmp.name)
         fakebin = self.home / 'bin'
         fakebin.mkdir()
-        (fakebin / 'rex').write_text(FAKE_REX)
-        (fakebin / 'rex').chmod(0o755)
+        for name, src in (('rex', FAKE_REX), ('systemctl', FAKE_SYSTEMCTL), ('fake-pi', FAKE_PI)):
+            (fakebin / name).write_text(src)
+            (fakebin / name).chmod(0o755)
+        self.fake_pi = fakebin / 'fake-pi'
+        self.node = fakebin / 'node'  # Pi runs as node; a copy of sleep stands in
+        shutil.copy(shutil.which('sleep'), self.node)
         self.state_file = self.home / 'rex-state.json'
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(('REX_', 'PI_'))}
         self.env.update(HOME=str(self.home), PATH=f'{fakebin}:{os.environ["PATH"]}',
@@ -161,6 +215,46 @@ class Base(unittest.TestCase):
             'program_status': {'records': recs}})
         return b
 
+    def write_pi_record(self, b, pid, agent_dir=None, sfile=None):
+        sfile = sfile or self.home / f'{b[-4:]}.jsonl'
+        sfile.write_text('{}\n')
+        rec = {'v': 2, 'kind': 'pi', 'block': b, 'pid': pid, 'startTicks': start_ticks(pid), 'cwd': '/tmp',
+               'agentDir': agent_dir, 'sessionFile': str(sfile), 'hasMessages': True}
+        self.records.joinpath(b.removeprefix('block:') + '.json').write_text(json.dumps(rec))
+
+    def spawn_in_terminal(self, argv):
+        """argv as session leader of a new terminal, like a Rex pane's first program."""
+        master, slave = os.openpty()
+        p = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, cwd='/tmp', env=self.env,
+                             start_new_session=True, preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        os.close(slave)
+
+        def stop():
+            for c in children(p.pid):
+                os.kill(c, signal.SIGKILL)
+            p.kill()
+            p.wait()
+            os.close(master)
+        self.addCleanup(stop)
+        return p.pid
+
+    def wrapper_pane(self, script='"$1" "$2"; exec sleep 60', tty=True, kids=1, owner='pi', state='idle',
+                     record=True, agent_dir=None):
+        """A pane started as `rex new -- sh -lc '... pi ...; exec $SHELL -l'`: Rex sees the
+        wrapper shell as the pane's program, and Pi runs as its child."""
+        argv = ['sh', '-lc', script, '_', str(self.fake_pi), str(self.node)]
+        wrapper = self.spawn_in_terminal(argv) if tty else self.spawn(argv)
+        self.assertTrue(wait_until(lambda: len(children(wrapper)) == kids and any(
+            os.path.basename(os.readlink(f'/proc/{c}/exe')) == 'node' for c in children(wrapper))))
+        pi = next(c for c in children(wrapper) if os.readlink(f'/proc/{c}/exe') == str(self.node))
+        self.pids.append(pi)
+        b = self.pane('dash', wrapper, state=state, app='pi')
+        if owner == 'pi':
+            self.blocks[-1]['program_status']['records'][0]['owner']['pid'] = pi
+        if record:
+            self.write_pi_record(b, pi, agent_dir=agent_dir)
+        return b, wrapper, pi
+
     def pi_pane(self, record=True, session_file=True, agent_dir=None, record_pid=None,
                 state='idle', has_messages=True, sfile=None, old_schema=False, ticks=None, version=2):
         pid = self.spawn(['bash', '-c', 'exec -a pi sleep 60'])
@@ -182,8 +276,11 @@ class Base(unittest.TestCase):
         return self.pane('python3.12', pid, app='hermes')
 
     def write_state(self, running='1.0', installed='2.0', reconnect=True, start_works=True,
-                    fail_send=(), resume_wrong=(), resume_incomplete=(), on_second_ls=None, comes_back_as=None):
+                    fail_send=(), resume_wrong=(), resume_incomplete=(), on_second_ls=None, comes_back_as=None,
+                    rexume='inactive', rexume_stop_fails=False, stop_hangs=False, restore_as=None):
         self.server_pid = self.spawn(['sleep', '60'])
+        # Another session listed first, so finding a pane's session means searching.
+        other = {'session_id': S[:-1] + '9', 'label': 'other', 'blocks': [], 'windows': []}
         self.state_file.write_text(json.dumps({
             'running': running, 'installed': installed, 'server_pid': self.server_pid,
             'instance': 'old', 'endpoint': ENDPOINT, 'reconnect': reconnect, 'start_works': start_works,
@@ -191,8 +288,10 @@ class Base(unittest.TestCase):
             'resume_incomplete': list(resume_incomplete),
             'on_second_ls': on_second_ls or {}, 'ls_count': 0, 'spawned': [], 'calls': [],
             'comes_back_as': comes_back_as or installed,
-            'sessions': [{'session_id': S, 'label': 'work', 'blocks': self.blocks,
-                          'windows': [{'window_id': W, 'label': 'tab'}]}]}))
+            'rexume': rexume, 'rexume_stop_fails': rexume_stop_fails, 'systemctl_runtime_dirs': [],
+            'stop_hangs': stop_hangs, 'restore_as': restore_as or {},
+            'sessions': [other, {'session_id': S, 'label': 'work', 'blocks': self.blocks,
+                                 'windows': [{'window_id': W, 'label': 'tab'}]}]}))
 
     def state(self):
         return json.loads(self.state_file.read_text())
@@ -335,6 +434,75 @@ class PlanTest(Base):
         self.assertIn('(restart needed)', r.stdout)
         self.assertIn('resume via pane record', r.stdout)
         self.assertIn('Not safe right now', r.stdout)
+        self.assertNotIn('rexume', r.stdout)
+
+    def test_plan_mode_says_rexume_will_be_paused(self):
+        self.pi_pane()
+        self.write_state(rexume='active')
+        r = self.tool()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('rexume is active and will be paused during the restart', r.stdout)
+        self.assertEqual([c for c in self.state()['calls'] if c[0] == 'systemctl'],
+                         [['systemctl', '--user', 'is-active', 'rexume']])
+
+    def test_pi_started_by_sh_c_wrapper_is_resumed_like_any_pi(self):
+        # Rex's status record may be owned by Pi itself or by the wrapper Rex
+        # sees as the foreground program (snapshot.2513 does the latter).
+        b1, _, pi1 = self.wrapper_pane(owner='pi')
+        b2, _, pi2 = self.wrapper_pane(owner='wrapper', agent_dir=str(self.home / '.pi/agent-work'))
+        self.write_state()
+        r, plan = self.run_tool('--dry-run')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for b, pid in ((b1, pi1), (b2, pi2)):
+            self.assertEqual((plan[b]['kind'], plan[b]['fg_pid'], plan[b]['fg_name']), ('pi', pid, 'node'))
+            self.assertIsNone(plan[b]['problem'])
+        self.assertRegex(plan[b1]['resume_cmd'], r'^cd -- /tmp && pi --session \S+\.jsonl$')
+        self.assertIn(f'PI_CODING_AGENT_DIR={self.home}/.pi/agent-work pi --session', plan[b2]['resume_cmd'])
+
+    def test_busy_pi_in_wrapper_blocks_unless_it_started_the_run(self):
+        b, _, pi = self.wrapper_pane(state='working')
+        self.assert_blocked('pi is working')
+        r, _ = self.run_tool('--dry-run', f'--self-id={b}:{pi}:{start_ticks(pi)}')
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_wrapper_pi_without_a_record_needs_reload(self):
+        self.wrapper_pane(record=False)
+        self.assert_blocked('type /reload in that pane')
+
+    def test_wrapper_with_other_processes_blocks(self):
+        self.wrapper_pane(script='sleep 60 & "$1" "$2"; exec sleep 60', kids=2)
+        self.assert_blocked('background processes would be stopped')
+
+    def test_wrapper_child_outside_the_terminal_foreground_blocks(self):
+        self.wrapper_pane(tty=False)
+        self.assert_blocked('background processes would be stopped: node')
+
+    def test_run_started_from_an_agent_pane_exempts_only_that_agent(self):
+        # Rex preview.23 sets REX_BLOCK but no longer REX_SESSION.
+        for env in ({}, {'REX_SESSION': S}):
+            with self.subTest(env=env):
+                self.blocks.clear()
+                out, go = self.home / 'out.txt', self.home / 'go'
+                go.unlink(missing_ok=True)
+                # A busy "pi" (argv0 pi) that runs the plan from its pane.
+                code = ('import os, subprocess, sys, time\n'
+                        'while not os.path.exists(sys.argv[1]): time.sleep(0.05)\n'
+                        'open(sys.argv[2], "w").write(subprocess.run(sys.argv[3:], capture_output=True, text=True).stdout)')
+                b = f'block:00000000-0000-0000-0000-{len(self.blocks) + 1:012d}'
+                caller_env = {**self.env, 'REX_BLOCK': b, **env}
+                pid = detached_pid(['bash', '-c', 'exec -a pi "$@"', '_', sys.executable, '-c', code,
+                                    str(go), str(out), sys.executable, str(TOOL)], env=caller_env)
+                self.pids.append(pid)
+                self.assertEqual(self.pane('node', pid, state='working', app='pi', top=os.getpid()), b)
+                self.write_pi_record(b, pid)
+                self.pi_pane(state='working')  # someone else's busy agent
+                self.write_state()
+                go.touch()
+                self.assertTrue(wait_until(lambda: not Path(f'/proc/{pid}').exists(), 60))
+                text = out.read_text()
+                self.assertRegex(text, r'pi +working +resume via pane record \(this pane\)')
+                self.assertEqual(text.count('(this pane)'), 1, text)
+                self.assertEqual(text.count('pi is working'), 1, text)  # only the other one blocks
 
     def test_no_server(self):
         self.write_state(running=None)
@@ -429,6 +597,97 @@ class RestartTest(Base):
             r, _ = self.run_tool()
         self.assertEqual(r.returncode, 6)
         self.assertTrue(self.server_alive())
+
+
+    def test_wrapper_pane_is_resumed_and_verified(self):
+        b, _, _ = self.wrapper_pane(agent_dir=str(self.home / '.pi/agent-work'))
+        self.write_state()
+        r, plan = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('done: 4 agents resumed', self.log())
+        self.assertIn('PI_CODING_AGENT_DIR=', plan[b]['resume_cmd'])
+
+    def test_pane_restored_running_a_program_is_not_typed_into(self):
+        # If Rex brought a pane back by re-running its `sh -c` command, the
+        # shell Rex reports is not a prompt: typing there would reach that program.
+        rerun = self.spawn(['sh', '-c', 'sleep 60; :'])
+        self.write_state(restore_as={self.pi: {'name': 'dash', 'pid': rerun}})
+        r, plan = self.run_tool()
+        self.assertEqual(r.returncode, 5, r.stdout)
+        self.assertIn('restored pane has no shell prompt', self.log())
+        self.assertEqual(len([c for c in self.state()['calls'] if c[:1] == ['send']]), 2)
+
+    # -- rexume: another daemon that reopens agents after a restart
+    def systemctl_calls(self):
+        return [c[1:] for c in self.state()['calls'] if c[0] == 'systemctl']
+
+    def test_active_rexume_is_paused_for_the_restart(self):
+        self.write_state(rexume='active')
+        self.env.pop('XDG_RUNTIME_DIR', None)  # a default is still found
+        r, _ = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = self.state()['calls']
+        stop = calls.index(['systemctl', '--user', 'stop', 'rexume'])
+        start = calls.index(['systemctl', '--user', 'start', 'rexume'])
+        self.assertLess(stop, calls.index(['server', 'stop']))
+        last_rex = max(i for i, c in enumerate(calls) if c[0] != 'systemctl')
+        self.assertGreater(start, last_rex)  # after resume and verification
+        self.assertEqual(self.state()['rexume'], 'active')
+        self.assertEqual(set(self.state()['systemctl_runtime_dirs']), {f'/run/user/{os.getuid()}'})
+        log = self.log()
+        self.assertIn('paused rexume', log)
+        self.assertIn('started rexume again', log)
+
+    def test_inactive_rexume_is_left_alone(self):
+        self.write_state()
+        r, _ = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(self.systemctl_calls(), [['--user', 'is-active', 'rexume']])
+        self.assertNotIn('rexume', self.log())
+
+    def test_rexume_that_will_not_stop_aborts_before_the_server_stops(self):
+        self.write_state(rexume='active', rexume_stop_fails=True)
+        r, _ = self.run_tool()
+        self.assertEqual(r.returncode, 8, r.stdout)
+        self.assertIn('nothing changed', self.log())
+        self.assertTrue(self.server_alive())
+        self.assertNotIn(['server', 'stop'], self.state()['calls'])
+        self.assertEqual(self.state()['rexume'], 'active')
+
+    def assert_rexume_restarted_after(self, code, **kw):
+        self.write_state(rexume='active', **kw)
+        r, _ = self.run_tool()
+        self.assertEqual(r.returncode, code, r.stdout)
+        self.assertIn(['server', 'stop'], self.state()['calls'])
+        self.assertEqual(self.systemctl_calls()[-1], ['--user', 'start', 'rexume'])
+        self.assertEqual(self.state()['rexume'], 'active')
+        self.assertIn('started rexume again', self.log())
+
+    def test_rexume_is_started_again_when_the_server_does_not_return(self):
+        self.assert_rexume_restarted_after(4, reconnect=False, start_works=False)
+
+    def test_rexume_is_started_again_when_a_pane_fails(self):
+        self.assert_rexume_restarted_after(5, fail_send=[self.pi])
+
+    def test_rexume_is_started_again_when_the_server_is_not_upgraded(self):
+        self.assert_rexume_restarted_after(7, comes_back_as='1.0')
+
+    def test_rexume_is_started_again_when_the_run_is_killed(self):
+        self.write_state(rexume='active', stop_hangs=True)
+        self.run_dir = self.home / 'run'
+        p = subprocess.Popen([sys.executable, str(TOOL), 'run', f'--run-dir={self.run_dir}'],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=self.env)
+        def stopping():
+            try:
+                return ['server', 'stop'] in self.state()['calls']
+            except json.JSONDecodeError:  # caught mid-write
+                return False
+        self.assertTrue(wait_until(stopping, 30))
+        p.send_signal(signal.SIGTERM)
+        out = p.communicate(timeout=30)[0]
+        self.assertNotEqual(p.returncode, 0, out)
+        self.assertEqual(self.systemctl_calls()[-1], ['--user', 'start', 'rexume'], out)
+        self.assertIn('started rexume again', self.log())
 
 
 class InstallerTest(unittest.TestCase):

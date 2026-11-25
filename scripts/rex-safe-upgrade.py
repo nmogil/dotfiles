@@ -27,6 +27,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -47,6 +48,9 @@ KEEP_RUNS = 8
 RECONNECT_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_RECONNECT_WAIT", 90))
 PANE_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_PANE_WAIT", 60))
 START_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_START_WAIT", 30))
+# rexume (github.com/Entwining/rexume) also reopens agents after a server
+# restart. A run pauses its systemd user unit so the two don't both type.
+REXUME_UNIT = "rexume"
 
 
 # ---------------------------------------------------------------- rex helpers
@@ -138,6 +142,29 @@ def proc_parent(pid: int) -> int:
         return 0
 
 
+def proc_stat(pid: int) -> list[str]:
+    """Fields after the command name: state, ppid, pgrp, session, tty_nr, tpgid, ..."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return []
+
+
+def proc_exe_name(pid: int) -> str:
+    """Name of the running executable, as Rex reports it ("node" for Pi)."""
+    try:
+        return os.path.basename(os.readlink(f"/proc/{pid}/exe"))
+    except OSError:
+        return proc_name(pid)
+
+
+def proc_cwd(pid: int) -> str | None:
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return None
+
+
 def proc_children(pid: int) -> list[int]:
     out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout
     return [int(x) for x in out.split()]
@@ -150,6 +177,37 @@ def descendants(pid: int) -> list[int]:
             seen.append(c)
             todo.append(c)
     return seen
+
+
+def runs_command(pid: int) -> bool:
+    """A shell started as `sh -c '...'` (or -lc, ...): running a command, not a prompt."""
+    for arg in proc_cmdline(pid)[1:]:
+        if not arg.startswith("-") or arg == "--":
+            return False
+        if not arg.startswith("--") and "c" in arg[1:]:
+            return True
+    return False
+
+
+def real_children(pid: int) -> list[int]:
+    return [c for c in proc_children(pid) if not proc_name(c).startswith(SHELL_HELPERS)]
+
+
+def pane_foreground(proc: dict) -> dict:
+    """The pane's foreground program from Rex's `process` call. When that is a
+    shell running a `-c` command (`rex new -- sh -lc 'pi ...; exec $SHELL -l'`),
+    the program is the shell's one child, if that child is in the terminal's
+    foreground process group. Adds "wrapper": the shell's pid."""
+    fg = proc.get("foreground") or {}
+    pid = fg.get("pid")
+    if not pid or fg.get("name") not in SHELLS or not runs_command(pid):
+        return fg
+    kids = real_children(pid)
+    stat = proc_stat(kids[0]) if len(kids) == 1 else []
+    if len(stat) < 6 or int(stat[5]) <= 0 or stat[2] != stat[5]:  # pgrp != tty's foreground pgrp
+        return fg
+    child = kids[0]
+    return {"pid": child, "name": proc_exe_name(child), "cwd": proc_cwd(child) or fg.get("cwd"), "wrapper": pid}
 
 
 def is_ancestor(ancestor: int, pid: int) -> bool:
@@ -216,7 +274,8 @@ def inspect_pane(p: Pane) -> None:
     if proc is None or status is None:
         p.kind, p.problem, p.hard = "unknown", "couldn't read the pane's state from Rex", True
         return
-    fg = proc.get("foreground") or {}
+    raw_fg = (proc.get("foreground") or {}).get("pid")
+    fg = pane_foreground(proc)
     top = (proc.get("child") or {}).get("pid")
     if not fg.get("pid"):
         if top:
@@ -229,15 +288,20 @@ def inspect_pane(p: Pane) -> None:
     # Use the status only when it belongs to the program that runs now.
     p.fg_ticks = proc_start_ticks(p.fg_pid)
     # Only a status reported by the program running now says whether it's busy.
-    owned = [r for r in status.get("records") or [] if (r.get("owner") or {}).get("pid") == p.fg_pid]
+    # Behind a `sh -c` wrapper, Rex may attribute the program's status to the
+    # wrapper it sees as the foreground program; the wrapper's own pid counts.
+    records = status.get("records") or []
+    owned = [r for pid in (p.fg_pid, fg.get("wrapper")) if pid
+             for r in records if (r.get("owner") or {}).get("pid") == pid]
     p.state = owned[0].get("state", "-") if owned else "-"
 
-    if top and proc_name(top) in SHELLS:  # jobs started from the pane's shell
-        extra = [c for c in proc_children(top) if c != p.fg_pid and not proc_name(c).startswith(SHELL_HELPERS)]
-        if extra:
-            p.kind = "unknown"
-            p.problem = "background processes would be stopped: " + ", ".join(sorted({proc_name(c) for c in extra}))
-            return
+    # Jobs started from the pane's shell, or from a shell running in front of it.
+    shells = {pid for pid in (top, raw_fg) if pid and proc_name(pid) in SHELLS}
+    extra = sorted({c for sh in shells for c in real_children(sh)} - {p.fg_pid, raw_fg})
+    if extra:
+        p.kind = "unknown"
+        p.problem = "background processes would be stopped: " + ", ".join(sorted({proc_name(c) for c in extra}))
+        return
     if p.fg_name in SHELLS:
         p.kind = "shell"
         return
@@ -356,6 +420,43 @@ def print_plan(panes: list[Pane], running: str, installed: str) -> None:
         print(f"  {p.label:<{w}}  {p.kind:<7} {p.state:<8} {what}{' (this pane)' if p.self_pane else ''}")
 
 
+# ------------------------------------------------------------------ rexume
+
+def systemctl_user(*args: str) -> subprocess.CompletedProcess | None:
+    """`systemctl --user` for this account. XDG_RUNTIME_DIR locates the user
+    manager; default it as the systemd-run handoff does (root has none set in
+    a system unit otherwise)."""
+    env = {**os.environ}
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=120, env=env)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def rexume_active() -> bool:
+    p = systemctl_user("is-active", REXUME_UNIT)
+    return bool(p) and p.stdout.strip() in {"active", "activating", "reloading"}
+
+
+def outcome(p: subprocess.CompletedProcess | None) -> str:
+    if p is None:
+        return "systemctl failed to run or timed out"
+    return (p.stderr.strip() or p.stdout.strip() or f"exit {p.returncode}") if p.returncode else "ok"
+
+
+def start_rexume(r: "Run") -> None:
+    p = systemctl_user("start", REXUME_UNIT)
+    if p and p.returncode == 0:
+        r.log("started rexume again (systemctl --user start rexume)")
+    else:
+        r.log(f"warning: couldn't start rexume again: {outcome(p)}. Start it with: systemctl --user start rexume")
+
+
+def _exit_on_signal(signum, _frame):
+    raise SystemExit(128 + signum)  # unwinds through finally blocks
+
+
 # ------------------------------------------------------------------- the run
 
 class Run:
@@ -459,6 +560,29 @@ def run_locked(r: Run, args) -> int:
 
 
 def restart_and_resume(r: Run, panes: list[Pane], info: dict) -> int:
+    """Pauses rexume (if it runs) for the restart, and starts it again on every
+    way out once it was stopped."""
+    if not rexume_active():
+        return restart_phase(r, panes, info)
+    # Being stopped (systemd stopping the unit, a closed terminal) must still
+    # reach the finally below.
+    old = {sig: signal.signal(sig, _exit_on_signal) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        p = systemctl_user("stop", REXUME_UNIT)
+        try:
+            if not p or p.returncode != 0:
+                r.log(f"ABORT, nothing changed: couldn't pause rexume (systemctl --user stop rexume): {outcome(p)}")
+                return 8
+            r.log("paused rexume (systemctl --user stop rexume) so only this run resumes agents")
+            return restart_phase(r, panes, info)
+        finally:
+            start_rexume(r)  # also after a failed stop, in case it stopped anyway
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+
+
+def restart_phase(r: Run, panes: list[Pane], info: dict) -> int:
     todo = [p for p in panes if p.resume_cmd]
 
     def manual(reason: str) -> None:
@@ -505,9 +629,9 @@ def restart_and_resume(r: Run, panes: list[Pane], info: dict) -> int:
     sent: list[Pane] = []
     for p in todo:
         try:
-            def shell_ready() -> bool:
-                proc = block_call(p.session, p.block, "process") or {}
-                return (proc.get("foreground") or {}).get("name") in SHELLS
+            def shell_ready() -> bool:  # a prompt, not a shell running a command
+                fg = (block_call(p.session, p.block, "process") or {}).get("foreground") or {}
+                return fg.get("name") in SHELLS and not runs_command(fg.get("pid") or 0)
             if not wait_for(shell_ready, PANE_WAIT):
                 raise RexError("restored pane has no shell prompt")
             time.sleep(2)  # let the prompt finish drawing
@@ -560,13 +684,29 @@ def prune_runs(keep: Path) -> None:
 
 # ----------------------------------------------------------------------- main
 
+def block_session(block: str) -> str | None:
+    """The session holding a block. Rex preview.23 sets only REX_BLOCK in new
+    terminals; `-s <block id>` resolves there but not on older servers."""
+    try:
+        for s in rex_json("ls", "--json").get("sessions", []):
+            blocks = rex_json("block", "ls", "--json", "-s", s["session_id"]).get("blocks", [])
+            if any(b.get("block_id") == block for b in blocks):
+                return s["session_id"]
+    except (RexError, KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
 def caller_identity() -> str | None:
     """block:pid:start of the agent this command runs under, if REX_BLOCK really
     is our pane. Only that exact process is exempt from the busy check."""
-    block, session = os.environ.get("REX_BLOCK"), os.environ.get("REX_SESSION")
-    if not block or not session:
+    block = os.environ.get("REX_BLOCK")
+    if not block:
         return None
-    fg = (block_call(session, block, "process") or {}).get("foreground") or {}
+    session = os.environ.get("REX_SESSION") or block_session(block)
+    if not session:
+        return None
+    fg = pane_foreground(block_call(session, block, "process") or {})
     if not fg.get("pid") or not is_ancestor(fg["pid"], os.getpid()):
         return None
     return pane_identity(block, fg["pid"])
@@ -601,7 +741,10 @@ def main() -> int:
         print()
         if running == installed and not args.even_if_current:
             print("Nothing to do.")
-        elif problems:
+            return 0
+        if rexume_active():
+            print("rexume is active and will be paused during the restart (started again afterwards).")
+        if problems:
             print("Not safe right now:\n  " + "\n  ".join(problems))
         else:
             print("Safe to run:  rex-safe-upgrade run")
