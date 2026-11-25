@@ -193,7 +193,12 @@ rule is at the profile level, and fails closed:
   `./dot rexume` refuses, and `--check` fails, when any registered root
   other than `~/.pi` has a work profile, or has personal extensions that
   resolve to `~/.pi/agent/extensions`. It fails closed on a registry or
-  entry it can't read. A root that no longer exists also refuses: remove its
+  entry it can't read. The registry must be a regular file: both commands
+  refuse a symlink, FIFO or directory there before reading or appending. A
+  relative `PI_HOME` is resolved once, against the current directory, to an
+  absolute canonical path. Registration and every profile write use that
+  path. Every `cd`-based resolution in these installers disables `CDPATH`,
+  so a directory of the same name on `CDPATH` can't redirect it. A root that no longer exists also refuses: remove its
   line by hand. Roots set up before the registry existed aren't recorded;
   rerun `./dot pi profiles --apply` with that `PI_HOME` to record one.
 - `rexume install` always runs with `PI_CODING_AGENT_DIR` removed.

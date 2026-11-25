@@ -17,7 +17,7 @@
 # Exit codes: 0 ok; 1 problem (differs, failed, refused); 2 usage;
 # 3 (--check only) rexboard is not installed.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PINS="$ROOT/config/rexboard/release.pins"
 
 usage() {

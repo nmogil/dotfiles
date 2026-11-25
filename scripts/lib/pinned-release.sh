@@ -54,7 +54,7 @@ pr_resolve() {
     link="$(readlink "$p")"
     case "$link" in /*) p="$link" ;; *) p="$(dirname "$p")/$link" ;; esac
   done
-  dir="$(cd -P "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
+  dir="$(CDPATH='' cd -P -- "$(dirname -- "$p")" 2>/dev/null && pwd -P)" || return 1
   printf '%s/%s' "$dir" "$(basename "$p")"
 }
 
@@ -79,7 +79,7 @@ pr_brew_classify() {
   PR_BREW_BIN="$(command -v "$PR_NAME" 2>/dev/null || true)"
 
   if [ -n "$PR_BREW_KEGS" ]; then
-    real_kegs="$(cd -P "$cellar/$PR_NAME" && pwd -P)"
+    real_kegs="$(CDPATH='' cd -P -- "$cellar/$PR_NAME" && pwd -P)"
     if [ -z "$PR_BREW_BIN" ]; then
       pr_say "$PR_NAME $PR_BREW_KEGS is installed with Homebrew but isn't on PATH (brew link $PR_NAME)" >&2
       return 1

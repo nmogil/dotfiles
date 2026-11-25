@@ -36,7 +36,9 @@
 # Exit codes: 0 ok; 1 problem (differs, failed, refused); 2 usage;
 # 3 (--check only) rexume is not installed at all.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Every cd-based resolution here disables CDPATH: with it, a relative path could
+# land in a CDPATH entry of the same name (and cd would print it).
+ROOT="$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PINS="$ROOT/config/rexume/release.pins"
 LABEL=io.github.entwining.rexume
 
@@ -247,7 +249,10 @@ registered_root_issues() {
   local reg="$HOME/.pi/.dotfiles-profile-roots" line default def_ext ext wp
   ROOT_ISSUES=""
   [ -e "$reg" ] || [ -L "$reg" ] || return 0
-  if [ ! -f "$reg" ] || [ ! -r "$reg" ]; then ROOT_ISSUES="$reg can't be read"; return 0; fi
+  # Only a regular file is read: never through a symlink, and never a FIFO
+  # (which would block) or a directory.
+  if [ -L "$reg" ] || [ ! -f "$reg" ]; then ROOT_ISSUES="$reg is not a regular file (a symlink, FIFO or directory); remove it by hand"; return 0; fi
+  if [ ! -r "$reg" ]; then ROOT_ISSUES="$reg can't be read"; return 0; fi
   default="$(canonical_dir "$HOME/.pi")"
   def_ext="$(dev_ino "$HOME/.pi/agent/extensions" || true)"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -635,10 +640,11 @@ do_apply() {
 # comments and simple `[export ]PI_HOME=value` assignments (plain, "double" or
 # 'single' quoted, with no $, backticks, ~ or globs) are understood; any other
 # mention of PI_HOME refuses.
-canonical_dir() {
+canonical_dir() {  # absolute (relative to the cwd), canonical when it exists
   local p="$1"
+  case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
   while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
-  if [ -d "$p" ]; then (cd -P -- "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
+  if [ -d "$p" ]; then (CDPATH='' cd -P -- "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
 }
 # local_env_pi_home: sets LENV_SET=1 and LENV_PI_HOME to the last PI_HOME
 # assignment in local.env; fails with LENV_WHY when it can't be read as data.

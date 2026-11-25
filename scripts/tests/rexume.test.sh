@@ -230,7 +230,7 @@ brew_has() {
 run() {
   local xdg="XDG_RUNTIME_DIR=$TMP/run"
   [ -z "${NO_XDG:-}" ] || xdg="NO_XDG=1"
-  (cd "$TMP" && env -i HOME="$HOMEDIR" PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
+  (cd "${RUN_CWD:-$TMP}" && env -i HOME="$HOMEDIR" ${RUN_CDPATH:+CDPATH="$RUN_CDPATH"} PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
     PI_CODING_AGENT_DIR="$HOMEDIR/.pi/agent-work" ${RUN_PI_HOME:+PI_HOME="$RUN_PI_HOME"} \
     STUB_LOG="$TMP/calls" STUB_TMP="$TMP" STUB_UNEXPECTED="$UNEXPECTED" \
     STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_CELLAR="$CELLAR" STUB_BREWBIN="$BREWBIN" \
@@ -633,6 +633,26 @@ fresh; custom_root work; before="$(snapshot)"; run
 [ "$RC" = 0 ] && has "would refuse" && has "custom-pi" && [ "$(snapshot)" = "$before" ]; res "dry-run reports a registered custom work profile and writes nothing"
 fresh; run --apply; custom_root work; run --check
 [ "$RC" = 1 ] && has "custom-pi"; res "--check exits 1 when rexume is installed and a registered root has a work profile"
+
+# --- CDPATH never redirects a path the installer resolves ---------------------------------------------------------
+DECOY="$TMP/cdpath-decoy"; mkdir -p "$DECOY/scripts" "$DECOY/pihome"
+fresh; (cd "$REPO" && env -i HOME="$HOMEDIR" PATH="$STUB:$SYSBIN" CDPATH="$DECOY" STUB_LOG="$TMP/calls" STUB_TMP="$TMP" \
+  STUB_UNEXPECTED="$UNEXPECTED" STUB_OS=Linux STUB_ARCH=x86_64 "$BASH" scripts/setup-rexume.sh --check) > "$OUT" 2>&1; RC=$?
+[ "$RC" = 3 ] && hasx "rexume is not installed (./dot rexume --apply)"; res "run by a relative path with CDPATH set, the installer still finds its own repo"
+fresh; ln -s .pi "$HOMEDIR/pihome"; RUN_CWD="$HOMEDIR" RUN_CDPATH="$DECOY" RUN_PI_HOME=pihome run --apply
+[ "$RC" = 0 ] && installed; res "a relative PI_HOME resolves against the cwd, not a CDPATH entry of the same name"
+
+# --- the registry must be a regular file -----------------------------------------------------------------------------
+for kind in symlink fifo dir; do
+  fresh; : > "$TMP/reg-target"
+  case "$kind" in
+    symlink) ln -s "$TMP/reg-target" "$REG" ;;
+    fifo) mkfifo "$REG" ;;
+    dir) mkdir "$REG" ;;
+  esac
+  run --apply
+  [ "$RC" = 1 ] && has "not a regular file" && ! installed; res "a $kind registry is refused (fail closed)"
+done
 
 # --- the readiness budget includes the kill grace; no extra probe after a timeout --------------------------------
 # From the first readiness probe to the end of the run: the 3 s budget (one

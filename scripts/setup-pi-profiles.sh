@@ -7,21 +7,29 @@ script_dir() {
   local src="${BASH_SOURCE[0]}"
   while [ -L "$src" ]; do
     local dir
-    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    dir="$(CDPATH='' cd -P -- "$(dirname -- "$src")" && pwd)"
     src="$(readlink "$src")"
     [[ "$src" != /* ]] && src="$dir/$src"
   done
-  cd -P "$(dirname "$src")" && pwd
+  CDPATH='' cd -P -- "$(dirname -- "$src")" && pwd
 }
 
-ROOT="$(cd "$(script_dir)/.." && pwd)"
+ROOT="$(CDPATH='' cd -- "$(script_dir)/.." && pwd)"
 # shellcheck source=lib/local-env.sh
 . "$ROOT/scripts/lib/local-env.sh"
 # shellcheck source=lib/pi-profiles-lock.sh
 . "$ROOT/scripts/lib/pi-profiles-lock.sh"
 dotfiles_load_config
 
+# Resolve the profile root once, to an absolute path (relative to the cwd;
+# canonical when it exists) with CDPATH disabled, so a relative PI_HOME can't
+# land in a CDPATH entry of the same name. Registration and every profile write
+# below use this one path.
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
+case "$PI_ROOT" in /*) ;; *) PI_ROOT="$PWD/$PI_ROOT" ;; esac
+if [ -d "$PI_ROOT" ]; then
+  PI_ROOT="$(CDPATH='' cd -P -- "$PI_ROOT" && pwd -P)" || { echo "setup-pi-profiles: cannot resolve $PI_ROOT" >&2; exit 1; }
+fi
 PERSONAL_DIR="$PI_ROOT/agent"
 WORK_SLUG="$DOTFILES_PI_WORK_PROFILE_SLUG"
 WORK_FIRST="${WORK_SLUG%"${WORK_SLUG#?}"}"
@@ -279,7 +287,12 @@ case "$MODE" in
     # work profile, so `./dot rexume` also checks roots set up with a one-off
     # PI_HOME (docs/rexume.md). One line per root; never rewritten.
     PROFILE_ROOTS="$HOME/.pi/.dotfiles-profile-roots"
-    profile_root="$(cd -P "$PI_ROOT" && pwd -P)" || fail "cannot resolve $PI_ROOT"
+    profile_root="$PI_ROOT"   # absolute and canonical: PERSONAL_DIR exists under it
+    # Only a regular file is read or appended: never through a symlink, and
+    # never a FIFO (which would block) or a directory.
+    if [ -L "$PROFILE_ROOTS" ] || { [ -e "$PROFILE_ROOTS" ] && [ ! -f "$PROFILE_ROOTS" ]; }; then
+      fail "$PROFILE_ROOTS is not a regular file (a symlink, FIFO or directory); remove it by hand, then rerun"
+    fi
     if [ -e "$PROFILE_ROOTS" ] && grep -Fxq -- "$profile_root" "$PROFILE_ROOTS"; then
       echo "  ok     profile root recorded"
     else

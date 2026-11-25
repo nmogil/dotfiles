@@ -111,6 +111,43 @@ grep -Fq 'would refuse' "$RX/out" && grep -Fq 'custom-pi' "$RX/out" && grep -Fq 
   || rx_fail "custom root: a later default ./dot rexume sees the custom work profile"
 printf '%s\n' 'ok   a custom-root work profile is registered and blocks a later default rexume'
 
+# CDPATH: a relative PI_HOME resolves against the current directory, never a
+# CDPATH entry with the same name; registration and every write use that one
+# absolute path.
+H="$RX/cdpath"; rx_home "$H"
+mkdir -p "$H/cwd/rel-pi/agent/extensions" "$H/decoy/rel-pi/agent/extensions"
+if ! (cd "$H/cwd" && CDPATH="$H/decoy" HOME="$H" PI_HOME=rel-pi XDG_CONFIG_HOME="$H/.config" \
+    DOTFILES_LOCAL_ENV="$H/.config/dotfiles/local.env" HERMES_HOME="$H/.hermes" DOTFILES_PI_SCAFFOLD_DIR="$FIX" \
+    PATH="$RX_PATH" "$ROOT/dot" pi profiles --apply) > "$RX/out" 2>&1; then
+  rx_fail "CDPATH: pi profiles --apply with a relative PI_HOME"
+fi
+[ "$(cat "$H/.pi/.dotfiles-profile-roots")" = "$(cd -P "$H/cwd/rel-pi" && pwd -P)" ] \
+  && [ -d "$H/cwd/rel-pi/agent-clientx" ] && [ ! -e "$H/decoy/rel-pi/agent-clientx" ] \
+  || rx_fail "CDPATH: the registry and the work profile use the cwd's rel-pi, not CDPATH's"
+printf '%s\n' 'ok   CDPATH never redirects a relative PI_HOME (registry and writes agree)'
+
+# The registry must be a regular file (not a symlink, FIFO or directory); it
+# is never read or appended through anything else. Bounded: a FIFO would block.
+bounded_profiles() {  # bounded_profiles <home>: rx_profiles --apply, killed after 10 s
+  rx_profiles "$1" --apply & bp=$!
+  ( sleep 10; kill "$bp" 2>/dev/null ) & bw=$!
+  wait "$bp"; brc=$?
+  kill "$bw" 2>/dev/null; wait "$bw" 2>/dev/null
+  return "$brc"
+}
+for kind in symlink fifo dir; do
+  H="$RX/reg-$kind"; rx_home "$H"; : > "$RX/reg-target-$kind"
+  case "$kind" in
+    symlink) ln -s "$RX/reg-target-$kind" "$H/.pi/.dotfiles-profile-roots" ;;
+    fifo) mkfifo "$H/.pi/.dotfiles-profile-roots" ;;
+    dir) mkdir "$H/.pi/.dotfiles-profile-roots" ;;
+  esac
+  if bounded_profiles "$H"; then rx_fail "registry $kind: pi profiles --apply went ahead"; fi
+  grep -Fq 'not a regular file' "$RX/out" && [ ! -s "$RX/reg-target-$kind" ] && [ ! -e "$H/.pi/agent-clientx" ] \
+    || rx_fail "registry $kind: refused clearly, nothing written"
+done
+printf '%s\n' 'ok   a symlinked, FIFO or directory registry is refused before reading or appending'
+
 # A mixed-case work profile still counts for --check.
 H="$RX/mixed"; rx_home "$H"; mkdir -p "$H/.pi/AGENT-OTHER" "$H/.local/bin"
 printf '#!/bin/sh\n' > "$H/.local/bin/rexume"; chmod 755 "$H/.local/bin/rexume"
