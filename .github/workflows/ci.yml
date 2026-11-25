@@ -57,6 +57,7 @@ jobs:
         run: |
           /bin/bash --version | head -n 1
           /bin/bash scripts/tests/update.test.sh
+          /bin/bash scripts/tests/rexboard.test.sh
 
       - name: Python tests
         run: |

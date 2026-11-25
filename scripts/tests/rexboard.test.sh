@@ -43,13 +43,14 @@ cat > "$STUB/uname" <<'EOF'
 #!/bin/sh
 case "${1:-}" in -m) echo "${STUB_ARCH:-x86_64}" ;; *) echo "${STUB_OS:-Linux}" ;; esac
 EOF
-# brew stub: STUB_BREW_HAS=<version> means the formula is installed.
+# brew stub: `--cellar` prints STUB_CELLAR (or fails with STUB_BREW_CELLAR_FAIL);
+# install fails with STUB_BREW_INSTALL_FAIL. Anything else (list, info, upgrade, ...) is logged and fails.
 cat > "$STUB/brew" <<'EOF'
 #!/bin/sh
 echo "brew $*" >> "$STUB_LOG"
 case "$*" in
-  "list --versions rexboard") [ -n "${STUB_BREW_HAS:-}" ] && echo "rexboard $STUB_BREW_HAS" ;;
-  "install vanducng/tap/rexboard") exit 0 ;;
+  "--cellar") [ -z "${STUB_BREW_CELLAR_FAIL:-}" ] || exit 1; echo "$STUB_CELLAR" ;;
+  "install vanducng/tap/rexboard") [ -z "${STUB_BREW_INSTALL_FAIL:-}" ] || exit 1 ;;
   *) exit 1 ;;
 esac
 EOF
@@ -58,12 +59,24 @@ NOBREW="$TMP/stub-nobrew"; mkdir -p "$NOBREW"; cp "$STUB/uname" "$NOBREW/"
 
 HOMEDIR="$TMP/home"
 DST="$HOMEDIR/.local/bin/rexboard"
-fresh() { chmod -R u+w "$HOMEDIR" 2>/dev/null; rm -rf "$HOMEDIR"; mkdir -p "$HOMEDIR"; : > "$TMP/calls"; write_pins; }
+fresh() {
+  chmod -R u+w "$HOMEDIR" 2>/dev/null
+  rm -rf "$HOMEDIR" "$CELLAR" "$BREWBIN" "$TMP"/ran-*; mkdir -p "$HOMEDIR"; : > "$TMP/calls"; write_pins
+}
 # run <args...>: the installer under a PATH with only the stubs and /usr/bin:/bin.
+CELLAR="$TMP/cellar"; BREWBIN="$TMP/brewbin"
+# brew_has <version>: a fake Homebrew keg, linked onto PATH the way Homebrew links it.
+brew_has() {
+  mkdir -p "$CELLAR/rexboard/$1/bin" "$BREWBIN" || die cellar
+  printf '#!/bin/sh\ntouch "%s/ran-brew-rexboard"\n' "$TMP" > "$CELLAR/rexboard/$1/bin/rexboard"
+  chmod 755 "$CELLAR/rexboard/$1/bin/rexboard"
+  ln -sf "../cellar/rexboard/$1/bin/rexboard" "$BREWBIN/rexboard" || die link
+}
 run() {
   (cd "$TMP" && env -i HOME="$HOMEDIR" PATH="${STUB_PATH:-$STUB}:/usr/bin:/bin" STUB_LOG="$TMP/calls" \
-    STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_BREW_HAS="${STUB_BREW_HAS:-}" \
-    bash "$REPO/scripts/setup-rexboard.sh" "$@") > "$OUT" 2>&1
+    STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_CELLAR="$CELLAR" \
+    STUB_BREW_CELLAR_FAIL="${STUB_BREW_CELLAR_FAIL:-}" STUB_BREW_INSTALL_FAIL="${STUB_BREW_INSTALL_FAIL:-}" \
+    "$BASH" "$REPO/scripts/setup-rexboard.sh" "$@") > "$OUT" 2>&1
   RC=$?
 }
 has() { grep -Fq -- "$1" "$OUT"; }
@@ -131,7 +144,7 @@ run --check
   || bad "release.env is parsed as data, never executed"
 
 # --- Linux: an existing binary that is not the pinned build ----------------------------
-fresh; mkdir -p "$HOMEDIR/.local/bin"; printf '#!/bin/sh\necho "rexboard 0.1.0"\n' > "$DST"; chmod 755 "$DST"
+fresh; mkdir -p "$HOMEDIR/.local/bin"; printf '#!/bin/sh\ntouch "%s/ran-differing"\n' "$TMP" > "$DST"; chmod 755 "$DST"
 before="$(sha "$DST")"
 run --check
 [ "$RC" = 1 ] && has "differs from the pinned 9.9.9 build" && ok "Linux --check reports a differing binary" \
@@ -143,6 +156,8 @@ run --apply
 run --dry-run
 [ "$RC" = 0 ] && has "differs" && [ "$(sha "$DST")" = "$before" ] && ok "Linux dry-run reports the difference" \
   || bad "Linux dry-run reports the difference"
+[ ! -e "$TMP/ran-differing" ] && ok "check, dry-run and apply never execute a binary that failed verification" \
+  || bad "check, dry-run and apply never execute a binary that failed verification"
 run --apply --force
 backup="$(find "$HOMEDIR/.local/state/dotfiles/rexboard-backups" -type f -name rexboard 2>/dev/null | head -1)"
 if [ "$RC" = 0 ] && [ "$(sha "$DST")" = "$BINARY_SHA" ] && [ -n "$backup" ] && [ "$(sha "$backup")" = "$before" ] \
@@ -164,14 +179,25 @@ fresh; STUB_ARCH=aarch64 run --apply
   && ok "Linux on another architecture is refused" || bad "Linux on another architecture is refused"
 
 # --- macOS: Homebrew owns the install --------------------------------------------------
-fresh; STUB_OS=Darwin STUB_ARCH=arm64 STUB_BREW_HAS=0.37.1 run --check
+fresh; brew_has 0.37.1
+STUB_PATH="$STUB:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
 [ "$RC" = 0 ] && has "rexboard 0.37.1 installed with Homebrew" \
   && ok "macOS --check passes for a Homebrew install of any version (Homebrew owns updates)" \
   || bad "macOS --check passes for a Homebrew install of any version (Homebrew owns updates)"
-STUB_OS=Darwin STUB_ARCH=arm64 STUB_BREW_HAS=0.37.1 run --apply
-[ "$RC" = 0 ] && has "already installed" && ! grep -q '^brew install' "$TMP/calls" && ! grep -q 'upgrade\|uninstall\|reinstall' "$TMP/calls" \
-  && ok "macOS --apply never reinstalls, upgrades, or removes an existing Homebrew install" \
-  || bad "macOS --apply never reinstalls, upgrades, or removes an existing Homebrew install"
+STUB_PATH="$STUB:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --apply
+[ "$RC" = 0 ] && has "already installed" && ! grep -q '^brew install' "$TMP/calls" \
+  && ok "macOS --apply never reinstalls an existing Homebrew install" \
+  || bad "macOS --apply never reinstalls an existing Homebrew install"
+grep -v -x 'brew --cellar' "$TMP/calls" | grep -q . && bad "macOS checks only ask brew for --cellar (never list/info/upgrade)" \
+  || ok "macOS checks only ask brew for --cellar (never list/info/upgrade)"
+[ ! -e "$TMP/ran-brew-rexboard" ] && ok "macOS checks never run the installed binary" || bad "macOS checks never run the installed binary"
+fresh; brew_has 0.36.0; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\n' > "$TMP/otherbin/rexboard"; chmod 755 "$TMP/otherbin/rexboard"
+STUB_PATH="$STUB:$TMP/otherbin:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
+[ "$RC" = 1 ] && has "shadows the Homebrew one" && ok "macOS --check flags a non-Homebrew rexboard ahead of Homebrew's on PATH" \
+  || bad "macOS --check flags a non-Homebrew rexboard ahead of Homebrew's on PATH"
+fresh; STUB_BREW_CELLAR_FAIL=1 STUB_OS=Darwin STUB_ARCH=arm64 run --check
+[ "$RC" = 1 ] && has "brew --cellar failed" && ok "macOS --check treats a failed Homebrew query as a problem, not as absence" \
+  || bad "macOS --check treats a failed Homebrew query as a problem, not as absence"
 fresh; STUB_OS=Darwin STUB_ARCH=arm64 run --check
 [ "$RC" = 3 ] && has "not installed" && ok "macOS --check exits 3 when it is not installed" \
   || bad "macOS --check exits 3 when it is not installed"
@@ -182,17 +208,67 @@ STUB_OS=Darwin STUB_ARCH=arm64 run --apply
 [ "$RC" = 0 ] && grep -Fxq 'brew install vanducng/tap/rexboard' "$TMP/calls" && [ -z "$(home_files)" ] \
   && ok "macOS --apply installs with Homebrew (nothing in ~/.local/bin)" \
   || bad "macOS --apply installs with Homebrew (nothing in ~/.local/bin)"
-fresh; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\necho rexboard 0.1.0\n' > "$TMP/otherbin/rexboard"; chmod 755 "$TMP/otherbin/rexboard"
+fresh; STUB_BREW_INSTALL_FAIL=1 STUB_OS=Darwin STUB_ARCH=arm64 run --apply
+[ "$RC" = 1 ] && ! has "installed rexboard" && ok "macOS --apply reports a failed brew install as a failure" \
+  || bad "macOS --apply reports a failed brew install as a failure"
+fresh; STUB_OS=Darwin STUB_ARCH=arm64 run --apply --force
+[ "$RC" = 2 ] && ! grep -q '^brew install' "$TMP/calls" && ok "macOS rejects --apply --force (exit 2)" \
+  || bad "macOS rejects --apply --force (exit 2)"
+fresh; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\n' > "$TMP/otherbin/rexboard"; chmod 755 "$TMP/otherbin/rexboard"
 STUB_PATH="$STUB:$TMP/otherbin" STUB_OS=Darwin STUB_ARCH=arm64 run --apply
 [ "$RC" = 1 ] && has "not from Homebrew" && ! grep -q '^brew install' "$TMP/calls" \
   && ok "macOS --apply refuses when a non-Homebrew rexboard is already on PATH" \
   || bad "macOS --apply refuses when a non-Homebrew rexboard is already on PATH"
-STUB_PATH="$STUB:$TMP/otherbin" STUB_OS=Darwin STUB_ARCH=arm64 run --check
-[ "$RC" = 1 ] && has "not from Homebrew" && ok "macOS --check flags a non-Homebrew rexboard" \
-  || bad "macOS --check flags a non-Homebrew rexboard"
+fresh; STUB_OS=Darwin STUB_ARCH=x86_64 run --apply
+[ "$RC" = 1 ] && has "Apple Silicon" && ! grep -q '^brew install' "$TMP/calls" \
+  && ok "macOS on Intel is refused (upstream ships Apple Silicon only)" \
+  || bad "macOS on Intel is refused (upstream ships Apple Silicon only)"
 fresh; STUB_PATH="$NOBREW" STUB_OS=Darwin STUB_ARCH=arm64 run --apply
 [ "$RC" = 1 ] && has "Homebrew is required" && ok "macOS --apply without Homebrew fails clearly" \
   || bad "macOS --apply without Homebrew fails clearly"
+
+# --- Linux: failures while installing leave the existing binary alone ----------------
+fresh; mkdir -p "$HOMEDIR/.local/bin" "$HOMEDIR/.local/state"; printf '#!/bin/sh\n# hand install\n' > "$DST"; chmod 755 "$DST"
+before="$(sha "$DST")"; : > "$HOMEDIR/.local/state/dotfiles"   # a file where the backup directory must go
+run --apply --force
+[ "$RC" = 1 ] && [ "$(sha "$DST")" = "$before" ] && ! has "installed rexboard" \
+  && ok "a failed backup leaves the original binary untouched" || bad "a failed backup leaves the original binary untouched"
+[ -z "$(ls -A "$HOMEDIR/.local/bin" | grep -v '^rexboard$')" ] && ok "a failed install leaves no staging file" \
+  || bad "a failed install leaves no staging file"
+fresh; mkdir -p "$HOMEDIR/.local/bin"; chmod 555 "$HOMEDIR/.local/bin"
+run --apply
+[ "$RC" = 1 ] && [ ! -e "$DST" ] && ! has "installed rexboard" && ok "an unwritable ~/.local/bin is a failure, not a success" \
+  || bad "an unwritable ~/.local/bin is a failure, not a success"
+chmod 755 "$HOMEDIR/.local/bin"
+fresh; mkdir -p "$HOMEDIR/.local/bin/rexboard"
+run --apply --force
+[ "$RC" = 1 ] && [ -d "$DST" ] && [ -z "$(ls -A "$DST")" ] && ok "a directory at ~/.local/bin/rexboard is refused and left empty" \
+  || bad "a directory at ~/.local/bin/rexboard is refused and left empty"
+fresh; run --apply; chmod 644 "$DST"
+run --check
+[ "$RC" = 1 ] && has "not executable" && ok "Linux --check flags a matching but non-executable binary" \
+  || bad "Linux --check flags a matching but non-executable binary"
+run --apply
+[ "$RC" = 0 ] && [ -x "$DST" ] && [ "$(sha "$DST")" = "$BINARY_SHA" ] && ok "Linux --apply restores the execute bit on the pinned binary" \
+  || bad "Linux --apply restores the execute bit on the pinned binary"
+fresh; run --apply; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\n' > "$TMP/otherbin/rexboard"; chmod 755 "$TMP/otherbin/rexboard"
+STUB_PATH="$STUB:$TMP/otherbin:$HOMEDIR/.local/bin" run --check
+[ "$RC" = 1 ] && has "shadows" && ok "Linux --check flags another rexboard ahead of ~/.local/bin on PATH" \
+  || bad "Linux --check flags another rexboard ahead of ~/.local/bin on PATH"
+# A hand install that appears while the release downloads is not overwritten.
+fresh; cat > "$STUB/curl" <<'EOF'
+#!/bin/sh
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+mkdir -p "$HOME/.local/bin" && printf 'raced\n' > "$HOME/.local/bin/rexboard"
+exec /usr/bin/curl "$@"
+EOF
+chmod 755 "$STUB/curl"
+run --apply
+[ "$RC" = 1 ] && [ "$(cat "$DST")" = raced ] && [ -z "$(ls -A "$HOMEDIR/.local/bin" | grep -v '^rexboard$')" ] \
+  && ok "a binary that appears during the download is never overwritten" \
+  || bad "a binary that appears during the download is never overwritten"
+rm -f "$STUB/curl"
 
 # --- the real pin file is well formed -----------------------------------------------
 grep -Eq '^REXBOARD_LINUX_X86_64_ARCHIVE_SHA256=[0-9a-f]{64}$' "$ROOT/config/rexboard/release.env" \

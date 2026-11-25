@@ -29,7 +29,8 @@ brew "sox"             # Audio processing
 brew "yazi"            # Terminal file manager
 brew "zoxide"          # Smarter cd command
 brew "tw93/tap/mole"   # Mole app
-brew "vanducng/tap/rexboard"  # Attention board for agent panes across Rex hosts (docs/rexboard.md)
+# Attention board for agent panes across Rex hosts (docs/rexboard.md); upstream ships Apple Silicon only.
+brew "vanducng/tap/rexboard" if Hardware::CPU.arm?
 
 # Optional but useful CLI tools (uncomment if wanted)
 # brew "bat"          # Better cat with syntax highlighting

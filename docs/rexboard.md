@@ -16,24 +16,29 @@ in a Rex pane report on their own.
 ./dot rexboard --check      # 0 ok, 3 not installed, 1 differs or a problem
 ```
 
-- **macOS:** Homebrew owns it (`Brewfile`: `vanducng/tap/rexboard`), so
-  `brew bundle` and `brew upgrade` keep it current. `--apply` runs
-  `brew install` only when it is missing; it never upgrades, reinstalls, or
-  removes it. `--check` accepts any Homebrew version and flags a `rexboard`
-  on PATH that did not come from Homebrew.
+- **macOS (Apple Silicon; upstream ships no Intel build):** Homebrew owns it
+  (`Brewfile`: `vanducng/tap/rexboard`), so `brew bundle` and `brew upgrade`
+  keep it current. `--apply` runs `brew install` only when it is missing; it
+  never upgrades, reinstalls, or removes it (`--force` is rejected). `--check`
+  accepts any Homebrew version and flags a `rexboard` on PATH that did not
+  come from Homebrew or shadows Homebrew's. It asks Homebrew only for
+  `brew --cellar` (a path lookup) and reads the Cellar itself.
 - **Linux (x86_64):** the release pinned in `config/rexboard/release.env`.
-  `--apply` downloads that archive, checks its SHA-256 and the binary's
-  SHA-256 against the pins, and installs `~/.local/bin/rexboard` by writing a
-  temporary file beside it and renaming it into place. A binary that already
-  matches is left alone (no download). A different binary is left alone too;
-  `--apply --force` backs it up to `~/.local/state/dotfiles/rexboard-backups/`
-  first. Symlinks are refused. Upstream publishes no other Linux build.
-  `setup-linux.sh` offers this step.
+  `--apply` downloads that archive and checks its SHA-256 and the binary's
+  against the pins before touching `~/.local/bin/rexboard`. A missing binary
+  is published with `link`, which never overwrites anything that appeared in
+  the meantime; a forced replacement is a rename of exactly that path. A
+  binary that already matches is left alone (no download; a missing execute
+  bit is restored). A different binary is left alone too; `--apply --force`
+  backs it up to `~/.local/state/dotfiles/rexboard-backups/` first and
+  verifies the backup. Symlinks and directories are refused. The status covers
+  `~/.local/bin/rexboard` and flags another `rexboard` ahead of it on PATH.
+  Upstream publishes no other Linux build. `setup-linux.sh` offers this step.
 
-The release has no GitHub attestation, so the pins are the trust anchor:
-both checksums were checked against the release's `SHA256SUMS` and against
-the binary already running on the VPS. `release.env` is read as data, never
-sourced.
+The release has no GitHub attestation, so the pins are the trust anchor. The
+archive checksum matches the release's `SHA256SUMS`; the binary checksum is of
+the `rexboard` file inside that archive, and matches the copy on the VPS.
+`release.env` is read as data, never sourced. Checks never run the binary.
 
 ## What the installer never does
 
