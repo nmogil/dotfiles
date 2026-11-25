@@ -22,7 +22,16 @@ class RexConfigTest(unittest.TestCase):
         self.home.mkdir()
         self.config = self.home/'.config/rex'
         self.env = dict(os.environ, HOME=str(self.home), XDG_CONFIG_HOME=str(self.home/'.config'), REX_BIN=REX)
-        self.env.pop('REX_CONFIG', None)
+        for name in ('REX_CONFIG', 'DOTFILES_REX_OVERLAY_DIR', 'DOTFILES_PI_SCAFFOLD_DIR', 'DOTFILES_LOCAL_ENV'):
+            self.env.pop(name, None)
+
+    def make_overlay(self, files):
+        overlay = Path(self.tmp.name)/'private/rex'
+        for relative, text in files.items():
+            (overlay/relative).parent.mkdir(parents=True, exist_ok=True)
+            (overlay/relative).write_text(text)
+        self.env['DOTFILES_REX_OVERLAY_DIR'] = str(overlay)
+        return overlay
 
     def run_setup(self, *args, script=None, expected=0):
         result = subprocess.run(['/bin/bash', str(script or ROOT/'scripts/setup-rex-config.sh'), *args],
@@ -87,6 +96,68 @@ class RexConfigTest(unittest.TestCase):
         (fixture/'config/rex/rex-image-paste/init.lua').write_text('error("must not execute")\n')
         self.run_setup('--apply', script=fixture/'scripts/setup-rex-config.sh', expected=1)
         self.assertFalse(self.config.exists())
+
+    # --- private overlay -------------------------------------------------
+
+    OVERLAY_ACTION = 'rex.action({ name = "overlay_probe", title = "Probe", run = function() end })\n'
+
+    def test_overlay_is_installed_beside_init_and_loaded(self):
+        self.make_overlay({
+            'dotfiles_private.lua': 'require("probe_pkg")\n',
+            'probe_pkg/init.lua': self.OVERLAY_ACTION,
+            'README.md': 'docs only\n',
+            'targets.example.json': '{}\n',
+        })
+        result = self.run_setup('--apply')
+        self.assertIn('Private overlay:', result.stdout)
+        self.assertTrue((self.config/'dotfiles_private.lua').is_file())
+        self.assertTrue((self.config/'probe_pkg/init.lua').is_file())
+        self.assertFalse((self.config/'README.md').exists())
+        self.assertFalse((self.config/'targets.example.json').exists())
+        check = self.run_setup('--check')
+        self.assertIn('actions: 1', check.stdout + check.stderr)
+
+    def test_overlay_can_also_come_from_the_scaffold_sibling(self):
+        overlay = self.make_overlay({'dotfiles_private.lua': self.OVERLAY_ACTION})
+        del self.env['DOTFILES_REX_OVERLAY_DIR']
+        self.env['DOTFILES_PI_SCAFFOLD_DIR'] = str(overlay.parent/'pi-scaffold')
+        self.run_setup('--apply')
+        self.assertTrue((self.config/'dotfiles_private.lua').is_file())
+
+    def test_init_without_overlay_still_validates(self):
+        self.run_setup('--apply')
+        self.assertFalse((self.config/'dotfiles_private.lua').exists())
+        self.run_setup('--check')
+
+    def test_broken_overlay_fails_the_check(self):
+        self.make_overlay({'dotfiles_private.lua': 'require("missing_dependency")\n'})
+        self.run_setup('--apply', expected=1)  # post-install config check fails loudly
+
+    def test_overlay_cannot_replace_public_config_or_use_unsafe_paths(self):
+        for files in ({'init.lua': '-- hijack\n'},
+                      {'rex-image-paste/init.lua': '-- hijack\n'},
+                      {'bad name.lua': '--\n'}):
+            with self.subTest(files=list(files)):
+                shutil.rmtree(Path(self.tmp.name)/'private', ignore_errors=True)
+                self.make_overlay(files)
+                self.run_setup('--apply', expected=1)
+                self.assertFalse(self.config.exists())
+
+    def test_overlay_symlinks_are_refused(self):
+        overlay = self.make_overlay({'dotfiles_private.lua': self.OVERLAY_ACTION})
+        (overlay/'linked.lua').symlink_to(overlay/'dotfiles_private.lua')
+        self.run_setup('--apply', expected=1)
+        self.assertFalse(self.config.exists())
+
+    def test_overlay_file_conflicts_follow_force_and_backup_rules(self):
+        self.make_overlay({'dotfiles_private.lua': self.OVERLAY_ACTION})
+        self.config.mkdir(parents=True)
+        (self.config/'dotfiles_private.lua').write_text('-- mine\n')
+        self.run_setup('--apply', expected=1)
+        self.assertEqual((self.config/'dotfiles_private.lua').read_text(), '-- mine\n')
+        self.run_setup('--apply', '--force')
+        backups = list((self.home/'.local/state/dotfiles/rex-backups').glob('apply-*/dotfiles_private.lua'))
+        self.assertEqual([b.read_text() for b in backups], ['-- mine\n'])
 
 
 if __name__ == '__main__':

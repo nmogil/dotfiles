@@ -46,6 +46,20 @@ For updates, review the new upstream revision and refresh its vendored files,
 checksums, and provenance together. Do not replace the pinned module with an
 automatically updated checkout.
 
+## Private overlay
+
+`./dot rex config` also installs an optional private overlay: every regular
+file under `DOTFILES_REX_OVERLAY_DIR` (default: `rex/` beside
+`DOTFILES_PI_SCAFFOLD_DIR`) is copied to the same path beside `init.lua`,
+except a top-level `README.md` and `*.example.json` templates. `init.lua`
+loads `dotfiles_private.lua` when it exists and skips it quietly when it does
+not, so this repo works on its own; an error inside the overlay still fails
+`rex config check`. Overlay files get the same rules as the public ones:
+differing files need `--force` (with backups), symlinks and unsafe names are
+refused, and nothing may replace `init.lua` or `rex-image-paste/`. The private
+companion uses it for the "Transfer pi Session to Host…" action, whose source
+has no license and so cannot live here.
+
 ## Limits
 
 - Mac clipboard only. This is not an image-paste solution for Rex iOS.
@@ -62,7 +76,7 @@ automatically updated checkout.
 ## Verification
 
 ```sh
-python3 scripts/tests/rex-config.test.py
+python3 scripts/tests/rex-config.test.py   # includes overlay install/refusal cases
 python3 scripts/tests/rex-image-paste.e2e.py --host '<saved Rex host label>'
 bash -n dot scripts/setup-rex-config.sh
 ```
