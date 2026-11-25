@@ -5,6 +5,48 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# --- rexume's Pi extension never reaches the work profile -------------------------------
+# rexume (docs/rexume.md) writes ~/.pi/agent/extensions/rexume.ts, and it must
+# never load in a work profile. These cases use a minimal fixture scaffold, so
+# they run even where the real scaffold is absent (CI).
+RX="$(mktemp -d)"
+trap 'rm -rf "$RX"' EXIT
+FIX="$RX/scaffold"
+mkdir -p "$FIX/agent/extensions" "$FIX/agent/skills/coding-agent-account-routing"
+printf '%s\n' '// badge' > "$FIX/agent/extensions/account-profile-indicator.ts"
+printf '%s\n' '---' 'name: coding-agent-account-routing' '---' > "$FIX/agent/skills/coding-agent-account-routing/SKILL.md"
+printf '%s\n' '{"providers":{"anthropic":{"modelOverrides":{"m":{"name":"Work · Sonnet"}}}}}' > "$FIX/agent/models.work.example.json"
+printf '%s\n' '{}' > "$FIX/agent/cloak.json"
+rx_home() {  # rx_home <dir>: a HOME with a personal profile (with extensions) and local.env
+  mkdir -p "$1/.pi/agent/extensions" "$1/.config/dotfiles"
+  printf '%s\n' 'DOTFILES_PI_WORK_PROFILE_SLUG="clientx"' 'DOTFILES_ENABLE_HERMES=0' > "$1/.config/dotfiles/local.env"
+}
+rx_profiles() { HOME="$1" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" DOTFILES_PI_SCAFFOLD_DIR="$FIX" "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1; }
+rx_fail() { printf 'FAIL %s\n' "$1"; sed 's/^/       /' "$RX/out"; exit 1; }
+
+# rexume installed first: --apply must not link the work extensions to it.
+H="$RX/rexume-first"; rx_home "$H"; printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
+if rx_profiles "$H" --apply; then rx_fail "pi profiles --apply links the work extensions while rexume.ts is there"; fi
+grep -Fq 'rexume.ts' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
+  || rx_fail "pi profiles --apply explains the rexume.ts refusal"
+[ ! -e "$H/.pi/agent-clientx/extensions" ] && [ ! -L "$H/.pi/agent-clientx/extensions" ] \
+  || rx_fail "pi profiles --apply created a work extensions link next to rexume.ts"
+if rx_profiles "$H" --check; then rx_fail "pi profiles --check passes while rexume.ts blocks the extensions link"; fi
+grep -Fq 'rexume.ts' "$RX/out" || rx_fail "pi profiles --check names rexume.ts"
+printf '%s\n' 'ok   rexume first: pi profiles --apply refuses to share extensions holding rexume.ts'
+
+# Profiles first, then rexume.ts appears behind the existing link: --check and --apply fail.
+H="$RX/profiles-first"; rx_home "$H"
+rx_profiles "$H" --apply || rx_fail "pi profiles --apply (fixture scaffold) succeeds without rexume"
+[ -L "$H/.pi/agent-clientx/extensions" ] || rx_fail "pi profiles --apply shares extensions without rexume"
+printf '%s\n' '// Written by `rexume install`' > "$H/.pi/agent/extensions/rexume.ts"
+if rx_profiles "$H" --check; then rx_fail "pi profiles --check passes while the work profile loads rexume.ts"; fi
+grep -Fq 'rexume.ts' "$RX/out" && grep -Fq 'docs/rexume.md' "$RX/out" \
+  || rx_fail "pi profiles --check explains that the work profile loads rexume.ts"
+if rx_profiles "$H" --apply; then rx_fail "pi profiles --apply passes while the work profile loads rexume.ts"; fi
+printf '%s\n' 'ok   profiles first: pi profiles --check/--apply fail once the shared extensions hold rexume.ts'
+rm -rf "$RX"; trap - EXIT
+
 # The scaffold is not tracked in this public repo. Use the caller's configured
 # source (or a fork-local templates/pi) and skip cleanly when neither exists —
 # the profile installer cannot run without its source assets.

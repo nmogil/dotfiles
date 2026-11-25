@@ -61,13 +61,15 @@ pr_resolve() {
 # ------------------------------------------------------------------- macOS
 # pr_brew_classify <formula>: what is installed as PR_NAME. Prints why, and
 # returns 0 when a Homebrew keg is installed and is what PATH runs (PR_BREW_BIN
-# is then that PATH entry and PR_BREW_KEGS its versions), 3 when nothing is
+# is then that PATH entry and PR_BREW_KEGS its versions; PR_BREW_CELLAR is
+# `brew --cellar` whenever brew is on PATH), 3 when nothing is
 # installed anywhere, 1 for anything else. Never runs the binary.
 pr_brew_classify() {
   local formula="$1" cellar="" keg real_kegs resolved
-  PR_BREW_BIN="" PR_BREW_KEGS=""
+  PR_BREW_BIN="" PR_BREW_KEGS="" PR_BREW_CELLAR=""
   if command -v brew >/dev/null 2>&1; then
     cellar="$(brew --cellar)" || { pr_say "$PR_NAME: brew --cellar failed; can't tell what Homebrew installed" >&2; return 1; }
+    PR_BREW_CELLAR="$cellar"
     for keg in "$cellar/$PR_NAME"/*/bin/"$PR_NAME"; do
       [ -f "$keg" ] || continue
       keg="${keg%/bin/"$PR_NAME"}"

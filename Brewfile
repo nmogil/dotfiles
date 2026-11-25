@@ -5,7 +5,6 @@ tap "tw93/tap"
 tap "2389-research/tap"
 tap "jurplel/tap"
 tap "vanducng/tap"
-tap "entwining/tap"
 
 # CLI Tools
 brew "ca-certificates"
@@ -32,9 +31,9 @@ brew "zoxide"          # Smarter cd command
 brew "tw93/tap/mole"   # Mole app
 # Attention board for agent panes across Rex hosts (docs/rexboard.md); upstream ships Apple Silicon only.
 brew "vanducng/tap/rexboard" if Hardware::CPU.arm?
-# Reopens agent conversations after a Rex restart (docs/rexume.md). Binary only:
-# hooks and the daemon are opt-in (./dot rexume --apply). Apple Silicon, macOS 15+.
-brew "entwining/tap/rexume" if Hardware::CPU.arm?
+# rexume (docs/rexume.md) is opt-in and not installed by `brew bundle`:
+# `./dot rexume --apply` runs `brew install entwining/tap/rexume` (Apple Silicon,
+# macOS 15+) after checking the Rex server and the work Pi profile.
 
 # Optional but useful CLI tools (uncomment if wanted)
 # brew "bat"          # Better cat with syntax highlighting

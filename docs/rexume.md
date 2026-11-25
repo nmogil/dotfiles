@@ -15,7 +15,9 @@ beside the Rex server:
   how to use this.
 
 Its state (recorded panes, conversations, task results) lives in
-`~/.local/state/rexume/`. Upstream's docs: `docs/setup.md`, `docs/usage.md`
+`~/.local/state/rexume/`. The daemon creates that directory and its database
+when it first starts, and a newer rexume migrates the database when its daemon
+starts. An older rexume then refuses to open it. Upstream's docs: `docs/setup.md`, `docs/usage.md`
 and `docs/cli.md` in the rexume repository.
 
 ## Install (opt-in)
@@ -29,39 +31,57 @@ and `docs/cli.md` in the rexume repository.
 `--apply` does these steps in order. It stops at the first one that fails.
 
 1. **Work-profile guard** (see below). It refuses if any `~/.pi/agent-*`
-   profile has `extensions/rexume.ts`, or shares `~/.pi/agent/extensions`.
-2. **Rex server probe** (read-only; see below). It refuses on a server older
-   than 0.1.0-preview.23.
-3. **The binary.**
+   profile has `extensions/rexume.ts`, shares `~/.pi/agent/extensions`, or has
+   a profile or extensions path that doesn't resolve. It also refuses if the
+   personal `rexume.ts` or extensions path is a symlink that `rexume install`
+   would write through.
+2. **Conflicting `rexume` on PATH** (Linux). It refuses before changing
+   anything if a `rexume` other than `~/.local/bin/rexume` comes first on the
+   caller's PATH, or if `~/.local/bin` isn't on PATH and a `rexume` is. (macOS:
+   it refuses a `rexume` on PATH that isn't Homebrew's.)
+3. **Preflight.** On Linux, `XDG_RUNTIME_DIR` and `systemctl` are required; on
+   macOS, `launchctl`. Then the **Rex server probe** (read-only; see below).
+   It refuses on a server older than 0.1.0-preview.23.
+4. **The binary.**
    - **macOS (Apple Silicon, macOS 15+; upstream has no Intel build):**
-     Homebrew owns it (`Brewfile`: `entwining/tap/rexume`). `--apply` runs
-     `brew install` only when it is missing. It never upgrades, reinstalls or
-     removes it, and it rejects `--force`. Checks ask Homebrew only for
-     `brew --cellar` and flag a `rexume` on PATH that did not come from
-     Homebrew.
+     `brew install entwining/tap/rexume`, only when rexume is missing. It is
+     deliberately not in the `Brewfile`, so `brew bundle` never installs it.
+     `--apply` never upgrades, reinstalls or removes it, and it rejects
+     `--force`. macOS before 15 is refused with a clear message. Checks ask
+     Homebrew only for `brew --cellar` and flag a `rexume` on PATH that did not
+     come from Homebrew.
    - **Linux (x86_64):** the release pinned in `config/rexume/release.pins`.
      `--apply` downloads the pinned archive and checks its SHA-256. Upstream
      requires a GitHub attestation check, so it then runs
      `gh attestation verify <archive> --repo Entwining/rexume
      --signer-workflow Entwining/rexume/.github/workflows/publish.yml`. If `gh`
-     is missing or verification fails, nothing is installed. Last, it checks
+     is missing, or verification fails, nothing is installed. Last, it checks
      the SHA-256 of `bin/rexume` inside the archive. Only then is
      `~/.local/bin/rexume` written. It is published with `link` (never
      overwrites) or, with `--apply --force`, replaced by an exact rename after
      the old binary is backed up and the backup verified (to
      `~/.local/state/dotfiles/rexume-backups/`). Symlinks and directories are
      refused. This is the same code as rexboard (`scripts/lib/pinned-release.sh`).
-4. **`rexume install`**, with `PI_CODING_AGENT_DIR` removed from its
-   environment (`env -u PI_CODING_AGENT_DIR`). On Linux, `~/.local/bin` is put
-   on its `PATH` if it isn't there already. rexume records that `PATH` for the
-   daemon, and its hooks run `rexume` by name. `rexume install` writes the
-   Claude Code hooks and plugin, the Codex hook (trust it in Codex's `/hooks`),
-   the Pi extension `~/.pi/agent/extensions/rexume.ts`, the omp and OpenCode
-   plugins where those exist, the skill stubs, and the daemon job: the
-   LaunchAgent `io.github.entwining.rexume` on macOS, or the systemd user
-   service `rexume.service` on Linux. `--apply` prints rexume's JSON summary
-   as one line, plus any notes.
-5. It checks the work profiles again, then runs `--check`.
+5. **`rexume install`**, after the work-profile guard runs again, with
+   `PI_CODING_AGENT_DIR` removed from its environment
+   (`env -u PI_CODING_AGENT_DIR`). On Linux, `~/.local/bin` is put on its
+   `PATH` if it isn't there already. rexume records that `PATH` for the
+   daemon. `rexume install` writes the Claude Code hooks and plugin, the Codex
+   hook (trust it in Codex's `/hooks`), the Pi extension
+   `~/.pi/agent/extensions/rexume.ts`, the omp and OpenCode plugins where those
+   exist, the skill stubs, and the daemon job: the LaunchAgent
+   `io.github.entwining.rexume` on macOS, or the systemd user service
+   `rexume.service` on Linux. `--apply` prints rexume's JSON summary as one
+   line, plus any notes.
+6. It checks the work profiles again. It then waits up to 20 seconds for the
+   daemon to run and `rexume status` to succeed: status fails until the
+   daemon has created its database. Then it runs `--check`.
+
+**Agent runtimes need the right `rexume` on their own PATH.** The hooks and
+extensions run `rexume` by name, from each agent's environment, not the
+daemon's. On Linux that means `~/.local/bin` must be on the PATH your shells
+and agents start with (`.zshrc` adds it), ahead of any other `rexume`. On
+macOS, Homebrew's `bin` must be on it.
 
 Rerunning `--apply` is safe. `rexume install` is idempotent, and rerunning it
 picks up runtimes installed since the last run.
@@ -81,10 +101,15 @@ If the Rex server outlives your login, run `loginctl enable-linger` once.
   `state = running`;
 - `~/.pi/agent/extensions/rexume.ts` exists;
 - no `~/.pi/agent-*/extensions/rexume.ts` exists;
-- `rexume status` succeeds and lists no missing Claude Code hooks.
+- `rexume status` succeeds and returns `claude_hooks_missing` as an empty list.
+  `null` (rexume couldn't read the Claude Code settings) or a missing field
+  fail the check, and so do missing hooks.
 
 It exits 3 when there is no trace of rexume (no binary, extension, job file or
-running daemon), and 1 otherwise, with each reason. Checks never run the
+running daemon), and 1 otherwise, with each reason. On Linux, a `rexume` on
+PATH that isn't the pinned `~/.local/bin/rexume` is a problem (1), not
+absence. A standalone `--check` never waits: right after an install, run it
+again if the daemon hasn't created its database yet. Checks never run the
 binary except the read-only `rexume status`, and only after the binary is
 verified (from Homebrew, or matching the pin). `./dot doctor` runs the check
 where Rex or rexume is present.
@@ -101,7 +126,9 @@ runs `rex --autostart=false ls --json`, picks any block ID from
 server first: `rex-safe-upgrade` on Linux, or update the Rex app on the Mac
 (`rex server status` shows the running server's version). If the server has no
 pane at all, the requirement can't be verified, so `--apply` refuses. The probe
-never starts, stops or restarts the server.
+never stops or restarts the server. `--autostart=false` stops the `rex` CLI from
+starting a missing server itself. A socket-activated service (for example a
+systemd socket unit for Rex) could still start one when the probe connects.
 
 ## Work profile: never gets the extension
 
@@ -123,17 +150,44 @@ The installer enforces this:
   `extensions/rexume.ts`, or if its `extensions` directory is the personal one
   (a symlink to `~/.pi/agent/extensions`): `rexume install` writes there, and
   the work profile would load it.
+- The guard fails closed. A work profile or extensions symlink that doesn't
+  resolve is refused, because `rexume install` would create the missing
+  target, and that could be the personal directory. Directories are compared
+  by device and inode, not by path. A symlink at the personal `rexume.ts` is
+  refused. The guard runs again right before `rexume install`.
 - `--check` fails while any `~/.pi/agent-*/extensions/rexume.ts` exists.
+- `./dot pi profiles --apply` refuses to link a work profile's `extensions` to
+  `~/.pi/agent/extensions` while `rexume.ts` is there, and `--check` reports
+  it as a problem. Both setup orders are covered: rexume first, then profiles;
+  or profiles first, then rexume.
 
 **Current layout:** `setup-pi-profiles.sh` (`./dot pi profiles`) links the
 work profile's `extensions` directory to the personal one. Until the work
 profile gets an extensions directory of its own, `--apply` refuses with
 "shares ~/.pi/agent/extensions". Don't work around this by hand.
 
+The skill stub `~/.agents/skills/rexume/SKILL.md` is shared by every Pi
+profile (and Codex and OpenCode). That is acceptable: it only tells an agent to
+run `rexume skill show`. A work Pi's conversation is never recorded, so rexume
+never reopens it. Its `rexume task` commands, though, resolve the conversation
+last recorded in that pane (possibly an earlier personal one), so don't use
+them from a work Pi.
+
 If you run `rexume install` or `rexume uninstall` by hand, use
 `env -u PI_CODING_AGENT_DIR rexume install` (or `uninstall`). If a work
 profile ever gets `rexume.ts`, delete that file. rexume marks it
 `// Written by \`rexume install\``.
+
+## Claude Code plugin: forgeable messages
+
+Upstream warns that rexume's Claude Code plugin submits every message on a
+conversation's messaging socket that starts with a rexume token
+(`[rexume …]`) as if you had typed it. It does not check that rexume wrote
+the message. Another session's model can therefore forge such a message and
+skip the approval your inbound-message rules (`crossSessionInbound`) would
+otherwise require. A session that can run commands could reach the
+conversation through `rexume task send` anyway. Install rexume only where you
+accept that. See "Claude Code messages" in upstream's `docs/usage.md`.
 
 ## Coexistence with rex-safe-upgrade
 
@@ -166,8 +220,8 @@ This stops and removes the daemon job, and removes rexume's hooks, Claude Code
 plugin, Pi/omp extensions, OpenCode plugin and skill stubs. It **keeps
 `~/.local/state/rexume/`** (recorded panes, conversations, task results).
 Delete that directory yourself if you want them gone. Then remove the program:
-`rm ~/.local/bin/rexume` on Linux, or on the Mac `brew uninstall rexume` and
-also remove its `Brewfile` line, or `brew bundle` reinstalls it.
+`rm ~/.local/bin/rexume` on Linux, or `brew uninstall rexume` on the Mac (it is
+not in the `Brewfile`, so `brew bundle` won't bring it back).
 
 ## Updating the pin
 
@@ -198,7 +252,8 @@ macOS follows Homebrew (`brew upgrade`). Linux follows the pin. To move it:
 ## Verification
 
 ```sh
-bash scripts/tests/rexume.test.sh     # fixture release over file://; stub uname/brew/gh/rex/systemctl/launchctl
+bash scripts/tests/rexume.test.sh     # fixture release over file://; stubs on an allowlisted temp-only PATH
+bash scripts/tests/pi-profiles.test.sh  # pi profiles never shares extensions holding rexume.ts
 bash scripts/tests/rexboard.test.sh   # the shared pinned-release library
 ./dot rexume --check
 ```

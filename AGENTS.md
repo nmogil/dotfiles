@@ -40,7 +40,7 @@ and dispatches to them.
 | Pi account profiles | `.zshrc` + local profile slug + `templates/hermes/` + scaffold + `scripts/setup-pi-profiles.sh` |
 | Pi subagents/model routing | scaffold `agent/{agents,skills/subagent-routing}` + `scripts/setup-pi-subagents.sh` |
 | rexboard (agent attention board) | `Brewfile` (Mac) + `config/rexboard/release.pins` + `scripts/setup-rexboard.sh` (Linux: pinned, checksum-verified; see `docs/rexboard.md`) |
-| rexume (reopen agent conversations after a Rex restart; opt-in, Rex preview.23+) | `Brewfile` (Mac) + `config/rexume/release.pins` + `scripts/setup-rexume.sh` (Linux: pinned, checksum- and attestation-verified; never into a work Pi profile; see `docs/rexume.md`) |
+| rexume (reopen agent conversations after a Rex restart; opt-in, Rex preview.23+) | `config/rexume/release.pins` + `scripts/setup-rexume.sh` (Mac: `brew install` on --apply, not in the Brewfile; Linux: pinned, checksum- and attestation-verified; never into a work Pi profile, and `setup-pi-profiles.sh` won't share extensions holding rexume.ts; see `docs/rexume.md`) |
 | Pinned Linux release installs (shared) | `scripts/lib/pinned-release.sh` (used by `setup-rexboard.sh` and `setup-rexume.sh`) |
 | Rex server upgrades (resume agents after restart) | `scripts/rex-safe-upgrade.py` + `templates/pi-rex/` + `scripts/setup-rex-safe-upgrade.sh` (see `docs/rex-safe-upgrade.md`) |
 | Memory compiler capture hooks | `scripts/setup-claude-memory-hooks.sh` (opt-in; Pi side lives in the scaffold; see `docs/claude-memory-compiler.md`) |

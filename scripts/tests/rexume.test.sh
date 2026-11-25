@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Tests for scripts/setup-rexume.sh (./dot rexume). Hermetic: a temp HOME, a
 # copy of the installer and its library beside a fixture release.pins, a
-# fixture release served over file://, and stub uname/brew/gh/rex/systemctl/
-# launchctl on a PATH without the real tools. The fixture rexume (in the
+# fixture release served over file://, and stub uname/sw_vers/brew/gh/rex/
+# systemctl/launchctl/curl. The installer runs on a PATH of only those stubs
+# and a temp bin of allowlisted utilities, so it can never reach a real rex,
+# gh, brew, systemctl or launchctl. The fixture rexume (in the
 # release and in the fake Homebrew keg) records every run and the environment
 # `rexume install` gets, and mimics what install writes.
 set -uo pipefail
@@ -13,6 +15,7 @@ pass=0; failn=0
 ok()  { printf 'ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf 'FAIL %s\n' "$1"; failn=$((failn+1)); [ -f "$OUT" ] && sed 's/^/       /' "$OUT"; }
 die() { echo "fixture error: $*" >&2; exit 1; }
+res() { if [ "$?" = 0 ]; then ok "$1"; else bad "$1"; fi; }  # <condition>; res <name>
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
 OUT="$TMP/out"
@@ -48,7 +51,12 @@ case "$*" in
     printf '{ "version": 1, "claude_hook": "skipped", "claude_hook_note": "`~/.claude` does not exist",\n  "pi_extension": "%s", "pi_extension_note": %s, "omp_extension": "skipped", "omp_extension_note": "`~/.omp/agent` does not exist",\n  %s }\n' "$pi" "$note" "$job"
     ;;
   status)
-    printf '{"version":3,"restores":[],"undelivered_notices":[],"epoch_error":null,"claude_hooks_missing":%s}\n' "${STUB_HOOKS_MISSING:-[]}"
+    n=$(( $(cat "$STUB_TMP/status-count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_TMP/status-count"
+    if [ "$n" -le "${STUB_STATUS_DELAY:-0}" ]; then
+      echo "rexume: $HOME/.local/state/rexume/state.db does not exist; the daemon creates it" >&2; exit 1
+    fi
+    if [ -n "${STUB_STATUS_RAW:-}" ]; then printf '%s\n' "$STUB_STATUS_RAW"
+    else printf '{"version":3,"restores":[],"undelivered_notices":[],"epoch_error":null,"claude_hooks_missing":%s}\n' "${STUB_HOOKS_MISSING:-[]}"; fi
     ;;
   *) echo "rexume $*" >> "$STUB_UNEXPECTED"; exit 1 ;;
 esac
@@ -154,13 +162,39 @@ case "$*" in
 esac
 EOF
 # curl: logged, then the real one (the fixture release is served over file://).
+# STUB_RACE=share links the work profile's extensions to the personal ones
+# while the release downloads.
 cat > "$STUB/curl" <<'EOF'
 #!/bin/sh
 echo "curl $*" >> "$STUB_LOG"
+if [ "${STUB_RACE:-}" = share ]; then
+  rm -rf "$HOME/.pi/agent-work/extensions" && ln -s "$HOME/.pi/agent/extensions" "$HOME/.pi/agent-work/extensions"
+fi
 exec /usr/bin/curl "$@"
 EOF
+cat > "$STUB/sw_vers" <<'EOF'
+#!/bin/sh
+echo "sw_vers $*" >> "$STUB_LOG"
+case "$*" in -productVersion) echo "${STUB_MACOS:-15.5}" ;; *) echo "sw_vers $*" >> "$STUB_UNEXPECTED"; exit 1 ;; esac
+EOF
 chmod 755 "$STUB"/*
-NOGH="$TMP/stub-nogh"; mkdir -p "$NOGH"; cp -p "$STUB"/* "$NOGH/"; rm -f "$NOGH/gh"
+# without <tool>: a copy of the stubs lacking one tool.
+without() { local d="$TMP/stub-no-$1"; mkdir -p "$d" && cp -p "$STUB"/* "$d/" && rm -f "$d/$1"; printf '%s' "$d"; }
+NOGH="$(without gh)"; NOREX="$(without rex)"; NOBREW="$(without brew)"
+NOSYSTEMCTL="$(without systemctl)"; NOLAUNCHCTL="$(without launchctl)"
+
+# The only real tools the installer and stubs can reach: symlinks to these.
+SYSBIN="$TMP/sysbin"; mkdir -p "$SYSBIN" || die sysbin
+for tool in sh env cat sed grep tr head tail cut sort mkdir rm cp mv ln chmod touch mktemp \
+  dirname basename readlink date id tar gzip perl link stat sleep sha256sum shasum; do
+  for d in /usr/bin /bin /usr/sbin /sbin; do
+    if [ -x "$d/$tool" ]; then ln -s "$d/$tool" "$SYSBIN/$tool"; break; fi
+  done
+done
+for tool in sh env sed grep tr mkdir rm cp chmod mktemp tar perl link stat sleep; do
+  [ -e "$SYSBIN/$tool" ] || die "no $tool for the allowlisted PATH"
+done
+[ -e "$SYSBIN/sha256sum" ] || [ -e "$SYSBIN/shasum" ] || die "no sha256sum or shasum"
 
 HOMEDIR="$TMP/home"
 DST="$HOMEDIR/.local/bin/rexume"
@@ -174,7 +208,7 @@ WORK_EXT="$HOMEDIR/.pi/agent-work/extensions/rexume.ts"
 # (the layout setup-pi-profiles.sh makes).
 fresh() {
   chmod -R u+w "$HOMEDIR" 2>/dev/null
-  rm -rf "$HOMEDIR" "$CELLAR" "$BREWBIN" "$TMP/daemon-active" "$TMP/install-env"
+  rm -rf "$HOMEDIR" "$CELLAR" "$BREWBIN" "$TMP/daemon-active" "$TMP/install-env" "$TMP/status-count"
   mkdir -p "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/.pi/agent-work" || die home
   if [ "${1:-}" = shared ]; then ln -s "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/.pi/agent-work/extensions"
   else mkdir -p "$HOMEDIR/.pi/agent-work/extensions"; fi
@@ -187,22 +221,25 @@ brew_has() {
   ln -sf "../cellar/rexume/$1/bin/rexume" "$BREWBIN/rexume" || die link
 }
 # run <args...>: the installer as if started from a `pi-work` shell
-# (PI_CODING_AGENT_DIR set to the work profile), on a PATH of stubs + /usr/bin:/bin.
+# (PI_CODING_AGENT_DIR set to the work profile), on a PATH of stubs + SYSBIN only.
 run() {
   local xdg="XDG_RUNTIME_DIR=$TMP/run"
   [ -z "${NO_XDG:-}" ] || xdg="NO_XDG=1"
-  (cd "$TMP" && env -i HOME="$HOMEDIR" PATH="${STUB_PATH:-$STUB}:/usr/bin:/bin" "$xdg" \
+  (cd "$TMP" && env -i HOME="$HOMEDIR" PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
     PI_CODING_AGENT_DIR="$HOMEDIR/.pi/agent-work" \
     STUB_LOG="$TMP/calls" STUB_TMP="$TMP" STUB_UNEXPECTED="$UNEXPECTED" \
     STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_CELLAR="$CELLAR" STUB_BREWBIN="$BREWBIN" \
     STUB_KEG_SRC="$REXUME_SRC" STUB_REX="${STUB_REX:-ok}" STUB_GH_FAIL="${STUB_GH_FAIL:-}" \
     STUB_REXUME_INSTALL_FAIL="${STUB_REXUME_INSTALL_FAIL:-}" STUB_HOOKS_MISSING="${STUB_HOOKS_MISSING:-[]}" \
     STUB_LAUNCHD_STATE="${STUB_LAUNCHD_STATE:-running}" STUB_BREW_INSTALL_FAIL="${STUB_BREW_INSTALL_FAIL:-}" \
+    STUB_STATUS_DELAY="${STUB_STATUS_DELAY:-0}" STUB_STATUS_RAW="${STUB_STATUS_RAW:-}" STUB_RACE="${STUB_RACE:-}" \
+    STUB_MACOS="${STUB_MACOS:-15.5}" DOTFILES_REXUME_READY_TIMEOUT="${READY_TIMEOUT:-20}" \
     "$BASH" "$REPO/scripts/setup-rexume.sh" "$@") > "$OUT" 2>&1
   RC=$?
 }
 mac() { STUB_PATH="$STUB:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run "$@"; }
 has() { grep -Fq -- "$1" "$OUT"; }
+hasx() { grep -Fxq -- "$1" "$OUT"; }
 called() { grep -Fq -- "$1" "$TMP/calls"; }
 called_x() { grep -Fxq -- "$1" "$TMP/calls"; }
 # snapshot: every path under HOME with its type and content hash.
@@ -283,7 +320,8 @@ if [ "$RC" = 0 ] && [ "$(snapshot)" = "$before" ] && ! called "rexume " && ! cal
 
 # --- Linux: the attestation is required -------------------------------------------------
 fresh; STUB_PATH="$NOGH" run --apply
-if [ "$RC" = 1 ] && has "gh" && [ ! -e "$DST" ] && [ -z "$(ls -A "$HOMEDIR/.local/bin" 2>/dev/null)" ] && ! installed; then
+if [ "$RC" = 1 ] && hasx "rexume: gh (the GitHub CLI) is required to verify the release's GitHub attestation; nothing installed" \
+  && ! called "curl " && [ ! -e "$DST" ] && [ -z "$(ls -A "$HOMEDIR/.local/bin" 2>/dev/null)" ] && ! installed; then
   ok "Linux --apply without gh installs nothing"; else bad "Linux --apply without gh installs nothing"; fi
 fresh; STUB_GH_FAIL=1 run --apply
 if [ "$RC" = 1 ] && has "attestation" && [ ! -e "$DST" ] && [ -z "$(ls -A "$HOMEDIR/.local/bin" 2>/dev/null)" ] && ! installed; then
@@ -311,9 +349,8 @@ if [ "$RC" = 1 ] && has "can't verify" && ! installed && [ ! -e "$DST" ]; then
 fresh; STUB_REX=down run --apply
 if [ "$RC" = 1 ] && ! installed && [ ! -e "$DST" ]; then
   ok "an unreachable Rex server: refuse"; else bad "an unreachable Rex server: refuse"; fi
-NOREX="$TMP/stub-norex"; mkdir -p "$NOREX"; cp -p "$STUB"/* "$NOREX/"; rm -f "$NOREX/rex"
 fresh; STUB_PATH="$NOREX" run --apply
-if [ "$RC" = 1 ] && has "rex" && ! installed && [ ! -e "$DST" ]; then
+if [ "$RC" = 1 ] && hasx "rexume: rex (the Rex CLI) is not on PATH; rexume install needs it." && ! called "curl " && ! installed && [ ! -e "$DST" ]; then
   ok "no rex CLI: refuse"; else bad "no rex CLI: refuse"; fi
 fresh; NO_XDG=1 run --apply
 if [ "$RC" = 1 ] && has "XDG_RUNTIME_DIR" && ! installed && [ ! -e "$DST" ]; then
@@ -416,6 +453,76 @@ if [ "$RC" = 1 ] && has "shares" && ! called "brew install" && ! installed; then
 fresh; STUB_BREW_INSTALL_FAIL=1 mac --apply
 if [ "$RC" = 1 ] && ! installed; then
   ok "macOS --apply reports a failed brew install as a failure"; else bad "macOS --apply reports a failed brew install as a failure"; fi
+
+# --- the allowlisted PATH cannot reach real tools ------------------------------------------------
+for tool in gh rex brew systemctl launchctl sw_vers curl rexume; do [ ! -e "$SYSBIN/$tool" ] || break; done
+[ ! -e "$SYSBIN/$tool" ]; res "the installer's PATH has no real gh, rex, brew, systemctl, launchctl, sw_vers, curl or rexume"
+
+# --- missing tools: exact diagnostics, no download, nothing installed ------------------------------
+fresh; STUB_PATH="$NOSYSTEMCTL" run --apply
+[ "$RC" = 1 ] && hasx "rexume: systemctl is not on PATH; rexume runs as a systemd user service. Nothing changed." \
+  && ! called "curl " && ! installed && [ ! -e "$DST" ]; res "Linux --apply without systemctl refuses before downloading"
+fresh; run --apply; STUB_PATH="$NOSYSTEMCTL" run --check
+[ "$RC" = 1 ] && has "systemctl is not on PATH; can't tell whether the rexume daemon is active"; res "Linux --check without systemctl says so (exit 1)"
+fresh; STUB_PATH="$NOBREW:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --apply
+[ "$RC" = 1 ] && hasx "rexume: Homebrew is required on macOS (./dot setup mac)" && ! installed; res "macOS --apply without Homebrew fails clearly"
+fresh; mac --apply; STUB_PATH="$NOLAUNCHCTL:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
+[ "$RC" = 1 ] && has "launchctl is not on PATH; can't tell whether the rexume daemon is active"; res "macOS --check without launchctl says so (exit 1)"
+
+# --- the work-profile guard fails closed -------------------------------------------------------------
+W="$HOMEDIR/.pi/agent-work"
+fresh; rm -rf "$HOMEDIR/.pi/agent/extensions" "$W/extensions"; ln -s ../agent/extensions "$W/extensions"; run --apply
+[ "$RC" = 1 ] && has "$W/extensions" && ! installed && ! called "curl " && [ ! -e "$HOMEDIR/.pi/agent/extensions" ]
+res "a work extensions symlink to the not-yet-created personal directory refuses (dangling, fail closed)"
+fresh; rm -rf "$W/extensions"; ln -s "$TMP/nowhere/extensions" "$W/extensions"; run --apply
+[ "$RC" = 1 ] && has "$W/extensions" && ! installed; res "any dangling work extensions symlink refuses"
+fresh; ln -s agent "$HOMEDIR/.pi/alias"; rm -rf "$W/extensions"; ln -s "$HOMEDIR/.pi/alias/extensions" "$W/extensions"; run --apply
+[ "$RC" = 1 ] && has "shares" && ! installed; res "a work extensions directory reached through another path is the same directory (device:inode)"
+fresh; ln -s agent "$HOMEDIR/.pi/agent-alias"; run --apply
+[ "$RC" = 1 ] && has "agent-alias" && ! installed; res "a work profile that is the personal profile refuses"
+fresh; ln -s "$TMP/nowhere/profile" "$HOMEDIR/.pi/agent-ghost"; run --apply
+[ "$RC" = 1 ] && has "agent-ghost" && ! installed; res "a dangling work profile refuses (fail closed)"
+fresh; ln -s "$TMP/nowhere/rexume.ts" "$PERSONAL_EXT"; run --apply
+[ "$RC" = 1 ] && has "$PERSONAL_EXT" && has "symlink" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a symlink at the personal rexume.ts refuses (install would write through it)"
+fresh; rm -rf "$HOMEDIR/.pi/agent/extensions"; ln -s "$TMP/nowhere/ext" "$HOMEDIR/.pi/agent/extensions"; run --apply
+[ "$RC" = 1 ] && has "$HOMEDIR/.pi/agent/extensions" && ! installed && [ ! -e "$TMP/nowhere" ]; res "a dangling personal extensions symlink refuses"
+fresh; STUB_RACE=share run --apply
+[ "$RC" = 1 ] && has "shares" && ! installed && [ ! -e "$PERSONAL_EXT" ]; res "the guard runs again right before rexume install (a link made during the download is caught)"
+
+# --- --check details --------------------------------------------------------------------------------
+mkdir -p "$TMP/otherbin"; cp "$REXUME_SRC" "$TMP/otherbin/rexume"
+fresh; STUB_PATH="$STUB:$TMP/otherbin" run --check
+[ "$RC" = 1 ] && has "$TMP/otherbin/rexume" && ! called "rexume "; res "Linux --check: a rexume on PATH that is not the pinned install is a problem (1), not absence"
+fresh; run --apply; STUB_HOOKS_MISSING=null run --check
+[ "$RC" = 1 ] && has "claude_hooks_missing"; res "--check: rexume status with claude_hooks_missing null is a problem"
+STUB_STATUS_RAW='{"version":3}' run --check
+[ "$RC" = 1 ] && has "claude_hooks_missing"; res "--check: rexume status without claude_hooks_missing is a problem"
+
+# --- a conflicting rexume on the caller's PATH stops --apply before any change ----------------------------
+fresh; STUB_PATH="$STUB:$TMP/otherbin" run --apply
+[ "$RC" = 1 ] && has "$TMP/otherbin/rexume" && ! called "curl " && ! installed && [ ! -e "$DST" ]
+res "Linux --apply: another rexume on the caller's PATH refuses before downloading"
+fresh; STUB_PATH="$STUB:$TMP/otherbin:$HOMEDIR/.local/bin" run --apply
+[ "$RC" = 1 ] && has "$TMP/otherbin/rexume" && ! called "curl " && ! installed; res "Linux --apply: another rexume ahead of ~/.local/bin refuses"
+fresh; run --apply; : > "$TMP/calls"; STUB_PATH="$STUB:$HOMEDIR/.local/bin:$TMP/otherbin" run --apply
+[ "$RC" = 0 ] && installed; res "Linux --apply: a rexume after ~/.local/bin on PATH is not a conflict"
+
+# --- after rexume install, wait (bounded) for the daemon; --check stays immediate --------------------------
+fresh; STUB_STATUS_DELAY=2 run --apply
+[ "$RC" = 0 ] && [ "$(cat "$TMP/status-count")" -ge 3 ] && has "rexume is installed"; res "--apply waits for the daemon to create its database before the final check"
+rm -f "$TMP/status-count"; STUB_STATUS_DELAY=1 run --check
+[ "$RC" = 1 ] && [ "$(cat "$TMP/status-count")" = 1 ]; res "a standalone --check does not wait"
+fresh; READY_TIMEOUT=1 STUB_STATUS_DELAY=99 run --apply
+[ "$RC" = 1 ] && has "not ready"; res "--apply gives up waiting for the daemon after the timeout"
+
+# --- macOS version and dry-run preview ------------------------------------------------------------------
+fresh; STUB_MACOS=14.7 mac --apply
+[ "$RC" = 1 ] && has "macOS 15" && ! called "brew install" && ! installed; res "macOS < 15 is refused"
+fresh; mac
+[ "$RC" = 0 ] && has "would run: env -u PI_CODING_AGENT_DIR $TMP/bin/rexume install"; res "macOS dry-run previews the Homebrew rexume path"
+
+# --- Brewfile: rexume is opt-in ---------------------------------------------------------------------------
+! grep -Eq '^[[:space:]]*(brew|tap)[[:space:]]+"entwining/' "$ROOT/Brewfile"; res "the Brewfile does not install rexume (./dot rexume --apply does)"
 
 # --- never touch the Rex server, systemd, or launchd beyond read-only queries -------------------
 if [ ! -s "$UNEXPECTED" ]; then

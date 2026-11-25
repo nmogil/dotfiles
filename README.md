@@ -151,7 +151,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
 | `config/rexboard/release.pins`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
-| `config/rexume/release.pins`, `scripts/setup-rexume.sh` | rexume, which reopens agent conversations after a Rex restart and returns worker results (opt-in; Mac: Brewfile; Linux: pinned, checksum- and attestation-verified; `./dot rexume`, `docs/rexume.md`) |
+| `config/rexume/release.pins`, `scripts/setup-rexume.sh` | rexume, which reopens agent conversations after a Rex restart and returns worker results (opt-in; Mac: Homebrew via `./dot rexume`, not the Brewfile; Linux: pinned, checksum- and attestation-verified; `./dot rexume`, `docs/rexume.md`) |
 | `scripts/lib/pinned-release.sh` | Shared pinned-release installer (checksums, safe publish, backups) used by rexboard and rexume |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
