@@ -6,7 +6,7 @@
 #   macOS (Apple Silicon): Homebrew owns it (Brewfile: vanducng/tap/rexboard).
 #          --apply only installs it when missing; it never upgrades,
 #          reinstalls, or removes it.
-#   Linux (x86_64): the release pinned in config/rexboard/release.env, with
+#   Linux (x86_64): the release pinned in config/rexboard/release.pins, with
 #          the archive and the binary checksum-verified, installed to
 #          ~/.local/bin/rexboard.
 #
@@ -18,7 +18,7 @@
 # 3 (--check only) rexboard is not installed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PINS="$ROOT/config/rexboard/release.env"
+PINS="$ROOT/config/rexboard/release.pins"
 
 usage() {
   cat <<'EOF'
@@ -50,7 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# pin <KEY>: the value of KEY=value in release.env. Read as data, never sourced.
+# pin <KEY>: the value of KEY=value in release.pins. Read as data, never sourced.
 pin() {
   local value
   [ -f "$PINS" ] || die "missing $PINS"

@@ -23,7 +23,7 @@ in a Rex pane report on their own.
   accepts any Homebrew version and flags a `rexboard` on PATH that did not
   come from Homebrew or shadows Homebrew's. It asks Homebrew only for
   `brew --cellar` (a path lookup) and reads the Cellar itself.
-- **Linux (x86_64):** the release pinned in `config/rexboard/release.env`.
+- **Linux (x86_64):** the release pinned in `config/rexboard/release.pins`.
   `--apply` downloads that archive and checks its SHA-256 and the binary's
   against the pins before touching `~/.local/bin/rexboard`. A missing binary
   is published with `link`, which never overwrites anything that appeared in
@@ -38,7 +38,7 @@ in a Rex pane report on their own.
 The release has no GitHub attestation, so the pins are the trust anchor. The
 archive checksum matches the release's `SHA256SUMS`; the binary checksum is of
 the `rexboard` file inside that archive, and matches the copy on the VPS.
-`release.env` is read as data, never sourced. Checks never run the binary.
+`release.pins` is read as data, never sourced. Checks never run the binary.
 
 ## What the installer never does
 
@@ -64,7 +64,7 @@ rexboard releases often. To move the pin:
 2. Download the new `x86_64-unknown-linux-gnu` archive and `SHA256SUMS`;
    confirm the archive checksum matches, extract it, and hash the
    `rexboard` binary inside.
-3. Update every value in `config/rexboard/release.env` together, then run
+3. Update every value in `config/rexboard/release.pins` together, then run
    `./dot rexboard --apply --force` on the VPS (it backs up the old binary).
 
 ## Verification

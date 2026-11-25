@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/setup-rexboard.sh (./dot rexboard). Hermetic: a temp HOME,
-# a copy of the installer beside a fixture release.env, a fixture release
+# a copy of the installer beside a fixture release.pins, a fixture release
 # served over file://, and stub uname/brew on a PATH without the real tools.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,7 +29,7 @@ ARCHIVE_SHA="$(sha "$REL/$ARCHIVE")"
 BINARY_SHA="$(sha "$TMP/build/rexboard-v9.9.9-x86_64-unknown-linux-gnu/rexboard")"
 
 write_pins() {  # write_pins [archive-sha] [binary-sha]
-  cat > "$REPO/config/rexboard/release.env" <<EOF
+  cat > "$REPO/config/rexboard/release.pins" <<EOF
 # fixture
 REXBOARD_VERSION=9.9.9
 REXBOARD_RELEASE_URL=file://$REL
@@ -140,15 +140,15 @@ run --apply
   && ok "a binary checksum mismatch installs nothing" || bad "a binary checksum mismatch installs nothing"
 fresh; write_pins "not-a-hash"
 run --apply
-[ "$RC" = 1 ] && has "release.env" && [ ! -e "$DST" ] && ok "a malformed pin is refused before downloading" \
+[ "$RC" = 1 ] && has "release.pins" && [ ! -e "$DST" ] && ok "a malformed pin is refused before downloading" \
   || bad "a malformed pin is refused before downloading"
-fresh; sed -i.bak '/^REXBOARD_LINUX_X86_64_BINARY_SHA256=/d' "$REPO/config/rexboard/release.env"; rm -f "$REPO/config/rexboard/release.env.bak"
+fresh; sed -i.bak '/^REXBOARD_LINUX_X86_64_BINARY_SHA256=/d' "$REPO/config/rexboard/release.pins"; rm -f "$REPO/config/rexboard/release.pins.bak"
 run --check
 [ "$RC" = 1 ] && has "REXBOARD_LINUX_X86_64_BINARY_SHA256" && ok "a missing pin fails --check" || bad "a missing pin fails --check"
-fresh; printf 'REXBOARD_VERSION=$(touch %s/pwned)\n' "$TMP" > "$REPO/config/rexboard/release.env"
+fresh; printf 'REXBOARD_VERSION=$(touch %s/pwned)\n' "$TMP" > "$REPO/config/rexboard/release.pins"
 run --check
-[ "$RC" = 1 ] && [ ! -e "$TMP/pwned" ] && ok "release.env is parsed as data, never executed" \
-  || bad "release.env is parsed as data, never executed"
+[ "$RC" = 1 ] && [ ! -e "$TMP/pwned" ] && ok "release.pins is parsed as data, never executed" \
+  || bad "release.pins is parsed as data, never executed"
 
 # --- Linux: an existing binary that is not the pinned build ----------------------------
 fresh; mkdir -p "$HOMEDIR/.local/bin"; printf '#!/bin/sh\ntouch "%s/ran-differing"\n' "$TMP" > "$DST"; chmod 755 "$DST"
@@ -283,11 +283,16 @@ run --apply
 rm -f "$STUB/curl"
 
 # --- the real pin file is well formed -----------------------------------------------
-grep -Eq '^REXBOARD_LINUX_X86_64_ARCHIVE_SHA256=[0-9a-f]{64}$' "$ROOT/config/rexboard/release.env" \
-  && grep -Eq '^REXBOARD_LINUX_X86_64_BINARY_SHA256=[0-9a-f]{64}$' "$ROOT/config/rexboard/release.env" \
-  && grep -Eq '^REXBOARD_RELEASE_URL=https://github\.com/vanducng/rexboard/releases/download/v[0-9.]+$' "$ROOT/config/rexboard/release.env" \
-  && ok "the committed release.env pins https URLs and full sha256 checksums" \
-  || bad "the committed release.env pins https URLs and full sha256 checksums"
+grep -Eq '^REXBOARD_LINUX_X86_64_ARCHIVE_SHA256=[0-9a-f]{64}$' "$ROOT/config/rexboard/release.pins" \
+  && grep -Eq '^REXBOARD_LINUX_X86_64_BINARY_SHA256=[0-9a-f]{64}$' "$ROOT/config/rexboard/release.pins" \
+  && grep -Eq '^REXBOARD_RELEASE_URL=https://github\.com/vanducng/rexboard/releases/download/v[0-9.]+$' "$ROOT/config/rexboard/release.pins" \
+  && ok "the committed release.pins pins https URLs and full sha256 checksums" \
+  || bad "the committed release.pins pins https URLs and full sha256 checksums"
+
+# doctor flags tracked files that look like secrets (e.g. *.env); the pins must not.
+if git -C "$ROOT" ls-files config/rexboard | grep -iE '(^|/)\.env|\.env($|\.)|secret|credential|\.pem$|id_rsa' >/dev/null; then
+  bad "no tracked rexboard file looks secret-sensitive to ./dot doctor"
+else ok "no tracked rexboard file looks secret-sensitive to ./dot doctor"; fi
 
 echo
 echo "rexboard tests: $pass passed, $failn failed"
