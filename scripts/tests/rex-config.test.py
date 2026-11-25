@@ -283,5 +283,17 @@ class RexConfigTest(unittest.TestCase):
         self.assertEqual([b.read_text() for b in backups], ['-- mine\n'])
 
 
+    def test_custom_config_name_cannot_overwrite_the_transfer_allowlist(self):
+        self.config.mkdir(parents=True)
+        allowlist = self.config/'transfer-targets.json'
+        allowlist.write_text('{"Steve": {"ssh": "remote"}}\n')
+        for name in ('transfer-targets.json', 'Transfer-Targets.JSON'):
+            with self.subTest(name=name):
+                self.env['REX_CONFIG'] = str(self.config/name)
+                self.run_setup(expected=1)
+                self.run_setup('--apply', '--force', expected=1)
+                self.assertEqual(allowlist.read_text(), '{"Steve": {"ssh": "remote"}}\n')
+        self.env.pop('REX_CONFIG')
+
 if __name__ == '__main__':
     unittest.main()

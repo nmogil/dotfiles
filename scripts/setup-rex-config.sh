@@ -29,6 +29,14 @@ done
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
+# Reserved destination names: the machine-local transfer allowlist is never installed
+# or overwritten, whether it would arrive from the overlay or as the config file itself.
+case "$(lower "$CONFIG_NAME")" in
+  transfer-targets.json)
+    echo "REX_CONFIG must not be named transfer-targets.json (machine-local allowlist): $CONFIG" >&2
+    exit 1 ;;
+esac
+
 # Destination map: rels[i] (path relative to DEST) is installed from srcs[i].
 # The public config goes to $CONFIG under its real (possibly custom) basename.
 rels=("$CONFIG_NAME")
