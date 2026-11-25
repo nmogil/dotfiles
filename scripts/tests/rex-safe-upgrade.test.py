@@ -887,6 +887,31 @@ class PlanTest(Base):
         self.assertRegex(r.stdout, r"pi \(pid \d+\) is working")
         self.assertRegex(r.stdout, r"pi \(pid \d+\) hasn't reported whether it's busy")
 
+    def script_pane_with_pi(self):
+        """A pane whose foreground program is `bash job.sh`, with Pi as the
+        script's child: Rex reports the script; Pi is one level down."""
+        script = self.home / 'job.sh'
+        script.write_text(f'"{self.fake_pi}" "{self.node}"\n{SLEEP} 60\n')
+        sh = self.spawn([BASH, *NOSTARTUP, str(script)])
+        pis = lambda: [c for c in children(sh) if os.readlink(f'/proc/{c}/exe') == str(self.node)]
+        self.assertTrue(wait_until(pis))
+        time.sleep(0.2)
+        self.pane('bash', sh, state=None)
+        return pis()[0]
+
+    def test_agent_under_a_script_foreground_is_never_waived(self):
+        # The script is a waivable finding; the Pi it runs is not.
+        for state, want in (('working', r"pi \(pid \d+\) is working"),
+                            (None, r"pi \(pid \d+\) hasn't reported whether it's busy")):
+            with self.subTest(state=state):
+                self.blocks.clear()
+                pi = self.script_pane_with_pi()
+                if state:
+                    self.blocks[-1]['program_status']['records'] = [
+                        {'state': state, 'app': 'pi', 'owner': {'pid': pi}, 'updated_at': utc(time.time())}]
+                r = self.assert_blocked("'bash' is running a script or command", extra=['--allow-unresumable'])
+                self.assertRegex(r.stdout, want)
+
     def test_one_wrapper_record_cannot_clear_two_unpromoted_agents(self):
         # Two Pi children (so no promotion) and one idle record owned by the
         # wrapper, written after both started: neither Pi has reported.

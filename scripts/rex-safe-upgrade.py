@@ -577,6 +577,47 @@ def program_state(records: list[dict], fg: dict, kind: str | None) -> tuple[str,
     return (busy[0] if busy else states[0]), False
 
 
+def process_tree(roots: list[int | None]) -> list[int]:
+    """Live processes in the trees under roots (roots included), from one
+    pass over /proc."""
+    kids: dict[str, list[str]] = {}
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            st = proc_stat(int(d))
+            if len(st) > 1 and st[0] != "Z":
+                kids.setdefault(st[1], []).append(d)
+    seen: list[int] = []
+    todo = [str(r) for r in roots if r]
+    while todo:
+        pid = todo.pop()
+        if int(pid) in seen or not Path(f"/proc/{pid}").exists():
+            continue
+        seen.append(int(pid))
+        todo.extend(kids.get(pid, []))
+    return seen
+
+
+def scan_agents(p: Pane, records: list[dict], roots: list[int | None], skip: int | None,
+                wrapper: int | None) -> None:
+    """Hard problems for every agent in the pane's process trees, other than
+    skip, that is busy or hasn't reported. Only its own records can show an
+    agent idle (a wrapper's record can't be pinned on one of several
+    agents); a wrapper's record that isn't idle still counts against it."""
+    for pid in process_tree(roots):
+        kind = agent_kind(proc_exe_name(pid), proc_cmdline(pid))
+        if not kind or pid == skip:
+            continue
+        state, malformed = program_state(records, {"pid": pid}, kind)
+        wrapper_busy = [r.get("state") for r in records if wrapper and (r.get("owner") or {}).get("pid") == wrapper
+                        and attributed_to(r, pid, kind) and r.get("state") not in ("idle", "done")]
+        if wrapper_busy and state in ("-", "idle", "done"):
+            state = str(wrapper_busy[0] or "unknown")
+        if malformed or state == "-":
+            add_problem(p, f"{kind} (pid {pid}) hasn't reported whether it's busy", hard=True)
+        elif state not in ("idle", "done"):
+            add_problem(p, f"{kind} (pid {pid}) is {state}", hard=True)
+
+
 def inspect_pane(p: Pane) -> None:
     proc = block_call(p.session, p.block, "process")
     status = block_call(p.session, p.block, "program_status")
@@ -587,6 +628,13 @@ def inspect_pane(p: Pane) -> None:
     raw_fg = (proc.get("foreground") or {}).get("pid")
     fg, problem, hard = resolve_foreground(proc)
     top = (proc.get("child") or {}).get("pid")
+    records = status.get("records") or []
+    # First, before any finding that can be waived or ends the inspection:
+    # every agent anywhere in the pane's process tree that is, or may be,
+    # mid-task is a hard problem. The pane's own program (when it resolved)
+    # is judged by the classification below, which never returns earlier.
+    main_fg = None if problem else fg.get("pid")
+    scan_agents(p, records, roots=[top, raw_fg], skip=main_fg, wrapper=raw_fg)
     if problem:
         p.fg_name, p.fg_pid = fg.get("name", "?"), fg.get("pid")
         p.kind = "unknown"
@@ -605,9 +653,9 @@ def inspect_pane(p: Pane) -> None:
     argv = proc_cmdline(p.fg_pid)
     kind = agent_kind(p.fg_name, argv)
 
-    # Busy or unknown status first, as hard problems: no waivable finding
-    # below may hide them.
-    p.state, malformed = program_state(status.get("records") or [], fg, kind)
+    # The pane's program: busy or unknown status as hard problems, before any
+    # waivable finding below.
+    p.state, malformed = program_state(records, fg, kind)
     if malformed:
         add_problem(p, "reported a status without a state", hard=True)
     if kind and p.state == "-":  # an agent we can't see the state of might be mid-task
@@ -617,26 +665,6 @@ def inspect_pane(p: Pane) -> None:
     # or from the shell a wrapper runs (an interactive shell's own jobs).
     shells = {pid for pid in (top, raw_fg, p.fg_pid) if pid and proc_name(pid) in SHELLS}
     extra = sorted({c for sh in shells for c in real_children(sh)} - {p.fg_pid, raw_fg})
-    # An agent among them (say, Pi beside a background job in a wrapper that
-    # couldn't be promoted) still has its busy and unknown states checked:
-    # stopping it is never waivable when it is, or may be, mid-task.
-    # Only the agent's own records can show it idle: a wrapper's record can't
-    # be pinned on one of several children. A wrapper record that isn't idle
-    # still counts against it.
-    records = status.get("records") or []
-    for c in extra:
-        ckind = agent_kind(proc_exe_name(c), proc_cmdline(c))
-        if not ckind:
-            continue
-        cstate, cmalformed = program_state(records, {"pid": c}, ckind)
-        wrapper_busy = [r.get("state") for r in records if raw_fg and (r.get("owner") or {}).get("pid") == raw_fg
-                        and attributed_to(r, c, ckind) and r.get("state") not in ("idle", "done")]
-        if wrapper_busy and cstate in ("-", "idle", "done"):
-            cstate = str(wrapper_busy[0] or "unknown")
-        if cmalformed or cstate == "-":
-            add_problem(p, f"{ckind} (pid {c}) hasn't reported whether it's busy", hard=True)
-        elif cstate not in ("idle", "done"):
-            add_problem(p, f"{ckind} (pid {c}) is {cstate}", hard=True)
     if extra:
         add_problem(p, "background processes would be stopped: " + ", ".join(sorted({proc_name(c) for c in extra})))
 
