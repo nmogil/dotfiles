@@ -132,7 +132,8 @@ Otherwise the run stops with exit 3 and the plan says why.
    - an agent is working or waiting for an answer, or hasn't reported its
      state (the agent process that started the run is exempt). This also
      holds for an agent that runs beside a background job, where the pane's
-     program can't be attributed to it. Any status
+     program can't be attributed to it; such an agent must have reported
+     its own state (a wrapper's record can't show it idle). Any status
      record of the running program that isn't idle counts, even next to an
      idle one; a record without a state, or a state Rex doesn't define,
      counts as unknown;

@@ -228,6 +228,24 @@ def socket_peer(path: str) -> tuple[int, int] | None:
         return None
 
 
+def open_fd_targets(pid: int) -> set[str] | None:
+    """What each open fd of pid points to; None if the list can't be read.
+    An fd closed while it is being read is skipped."""
+    try:
+        names = os.listdir(f"/proc/{pid}/fd")
+    except OSError:
+        return None
+    targets = set()
+    for fd in names:
+        try:
+            targets.add(os.readlink(f"/proc/{pid}/fd/{fd}"))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+    return targets
+
+
 def local_server_problem(info: dict) -> str | None:
     """Why the server isn't verifiably this machine's own Rex server, or None.
     The endpoint must be a local unix socket, and the reported pid a local
@@ -251,9 +269,8 @@ def local_server_problem(info: dict) -> str | None:
     inodes = listening_socket_inodes(path)
     if not inodes:
         return f"no stream socket is listening at {path}"
-    try:
-        fds = {os.readlink(f"/proc/{pid}/fd/{fd}") for fd in os.listdir(f"/proc/{pid}/fd")}
-    except OSError:
+    fds = open_fd_targets(pid)
+    if fds is None:
         return f"couldn't read server pid {pid}'s open files"
     if not any(f"socket:[{i}]" in fds for i in inodes):
         return f"server pid {pid} doesn't hold the socket at {path}"
@@ -603,12 +620,19 @@ def inspect_pane(p: Pane) -> None:
     # An agent among them (say, Pi beside a background job in a wrapper that
     # couldn't be promoted) still has its busy and unknown states checked:
     # stopping it is never waivable when it is, or may be, mid-task.
+    # Only the agent's own records can show it idle: a wrapper's record can't
+    # be pinned on one of several children. A wrapper record that isn't idle
+    # still counts against it.
     records = status.get("records") or []
     for c in extra:
         ckind = agent_kind(proc_exe_name(c), proc_cmdline(c))
         if not ckind:
             continue
-        cstate, cmalformed = program_state(records, {"pid": c, "wrapper": raw_fg}, ckind)
+        cstate, cmalformed = program_state(records, {"pid": c}, ckind)
+        wrapper_busy = [r.get("state") for r in records if raw_fg and (r.get("owner") or {}).get("pid") == raw_fg
+                        and attributed_to(r, c, ckind) and r.get("state") not in ("idle", "done")]
+        if wrapper_busy and cstate in ("-", "idle", "done"):
+            cstate = str(wrapper_busy[0] or "unknown")
         if cmalformed or cstate == "-":
             add_problem(p, f"{ckind} (pid {c}) hasn't reported whether it's busy", hard=True)
         elif cstate not in ("idle", "done"):

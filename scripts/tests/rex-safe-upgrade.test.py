@@ -36,6 +36,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -452,6 +453,19 @@ class ShellModeTest(unittest.TestCase):
         for want, argvs in cases.items():
             for argv in argvs:
                 self.assertEqual(mode(argv), want, argv)
+
+
+@unittest.skipUnless(HAS_PROC, 'needs Linux /proc')
+class OpenFdTargetsTest(unittest.TestCase):
+    def test_an_fd_closed_while_listing_is_skipped(self):
+        tool = load_tool()
+        real = os.listdir
+        with mock.patch.object(tool.os, 'listdir', lambda d: [*real(d), '987654']):  # gone by readlink
+            targets = tool.open_fd_targets(os.getpid())
+        self.assertIsNotNone(targets)
+        self.assertTrue(targets)  # the fds that exist are still read
+        with mock.patch.object(tool.os, 'listdir', mock.Mock(side_effect=PermissionError)):
+            self.assertIsNone(tool.open_fd_targets(os.getpid()))
 
 
 class SandboxRequirementTest(unittest.TestCase):
@@ -872,6 +886,13 @@ class PlanTest(Base):
         r = self.assert_blocked(extra=['--allow-unresumable'])
         self.assertRegex(r.stdout, r"pi \(pid \d+\) is working")
         self.assertRegex(r.stdout, r"pi \(pid \d+\) hasn't reported whether it's busy")
+
+    def test_one_wrapper_record_cannot_clear_two_unpromoted_agents(self):
+        # Two Pi children (so no promotion) and one idle record owned by the
+        # wrapper, written after both started: neither Pi has reported.
+        self.wrapper_pane(script='"$1" "$2" & "$1" "$2"; exec "$3" 60', kids=2, owner='wrapper', record=False)
+        r = self.assert_blocked(extra=['--allow-unresumable'])
+        self.assertEqual(len(re.findall(r"pi \(pid \d+\) hasn't reported whether it's busy", r.stdout)), 2, r.stdout)
 
     def test_promoted_interactive_shell_with_a_background_job_blocks(self):
         # The wrapper's foreground child is an interactive shell (idle at its
