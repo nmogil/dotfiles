@@ -592,7 +592,7 @@ real_pi_fixture() {
   echo 'export default () => 1;' > "$SOURCE_HOME/.pi/agent/extensions/a.ts" || die "a.ts"
   commit_upstream private capture_source
   git_q -C "$TMP/private" pull --ff-only
-  HOME="$HOME" python3 "$TMP/public/scripts/sync-pi-config.py" apply --apply --home "$HOME" \
+  python3 "$TMP/public/scripts/sync-pi-config.py" apply --apply --home "$HOME" \
     --bundle "$TMP/private/pi-config" >/dev/null 2>&1 || die "initial apply"
   echo 'export const fromSource = 1;' > "$SOURCE_HOME/.pi/agent/extensions/new.ts" || die "new.ts"
   commit_upstream private capture_source
