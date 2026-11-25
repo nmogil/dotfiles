@@ -522,6 +522,10 @@ See [`docs/rexume.md`](docs/rexume.md).
    --check` runs wherever rex-safe-upgrade is installed. `./dot rexboard
    --check` runs everywhere and is read-only: not installed is a skip, a
    differing binary a warning; update never installs or replaces rexboard.
+   `./dot rexume --check` runs the same way (not installed is a skip, any
+   problem a warning with the check's output). Update never installs,
+   applies or starts rexume. `--dry-run` uses `--check --no-status`, so
+   rexume itself never runs.
 
 When a repo is skipped or not verified, or its fetch fails, the applies that
 depend on it are skipped with a `!` line; read-only checks still run.

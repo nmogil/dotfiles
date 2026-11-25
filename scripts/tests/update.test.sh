@@ -202,6 +202,16 @@ case "$*" in
       differs) echo "rexboard at /x/rexboard differs from the pinned 0.36.0 build (rexboard 0.37.0)" >&2; exit 1 ;;
       *) echo "rexboard 0.37.0 installed with Homebrew (vanducng/tap/rexboard); Homebrew manages its version." ;;
     esac ;;
+  "rexume --check"|"rexume --check --no-status")
+    case "${STUB_REXUME:-installed}" in
+      missing) echo "rexume is not installed (./dot rexume --apply)"; exit 3 ;;
+      problem)
+        echo "rexume 0.1.28 installed with Homebrew (entwining/tap/rexume); Homebrew manages its version."
+        printf '%s\n' "rexume is not fully installed:" "  the rexume daemon is not active (systemctl --user status rexume)" >&2
+        exit 1 ;;
+      *) echo "rexume 0.1.28 installed with Homebrew (entwining/tap/rexume); Homebrew manages its version."
+         echo "rexume is installed: binary, daemon active, personal Pi extension; no work Pi profile on this machine." ;;
+    esac ;;
 esac
 EOF
 chmod +x "$STUB_DOT" || die "chmod"
@@ -326,7 +336,8 @@ rex config --dry-run
 rex config --apply
 rex config --check
 rex install --check
-rexboard --check"
+rexboard --check
+rexume --check"
 if [ "$RC" = 0 ] && [ "$(head_of "$TMP/public")" = "$(upstream_of "$TMP/public")" ] \
   && [ "$(head_of "$TMP/private")" = "$(upstream_of "$TMP/private")" ] \
   && has "fast-forwarded 1 commit" && has "fast-forwarded 2 commits" \
@@ -350,7 +361,7 @@ fi
   && ok "every Pi command gets the one resolved, absolute baseline path" \
   || { bad "every Pi command gets the one resolved, absolute baseline path"; sed 's/^/       /' "$TMP/calls.bundle"; }
 has "✓" && has "Repos" && has "Pi config" && has "Rex" \
-  && grep -Eq '^Summary: 10 ok, 0 warnings, 0 failed, 0 skipped' "$OUT" \
+  && grep -Eq '^Summary: 11 ok, 0 warnings, 0 failed, 0 skipped' "$OUT" \
   && ok "one line per step with section headers and a summary line" \
   || bad "one line per step with section headers and a summary line"
 has "3 managed files; 1 differ" && has "    drift  .pi/agent/example.ts" && ! has "Pi CLI: 1.6.0 (minimum" \
@@ -598,7 +609,7 @@ run_update
 if [ "$RC" = 0 ] && has "NEW-UPDATER-RAN --internal-apply-phase" \
   && [ "$(grep -c 'fast-forwarded' "$OUT")" = 2 ] && [ "$(grep -c ' fetch' "$TMP/gitlog")" = 2 ] \
   && [ "$(count_calls "pi config apply --apply")" = 1 ] && called "rex config --apply" \
-  && [ "$(grep -c '^Pi config' "$OUT")" = 1 ] && grep -Eq '^Summary: 10 ok, 0 warnings' "$OUT" \
+  && [ "$(grep -c '^Pi config' "$OUT")" = 1 ] && grep -Eq '^Summary: 11 ok, 0 warnings' "$OUT" \
   && [ "$(grep -c '^pi-cli update' "$TMP/calls")" = 1 ]; then
   ok "an upstream change to the updater re-execs the new updater for the apply phase only"
 else bad "an upstream change to the updater re-execs the new updater for the apply phase only"; show_calls; fi
@@ -623,7 +634,7 @@ fresh
 STUB_PI_UPDATE_FAIL=1 run_update
 if [ "$RC" = 0 ] && has "! Pi CLI update failed (exit 1)" && has "    Error: Could not determine latest pi version" \
   && called "pi config apply --apply" && called "pi config packages --apply" \
-  && grep -Eq '^Summary: 9 ok, 1 warning, 0 failed' "$OUT"; then
+  && grep -Eq '^Summary: 10 ok, 1 warning, 0 failed' "$OUT"; then
   ok "Pi CLI: a failed update is a warning and the run continues (the apply version gate decides)"
 else bad "Pi CLI: a failed update is a warning and the run continues (the apply version gate decides)"; show_calls; fi
 
@@ -1214,6 +1225,39 @@ STUB_REXBOARD=differs run_update --dry-run
 if [ "$RC" = 0 ] && has "! rexboard check failed (exit 1)" && [ "$(count_calls "rexboard --check")" = 1 ]; then
   ok "rexboard: --dry-run runs the same read-only check"
 else bad "rexboard: --dry-run runs the same read-only check"; fi
+
+# --- 9c: rexume is checked read-only, never installed, applied or started ----------------
+no_rexume_writes() { ! grep '^rexume ' "$TMP/calls" | grep -vxq -e 'rexume --check' -e 'rexume --check --no-status'; }
+fresh
+run_update
+if [ "$RC" = 0 ] && has "✓ rexume check — rexume is installed: binary, daemon active" \
+  && [ "$(count_calls "rexume --check")" = 1 ] && no_rexume_writes; then
+  ok "rexume: an installed rexume passes the read-only check (never --apply)"
+else bad "rexume: an installed rexume passes the read-only check (never --apply)"; show_calls; fi
+fresh
+STUB_REXUME=missing run_update
+if [ "$RC" = 0 ] && has "- rexume: not installed (opt-in: ./dot rexume --apply)" && ! has "! rexume" \
+  && no_rexume_writes && grep -Eq '^Summary: 10 ok, 0 warnings, 0 failed, 1 skipped' "$OUT"; then
+  ok "rexume: not installed is a skip, not a warning, and installs nothing"
+else bad "rexume: not installed is a skip, not a warning, and installs nothing"; show_calls; fi
+fresh
+STUB_REXUME=problem run_update
+if [ "$RC" = 0 ] && has "! rexume check failed (exit 1)" && has "    rexume is not fully installed:" \
+  && has "      the rexume daemon is not active" && no_rexume_writes \
+  && grep -Eq '^Summary: 10 ok, 1 warning, 0 failed, 0 skipped' "$OUT"; then
+  ok "rexume: a problem is a warning with the check's output indented"
+else bad "rexume: a problem is a warning with the check's output indented"; show_calls; fi
+fresh
+STUB_REXUME=problem run_update --dry-run
+if [ "$RC" = 0 ] && has "! rexume check failed (exit 1)" && [ "$(count_calls "rexume --check --no-status")" = 1 ] \
+  && [ "$(count_calls "rexume --check")" = 0 ] && no_rexume_writes; then
+  ok "rexume: --dry-run checks with --no-status (rexume itself never runs; nothing is written)"
+else bad "rexume: --dry-run checks with --no-status (rexume itself never runs; nothing is written)"; show_calls; fi
+fresh
+run_update --dry-run
+if [ "$RC" = 0 ] && has "✓ rexume check — rexume is installed" && [ "$(count_calls "rexume --check --no-status")" = 1 ]; then
+  ok "rexume: --dry-run reports an installed rexume"
+else bad "rexume: --dry-run reports an installed rexume"; show_calls; fi
 
 # --- 10: failures ------------------------------------------------------------------
 fresh

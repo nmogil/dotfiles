@@ -52,7 +52,7 @@ jobs:
           exit "$failed"
 
       # macOS ships bash 3.2 as /bin/bash; PATH bash on the runner is newer.
-      - name: update, rexboard, rexume, pi-profiles tests under /bin/bash (bash 3.2)
+      - name: update, rexboard, pi-version, rexume, pi-profiles tests under /bin/bash (bash 3.2)
         if: runner.os == 'macOS'
         run: |
           /bin/bash --version | head -n 1

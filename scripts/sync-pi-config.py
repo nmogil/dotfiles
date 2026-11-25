@@ -39,6 +39,11 @@ TREES = (
     ".pi/agent/prompts", ".pi/agent/pi-codex-subagents/agents",
     ".agents/skills/find-skills",
 )
+# Files another program owns and rewrites inside a managed tree. The baseline
+# never captures, applies, reports, or retires them, even when an older bundle
+# or ownership record names them. rexume's daemon rewrites its Pi extension
+# whenever it differs from its own version (docs/rexume.md).
+DAEMON_OWNED = {".pi/agent/extensions/rexume.ts"}
 # Rex owns its generated skill/hook files; install those with rex skill setup.
 PREFERENCES = {
     "theme", "cloak", "defaultProvider", "defaultModel", "defaultThinkingLevel",
@@ -90,7 +95,7 @@ def encoded(value: dict) -> bytes:
 
 def allowed(name: str) -> bool:
     path = PurePosixPath(name)
-    if path.is_absolute() or ".." in path.parts or str(path) != name:
+    if path.is_absolute() or ".." in path.parts or str(path) != name or name in DAEMON_OWNED:
         return False
     if any(part in SKIP or part.startswith(".env") or ".bak" in part for part in path.parts):
         return False
@@ -213,6 +218,8 @@ def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
         raise ValueError("baseline is missing its file manifest or settings")
     result = {}
     for name, digest in files.items():
+        if name in DAEMON_OWNED:
+            continue  # captured before it was excluded; never applied
         if not allowed(name):
             raise ValueError(f"non-portable baseline path: {name}")
         data = checked(safe_path(bundle, "files/" + name).read_bytes(), name)
@@ -302,6 +309,8 @@ def main() -> int:
     ownership = safe_path(home, OWNERSHIP)
     record = object_file(ownership) if ownership.exists() else {}
     previous = record.get("files", [])
+    if isinstance(previous, list):
+        previous = [name for name in previous if name not in DAEMON_OWNED]  # never retired
     if not isinstance(previous, list) or any(not isinstance(name, str) or not allowed(name) for name in previous):
         raise ValueError("invalid managed-file ownership record")
     exclusions = args.exclude if args.exclude is not None else record.get("excludes", [])

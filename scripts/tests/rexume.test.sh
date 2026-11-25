@@ -542,6 +542,19 @@ fresh; mac
 # --- Brewfile: rexume is opt-in ---------------------------------------------------------------------------
 ! grep -Eq '^[[:space:]]*(brew|tap)[[:space:]]+"entwining/' "$ROOT/Brewfile"; res "the Brewfile does not install rexume (./dot rexume --apply does)"
 
+# --- --check --no-status: the read-only check that never runs rexume (./dot update --dry-run) -------------
+fresh; run --check --no-status
+[ "$RC" = 3 ] && ! called "rexume "; res "--check --no-status: not installed is 3"
+fresh; run --apply; : > "$TMP/calls"; before="$(snapshot)"; STUB_HOOKS_MISSING='["Stop"]' run --check --no-status
+[ "$RC" = 0 ] && ! called "rexume " && has "rexume status not run" && [ "$(snapshot)" = "$before" ]
+res "--check --no-status passes without running rexume (no status, so missing hooks aren't seen) and writes nothing"
+rm -f "$TMP/daemon-active"; run --check --no-status
+[ "$RC" = 1 ] && has "not active" && ! called "rexume "; res "--check --no-status still checks the daemon, binary and profiles"
+fresh; run --apply --no-status
+[ "$RC" = 2 ] && ! installed; res "--no-status only goes with --check (exit 2)"
+fresh; run --no-status
+[ "$RC" = 2 ]; res "--no-status alone is a usage error"
+
 # --- every daemon-manager and status call is bounded --------------------------------------------------------
 fresh; run --apply; t0="$(date +%s)"; CALL_TIMEOUT=1 STUB_SYSTEMCTL_HANG=1 run --check; t1="$(date +%s)"
 [ "$RC" = 1 ] && has "systemctl --user is-active rexume timed out" && [ $((t1 - t0)) -lt 10 ]; res "--check bounds a hanging systemctl"

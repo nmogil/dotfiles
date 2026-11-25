@@ -10,7 +10,7 @@
 #      verified commit, then apply the Pi baseline — guarded so live files with
 #      local changes are never replaced — and its packages, and check it
 #   4. apply + check the Mac Rex image-paste config (Mac only)
-#   5. run cheap read-only checks (rex-safe-upgrade install, rexboard)
+#   5. run cheap read-only checks (rex-safe-upgrade install, rexboard, rexume)
 #
 # Never stashes, resets, or forces; never passes --force to installers; never
 # restarts Rex or touches running agent sessions (they keep the old Pi until
@@ -902,6 +902,22 @@ case "$rexboard_rc" in
   0) say_ok "rexboard check — $(summary '^rexboard')" ;;
   3) say_skip "rexboard: not installed (./dot rexboard --apply to opt in)" ;;
   *) say_warn "rexboard check failed (exit $rexboard_rc) — see ./dot rexboard and docs/rexboard.md"
+     log_lines | indent ;;
+esac
+# rexume: read-only check only. Update never installs, applies, or starts it
+# (./dot rexume --apply is opt-in). --dry-run checks with --no-status, so
+# rexume itself never runs: `rexume status` opens its SQLite state read-only,
+# which can still create state.db-wal/-shm, and a dry run writes nothing.
+rexume_rc=0
+if [ "$DRY_RUN" = 1 ]; then
+  capture in_home "$DOT" rexume --check --no-status || rexume_rc=$?
+else
+  capture in_home "$DOT" rexume --check || rexume_rc=$?
+fi
+case "$rexume_rc" in
+  0) say_ok "rexume check — $(summary '^rexume is installed')" ;;
+  3) say_skip "rexume: not installed (opt-in: ./dot rexume --apply)" ;;
+  *) say_warn "rexume check failed (exit $rexume_rc) — see ./dot rexume --check and docs/rexume.md"
      log_lines | indent ;;
 esac
 

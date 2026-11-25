@@ -25,7 +25,9 @@
 #          the two never interleave (scripts/lib/pi-profiles-lock.sh).
 #
 # Checks are read-only: they run rexume only as `rexume status`, and only a
-# verified binary; ask Homebrew only for `brew --cellar`; and query systemd or
+# verified binary (`--check --no-status` never runs it, for `./dot update
+# --dry-run`: status opens state.db read-only, which SQLite may still give a
+# -wal/-shm file); ask Homebrew only for `brew --cellar`; and query systemd or
 # launchd without changing anything. --dry-run writes nothing and does no
 # network (no heredocs or here-strings: bash 3.2 writes them to temp files).
 # Daemon-manager and status calls are bounded (DOTFILES_REXUME_CALL_TIMEOUT,
@@ -40,9 +42,12 @@ LABEL=io.github.entwining.rexume
 
 usage() {
   cat <<'EOF'
-usage: ./dot rexume [--dry-run | --check | --apply [--force]]
+usage: ./dot rexume [--dry-run | --check [--no-status] | --apply [--force]]
   --dry-run       report what --apply would do (default; changes nothing, no network)
   --check         exit 0 if installed as expected, 3 if not installed at all, 1 otherwise
+  --check --no-status
+                  the same, but never runs rexume (skips `rexume status`, whose
+                  read-only SQLite open can still create state.db-wal/-shm)
   --apply         install rexume if missing (Mac: Homebrew; Linux: pinned, attested
                   release), probe the Rex server, then run `rexume install` (hooks,
                   personal Pi extension, daemon) without PI_CODING_AGENT_DIR
@@ -50,11 +55,12 @@ usage: ./dot rexume [--dry-run | --check | --apply [--force]]
 EOF
 }
 
-MODE=--dry-run FORCE=0
+MODE=--dry-run FORCE=0 NO_STATUS=0
 case "$#:${1:-}:${2:-}" in
   0::) ;;
   1:--dry-run:|1:--check:|1:--apply:) MODE="$1" ;;
   2:--apply:--force) MODE=--apply FORCE=1 ;;
+  2:--check:--no-status) MODE=--check NO_STATUS=1 ;;
   1:-h:|1:--help:) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
@@ -282,6 +288,10 @@ do_check() {
   work_profiles
   if [ -n "$WORK_PROFILES" ]; then problems="${problems}
   a work Pi profile exists ($WORK_PROFILES); rexume must not be installed alongside one (see docs/rexume.md, work profile)"
+  fi
+  if [ -z "$problems" ] && [ -n "$REXUME_BIN" ] && [ "$NO_STATUS" = 1 ]; then
+    say "rexume is installed: binary, daemon active, personal Pi extension; no work Pi profile on this machine (rexume status not run)."
+    return 0
   fi
   if [ -z "$problems" ] && [ -n "$REXUME_BIN" ]; then
     # The only rexume run in a check: status reads the state database and settings.

@@ -185,6 +185,20 @@ to run `rexume skill show`.
 If you run `rexume install` or `rexume uninstall` by hand, use
 `env -u PI_CODING_AGENT_DIR rexume install` (or `uninstall`).
 
+## `./dot update`, `./dot doctor` and the Pi config sync
+
+- `./dot update` runs `./dot rexume --check` and nothing else: 0 is ✓, 3 is a
+  skip ("not installed (opt-in: ./dot rexume --apply)"), and anything else is
+  a warning with the check's output indented. It never installs, applies or
+  starts rexume. In `--dry-run` it runs `--check --no-status`, which never
+  runs rexume. `rexume status` opens `state.db` with SQLite's read-only flag
+  and never migrates it, but SQLite can still create `state.db-wal`/`-shm`
+  when the daemon isn't holding them open, and a dry run writes nothing.
+- `./dot doctor` runs `./dot rexume --check` where Rex or rexume is present.
+- `./dot pi config` never captures, applies, reports or retires
+  `~/.pi/agent/extensions/rexume.ts`, because rexume's daemon owns and
+  rewrites it (`docs/pi-config-sync.md`).
+
 ## Claude Code plugin: forgeable messages
 
 Upstream warns that rexume's Claude Code plugin submits every message on a
@@ -261,6 +275,8 @@ macOS follows Homebrew (`brew upgrade`). Linux follows the pin. To move it:
 ```sh
 bash scripts/tests/rexume.test.sh     # fixture release over file://; stubs on an allowlisted temp-only PATH
 bash scripts/tests/pi-profiles.test.sh  # no work profile while rexume is installed; the shared lock
+bash scripts/tests/update.test.sh       # update's read-only rexume check (--no-status in --dry-run)
+python3 scripts/tests/pi-config.test.py # rexume.ts is never captured, reported or retired
 bash scripts/tests/rexboard.test.sh   # the shared pinned-release library
 ./dot rexume --check
 ```

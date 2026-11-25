@@ -132,6 +132,11 @@ tool previously managed them**. Empty nested resource directories are pruned
 after archival, but directories containing unmanaged files are preserved.
 Unmanaged files are never deleted.
 
+`.pi/agent/extensions/rexume.ts` is never part of the baseline. rexume's
+daemon owns it and rewrites it (`docs/rexume.md`). Capture skips it, and
+apply, check and retirement ignore it. That holds even when an older bundle
+or ownership record names it.
+
 ## Intentional differences
 
 The VPS retains its extra skills, Git identity preflight extension, standing

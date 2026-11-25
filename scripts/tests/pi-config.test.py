@@ -70,6 +70,57 @@ class PiConfigTest(unittest.TestCase):
         settings = json.loads((self.bundle / "files/.pi/agent/settings.json").read_text())
         self.assertNotIn("lastChangelogVersion", settings)
 
+    # rexume's daemon owns ~/.pi/agent/extensions/rexume.ts (docs/rexume.md) and
+    # rewrites it whenever it differs from its own version, so the baseline must
+    # never capture, report, replace or retire it.
+    REXUME = ".pi/agent/extensions/rexume.ts"
+
+    def test_rexume_extension_is_never_captured(self):
+        self.put(self.mac, self.REXUME, "// Written by `rexume install`\n")
+        out = self.run_cli("capture").stdout
+        self.assertIn("Would capture 3 files", out)
+        self.run_cli("capture", apply=True)
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        self.assertNotIn(self.REXUME, manifest["files"])
+        self.assertFalse((self.bundle / "files" / self.REXUME).exists())
+
+    def test_live_rexume_extension_is_never_drift_replaced_or_retired(self):
+        self.run_cli("capture", apply=True)
+        self.run_cli("apply", self.vps, apply=True)
+        live = self.put(self.vps, self.REXUME, "// Written by `rexume install` (daemon copy)\n")
+        check = self.run_cli("check", self.vps)
+        self.assertNotIn("rexume", check.stdout + check.stderr)
+        for extra in ((), ("--protect-local", "--previous-bundle", str(self.bundle))):
+            result = self.run_cli("apply", self.vps, apply=True, extra_args=extra)
+            self.assertNotIn("rexume", result.stdout + result.stderr)
+            self.assertEqual(live.read_text(), "// Written by `rexume install` (daemon copy)\n")
+        record = json.loads((self.vps / ".local/state/dotfiles/pi-config-files.json").read_text())
+        self.assertNotIn(self.REXUME, record["files"])
+
+    def test_rexume_extension_listed_by_an_older_bundle_or_record_is_ignored(self):
+        # A baseline or ownership record written before this exclusion may name
+        # rexume.ts; it is still never applied, reported, or archived.
+        self.put(self.mac, ".pi/agent/extensions/rexume.ts", "// baseline copy\n")
+        self.run_cli("capture", apply=True)
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        data = b"// baseline copy\n"
+        self.put(self.bundle, "files/" + self.REXUME, data.decode())
+        import hashlib
+        manifest["files"][self.REXUME] = hashlib.sha256(data).hexdigest()
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        self.run_cli("apply", self.vps, apply=True)
+        self.assertFalse((self.vps / self.REXUME).exists())
+        live = self.put(self.vps, self.REXUME, "// daemon copy\n")
+        ownership = self.vps / ".local/state/dotfiles/pi-config-files.json"
+        record = json.loads(ownership.read_text())
+        record["files"].append(self.REXUME)
+        ownership.write_text(json.dumps(record))
+        check = self.run_cli("check", self.vps)
+        self.assertNotIn("rexume", check.stdout)
+        self.run_cli("apply", self.vps, apply=True)
+        self.assertEqual(live.read_text(), "// daemon copy\n")
+        self.assertFalse(list((self.vps / ".local/state/dotfiles").glob("pi-config-backups/*/" + self.REXUME)))
+
     def test_apply_preserves_machine_state_backs_up_and_is_idempotent(self):
         self.run_cli("capture", apply=True)
         self.put(self.vps, ".pi/agent/auth.json", "remote-credentials")
