@@ -598,10 +598,13 @@ run_update
 
 # --- 8c: the apply-phase hand-off is re-verified, not trusted --------------------------
 forge_state() {  # a complete, correct hand-off for the current checkouts
+  local pub_commit priv_commit
+  pub_commit="$(head_of "$TMP/public")" || die "head"
+  priv_commit="$(head_of "$TMP/private")" || die "head"
   export DOT_UPDATE_PUBLIC=ok DOT_UPDATE_PUBLIC_DIR="$TMP/public" \
-    DOT_UPDATE_PUBLIC_COMMIT="$(head_of "$TMP/public")" DOT_UPDATE_PUBLIC_REMOTE="$PUB_KEY" \
+    DOT_UPDATE_PUBLIC_COMMIT="$pub_commit" DOT_UPDATE_PUBLIC_REMOTE="$PUB_KEY" \
     DOT_UPDATE_PRIVATE=ok DOT_UPDATE_PRIVATE_DIR="$TMP/private" \
-    DOT_UPDATE_PRIVATE_COMMIT="$(head_of "$TMP/private")" DOT_UPDATE_PRIVATE_REMOTE="$PRIV_KEY" \
+    DOT_UPDATE_PRIVATE_COMMIT="$priv_commit" DOT_UPDATE_PRIVATE_REMOTE="$PRIV_KEY" \
     DOT_UPDATE_PI_PRECHECK=clean DOT_UPDATE_BUNDLE="$TMP/private/pi-config" DOT_UPDATE_COUNTS="2 0 0 0"
 }
 unforge() {
