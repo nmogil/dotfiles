@@ -78,6 +78,13 @@ try {
   await on.session_start({ reason: 'new' }, ctx('/s/c.jsonl')); // write fails quietly
   rmSync(record, { recursive: true });
 
+  // Rex preview.23 sets only REX_BLOCK: the record is still written, with no session.
+  delete process.env.REX_SESSION;
+  await on.session_start({ reason: 'new' }, ctx('/s/d.jsonl'));
+  assert.equal(read().sessionFile, '/s/d.jsonl');
+  assert.equal(read().session, null);
+  rmSync(record);
+
   // Quit removes the record.
   writeFileSync(record, '{}');
   await on.session_shutdown({ reason: 'quit' }, ctx('/s/b.jsonl'));
