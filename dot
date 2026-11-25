@@ -47,8 +47,9 @@ Usage: ./dot <command> [args]
 
   help                 Show this help
   doctor               Read-only environment health check
-  update [--dry-run]   Pull public+private repos (ff-only), apply Pi baseline +
-                       packages, apply Mac Rex config, run checks (one line/step)
+  update [--dry-run]   Fast-forward public+private repos, apply Pi baseline +
+                       packages, apply Mac Rex config, run checks (one line/step;
+                       --dry-run is read-only, add --fetch to refresh refs)
   setup mac            Run macOS setup (setup.sh)
   setup linux          Run Linux/VPS setup (setup-linux.sh)
   repos clone [file]   Bulk-clone repos from repos.txt (clone-repos.sh)

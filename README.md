@@ -80,7 +80,8 @@ $EDITOR ~/.config/dotfiles/local.env
 Everything works without it — the scripts fall back to generic defaults. When
 present, `setup`, `clone-repos`, `doctor`, and `./dot pi doctor` source it.
 Note it is read by these repo scripts, **not** automatically by unrelated Pi
-processes. Documented keys (see
+processes. It is sourced as bash, so treat it as code: keep it owner-writable
+and only put trusted content in it. Documented keys (see
 [`config/dotfiles/local.env.example`](config/dotfiles/local.env.example)):
 
 | Key | Effect | Default |
@@ -90,6 +91,7 @@ processes. Documented keys (see
 | `GITHUB_REPOS_DIR` | Clone root | `~/github_repos` |
 | `PI_MEMORY_COMPILER_DIR` | Consumed by the Pi memory-compiler extension **only when exported into the Pi process environment** (e.g. your shell rc) or set in `~/.pi/agent/memory-compiler.json`; putting it in `local.env` alone does not reach Pi | `~/github_repos/personal/claude-memory-compiler` |
 | `DOTFILES_PI_BLOCKLIST` | Extra private-string regexes `./dot pi doctor` rejects in the Pi scaffold | `~/.config/dotfiles/pi-scaffold-blocklist.txt` |
+| `DOTFILES_PRIVATE_REMOTE` | Remote URL `./dot update` requires for the private companion repo | same owner as this repo's `origin`, name `dotfiles-private` |
 
 **Shell-level machine locals.** `local.env` is read by the repo's scripts, not by
 your interactive shell. For per-machine *shell* config — private hostnames,
@@ -415,25 +417,52 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 `./dot update` brings a machine up to date in one command, one line per step:
 
 ```bash
-./dot update --dry-run   # fetch, show behind/ahead counts and apply previews; changes nothing
-./dot update             # do it; exits 1 if any step failed
+./dot update --dry-run           # read-only: cached behind/ahead counts, apply previews, checks
+./dot update --dry-run --fetch   # same, after refreshing remote-tracking refs (git fetch)
+./dot update                     # do it; exits 1 if any step failed
 ```
 
-1. **Repos** — `git pull --ff-only` for this repo and the private companion
-   (the parent of `DOTFILES_PI_SCAFFOLD_DIR`). A repo that is dirty, detached,
-   diverged, or missing is skipped with a warning — never stashed, reset, or forced.
-2. **Pi config** — when a `pi-config` baseline exists: `./dot pi config apply
-   --apply`, `packages --apply`, then `check` (see
-   [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). It never updates the Pi
+1. **Repos** — fetch, then fast-forward this repo and the private companion
+   (the parent of `DOTFILES_PI_SCAFFOLD_DIR`) to the exact fetched upstream
+   commit with `git merge --ff-only --no-overwrite-ignore`. A repo that is dirty
+   (untracked non-ignored files count), detached, diverged, or missing is
+   skipped with a warning — never stashed, reset, or forced — and so is a merge
+   that would overwrite an ignored local file. Status/count errors fail closed.
+   The private repo path must be absolute, canonical, and the top of its git
+   checkout, and its remote must be the expected companion: by default the same
+   owner as this repo's `origin` with the name `dotfiles-private` (override
+   with `DOTFILES_PRIVATE_REMOTE` in `local.env`). If the fast-forward changed
+   `scripts/update.sh` or `dot`, the new updater runs the remaining steps.
+2. **Pi config** — when a `pi-config` baseline exists and **both** repos
+   updated cleanly: `./dot pi config apply --apply`, `packages --apply`, then
+   `check` (see [`docs/pi-config-sync.md`](docs/pi-config-sync.md)). Before
+   pulling, it runs `./dot pi config check`; if the live config already differed
+   from the current baseline, that may be uncaptured local work (on the Mac,
+   the source of truth, it usually is), so apply is skipped with a warning —
+   review with `./dot pi config apply` (preview) or `./dot pi config capture`
+   on the Mac, or rerun with `--yes`. Apply backs up every file it replaces
+   under `~/.local/state/dotfiles/pi-config-backups/`. Apply and packages are
+   separate steps: if packages fails, Pi is left partially applied (new
+   config, old packages) until you fix it and rerun. It never updates the Pi
    CLI itself; restart Pi sessions to load package changes.
-3. **Rex** — Mac only: `./dot rex config --apply` then `--check` (never
-   `--force`, never restarts Rex; run `rex config reload` yourself). Linux
-   reports "skipped (Mac only)". `./dot rex install --check` runs wherever
-   rex-safe-upgrade is installed.
+3. **Rex** — Mac only, when this repo updated cleanly (plus the private repo
+   when a private Rex overlay exists): `./dot rex config --apply` then
+   `--check`. Existing files that differ are reported as needing manual review
+   (`./dot rex config`, then `--force`); update never passes `--force` and never
+   restarts Rex (run `rex config reload` yourself). Linux reports "skipped (Mac
+   only)". `./dot rex install --check` runs wherever rex-safe-upgrade is
+   installed.
+
+When a repo is skipped or its fetch fails, the applies that depend on it are
+skipped with a `!` line; read-only checks still run. `--dry-run` never fetches
+and writes nothing to either repo; `--fetch` updates only remote-tracking refs.
 
 Output is ✓ / ! / ✗ per step under a header per section, with command output
 summarized and indented, then a `Summary:` line with counts. Color appears only
 on a terminal and never when `NO_COLOR` is set.
+
+`local.env` is sourced as bash by `./dot update` (and the other scripts), so it
+must be a file you trust.
 
 `./dot update` does not upgrade system packages. On a Mac, refresh those with:
 

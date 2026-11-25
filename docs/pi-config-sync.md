@@ -79,6 +79,12 @@ Removed declarations stop loading, but old cached packages are not
 deleted. Restart Pi after package changes; running sessions may still contain
 previously loaded extensions or skills.
 
+`./dot update` runs `apply --apply`, `packages --apply`, and `check` for you,
+but only after both dotfiles repos fast-forwarded cleanly, and it skips apply
+(unless `--yes`) when `check` already failed before pulling — that drift may be
+uncaptured local work. Apply backs up what it replaces; a failed `packages`
+step leaves Pi partially applied until rerun. See the README's "Updating".
+
 The installed Pi CLI must match `manifest.json`'s `piVersion`. Both machines
 currently use **1.6.0**; the public CLI installer and package manifest pin that
 version too. Change those pins deliberately when upgrading the source machine.
