@@ -562,18 +562,28 @@ class PiVersionHelperTest(unittest.TestCase):
             with self.assertRaises(not_npm):
                 self.module.installed_version(str(Path(tmp) / "missing/bin/pi"))
 
-    def test_installed_version_requires_valid_metadata(self):
-        unavailable = self.module.MetadataUnavailable
+    def test_installed_version_requires_a_verified_pi_manifest(self):
+        unavailable, not_npm = self.module.MetadataUnavailable, self.module.NotNpmLayout
         with tempfile.TemporaryDirectory() as tmp:
             pi = self.make_install(tmp, "usr")
             package_json = Path(tmp) / "usr/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
+            # Only a manifest verified as @earendil-works/pi-coding-agent with an
+            # unreadable version is "metadata unavailable"...
+            for version in ("1.6", None, 160, "1.6.0-beta.1"):
+                package_json.write_text(json.dumps({"name": "@earendil-works/pi-coding-agent", "version": version}))
+                with self.assertRaises(unavailable, msg=version):
+                    self.module.installed_version(str(pi))
+            # ...anything that does not prove it is that package is not the install.
             for content in ("{broken", "[]", json.dumps({"name": "other", "version": "1.6.1"}),
-                            json.dumps({"name": "@earendil-works/pi-coding-agent", "version": "1.6"})):
-                package_json.write_text(content)
-                with self.assertRaises(unavailable, msg=content):
+                            json.dumps({"version": "1.6.1"}), b"\xff\xfe"):
+                if isinstance(content, bytes):
+                    package_json.write_bytes(content)
+                else:
+                    package_json.write_text(content)
+                with self.assertRaises(not_npm, msg=content):
                     self.module.installed_version(str(pi))
             package_json.unlink()
-            with self.assertRaises(unavailable):
+            with self.assertRaises(not_npm):
                 self.module.installed_version(str(pi))
 
 

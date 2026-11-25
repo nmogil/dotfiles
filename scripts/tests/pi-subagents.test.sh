@@ -191,13 +191,20 @@ check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
 printf '%s\n' "$check_output" | grep -Fq "ok   compatible Pi runtime: 99.10.0 (minimum $PI_MIN_VERSION)" \
   || { printf '%s\n' "$check_output"; echo "expected the check to report the installed version and minimum" >&2; exit 1; }
 # Unreadable metadata and a project-local install (not global npm) both fail.
-printf '{broken' > "$PI_PACKAGE_JSON"
+set_pi_version 1.6
 if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
   PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --check 2>&1)"; then
   echo "expected unreadable Pi metadata to fail the check" >&2; exit 1
 fi
 printf '%s\n' "$check_output" | grep -Fq "FAIL Pi version unavailable" \
   || { printf '%s\n' "$check_output"; echo "expected the check to say the Pi version is unavailable" >&2; exit 1; }
+printf '{"name": "evil-package", "version": "99.10.0"}\n' > "$PI_PACKAGE_JSON"
+if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --apply 2>&1)"; then
+  echo "expected a package.json naming another package to be refused" >&2; exit 1
+fi
+printf '%s\n' "$check_output" | grep -Fq "must be a global npm install" \
+  || { printf '%s\n' "$check_output"; echo "expected a name mismatch to be not-the-install" >&2; exit 1; }
 set_pi_version 99.10.0
 LOCAL_PI="$TMP/project/node_modules/.bin/pi"
 mkdir -p "$TMP/project/node_modules/@earendil-works" "$(dirname "$LOCAL_PI")"

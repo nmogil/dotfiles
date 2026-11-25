@@ -12,7 +12,8 @@ dot-separated components of 1-6 ASCII digits, nothing else.
 
 Command line: ``python3 -B pi_version.py installed-version <absolute-pi-path>``
 prints the version (exit 0), or a reason on stderr with exit 3 (not a
-supported global npm install) or 4 (install found, metadata unavailable).
+supported global npm install, including a package.json that does not name
+the package) or 4 (verified package manifest, version unreadable).
 """
 from __future__ import annotations
 
@@ -91,19 +92,32 @@ def package_root(pi_path: str) -> Path:
 
 
 def installed_version(pi_path: str) -> str:
-    """The version in package.json of the global npm install behind ``pi_path``."""
+    """The version in package.json of the global npm install behind ``pi_path``.
+
+    The install is only verified once its package.json is readable JSON naming
+    PACKAGE: a missing, unreadable, or non-object manifest, or one naming any
+    other package, is NotNpmLayout (never run). MetadataUnavailable means a
+    verified PACKAGE manifest whose version is not a release version.
+    """
     root = package_root(pi_path)
+    manifest = root / "package.json"
+
+    def refuse(detail: str) -> NotNpmLayout:
+        return NotNpmLayout(f"{pi_path} is not a global npm install of {PACKAGE} ({manifest} {detail})")
+
     try:
-        metadata = json.loads((root / "package.json").read_text())
+        metadata = json.loads(manifest.read_text())
     except (OSError, UnicodeDecodeError, ValueError) as error:
-        raise MetadataUnavailable(f"cannot read {root / 'package.json'}: {error}") from None
-    if not isinstance(metadata, dict) or metadata.get("name") != PACKAGE:
-        raise MetadataUnavailable(f"{root / 'package.json'} is not the {PACKAGE} manifest")
+        raise refuse(f"cannot be read: {error}") from None
+    if not isinstance(metadata, dict):
+        raise refuse("is not a JSON object")
+    if metadata.get("name") != PACKAGE:
+        raise refuse(f"names {metadata.get('name')!r}")
     version = metadata.get("version")
     try:
         parse(version)
     except ValueError:
-        raise MetadataUnavailable(f"{root / 'package.json'} version {version!r} is not a release version") from None
+        raise MetadataUnavailable(f"{manifest} version {version!r} is not a release version") from None
     return version
 
 

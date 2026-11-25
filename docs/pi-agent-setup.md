@@ -223,8 +223,10 @@ available for project tooling.
 
 The npm layout is intentional, and only a *global* npm install counts: an
 absolute `<prefix>/bin/pi` that resolves to
-`<prefix>/lib/node_modules/@earendil-works/pi-coding-agent/dist/[bundle/]cli.js`.
-Project-local, pnpm, Vite+, and linked installs are refused. A Pi CLI installed globally through Vite+ was
+`<prefix>/lib/node_modules/@earendil-works/pi-coding-agent/dist/[bundle/]cli.js`,
+with a `package.json` that names `@earendil-works/pi-coding-agent`.
+Project-local, pnpm, Vite+, and linked installs, and a missing or
+other-package manifest, are refused (never run). A Pi CLI installed globally through Vite+ was
 verified to fail runtime imports used by subagent and other extensions,
 while the npm-installed CLI loaded the pinned source stack.
 Pi is therefore listed in `packages/npm.global`.

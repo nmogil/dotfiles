@@ -39,8 +39,10 @@ pi_version_at_least() {
 # break runtime imports used by Pi extensions). Callers run this same path.
 # Sets PI_NPM_VERSION, or PI_NPM_PROBLEM (a reason). Returns:
 #   0  verified global npm install; version read
-#   1  verified NOT a supported global npm install
-#   2  verified global npm install, but its package.json version is unreadable
+#   1  NOT a supported global npm install (wrong layout, or a package.json
+#      that is missing, unreadable, or names another package)
+#   2  verified global npm install whose package.json names the package, but
+#      whose version is unreadable
 #   3  could not verify at all (python3 missing, crashed, or answered outside
 #      the protocol) — nothing is known about this pi, so never run it
 # Only 0 and 2 are positive verifications of the layout.

@@ -105,9 +105,21 @@ rc=0; (cd "$TMP" && pi_npm_version bin/pi) || rc=$?
 set_version "$PKGDIR" 1.6
 npm_version "$TMP/bin/pi"
 [ "$rc" = 2 ] && ok "an unparsable package.json version is unavailable metadata" || bad "an unparsable package.json version is unavailable metadata (rc=$rc)"
+# Status 2 is only for a verified Pi manifest; anything else is not the install (1).
+printf '{"name": "evil-package", "version": "1.6.1"}\n' > "$PKGDIR/package.json"
+npm_version "$TMP/bin/pi"
+[ "$rc" = 1 ] && printf '%s' "$PI_NPM_PROBLEM" | grep -Fq 'evil-package' \
+  && ok "a package.json with another package name is not the install (1)" \
+  || bad "a package.json with another package name is not the install (1) (rc=$rc)"
+printf '[]\n' > "$PKGDIR/package.json"
+npm_version "$TMP/bin/pi"
+[ "$rc" = 1 ] && ok "a non-object package.json is not the install (1)" || bad "a non-object package.json is not the install (1) (rc=$rc)"
+printf '{"name": ' > "$PKGDIR/package.json"
+npm_version "$TMP/bin/pi"
+[ "$rc" = 1 ] && ok "an unparsable package.json is not the install (1)" || bad "an unparsable package.json is not the install (1) (rc=$rc)"
 rm "$PKGDIR/package.json"
 npm_version "$TMP/bin/pi"
-[ "$rc" = 2 ] && ok "a missing package.json is unavailable metadata" || bad "a missing package.json is unavailable metadata (rc=$rc)"
+[ "$rc" = 1 ] && ok "a missing package.json is not the install (1)" || bad "a missing package.json is not the install (1) (rc=$rc)"
 set_version "$PKGDIR" 1.6.1
 [ ! -e "$LAUNCHES" ] && ok "pi_npm_version never launches Pi" || bad "pi_npm_version never launches Pi"
 

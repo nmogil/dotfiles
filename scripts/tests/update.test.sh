@@ -683,12 +683,33 @@ if [ "$RC" = 0 ] && has "- Pi CLI: not updated — ../pinpm/bin/pi" && ! grep -q
 else bad "Pi CLI: a relative pi path from PATH is never verified or run"; show_calls; fi
 
 fresh
-rm "$PI_PKG/package.json" || die "rm package.json"
+pi_pkg_version 1.6
 run_update --dry-run
 if [ "$RC" = 0 ] && has "- Pi CLI: installed version unavailable" && has "the version gate could not be previewed" \
   && [ ! -e "$PI_LAUNCHES" ]; then
-  ok "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"
-else bad "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"; fi
+  ok "Pi CLI: --dry-run with an unreadable Pi version says the gate could not be previewed (no Pi launch)"
+else bad "Pi CLI: --dry-run with an unreadable Pi version says the gate could not be previewed (no Pi launch)"; fi
+
+# Only a verified @earendil-works/pi-coding-agent manifest counts: a package.json
+# naming another package, or a missing/unparsable one, is not the supported
+# install, so Pi is never launched (real run or dry run).
+not_pi_manifest() {
+  case "$1" in
+    other-name) printf '{\n\t"name": "evil-package",\n\t"version": "1.6.0"\n}\n' > "$PI_PKG/package.json" ;;
+    missing) rm -f "$PI_PKG/package.json" ;;
+    unparsable) printf '{"name": "@earendil-works/pi-coding-agent", ' > "$PI_PKG/package.json" ;;
+  esac || die "manifest $1"
+}
+for manifest in other-name missing unparsable; do
+  for mode in real dry; do
+    fresh; not_pi_manifest "$manifest"
+    if [ "$mode" = dry ]; then STUB_PI_LATEST=1.6.1 run_update --dry-run; else STUB_PI_LATEST=1.6.1 run_update; fi
+    if [ "$RC" = 0 ] && has "- Pi CLI: not updated — $PI_PREFIX/bin/pi is not a global npm install" \
+      && [ ! -e "$PI_LAUNCHES" ] && ! grep -q '^pi-cli' "$TMP/calls"; then
+      ok "Pi CLI: package.json $manifest ($mode run) is not the supported install; Pi never launched"
+    else bad "Pi CLI: package.json $manifest ($mode run) is not the supported install; Pi never launched"; show_calls; fi
+  done
+done
 
 # Only a POSITIVELY verified global npm install may run pi update --self: when
 # the verifier itself cannot run (python3 missing: 127) or crashes, warn and
@@ -709,9 +730,9 @@ for broken in py127 pycrash; do
     else bad "Pi CLI: verifier $broken + $kind pi: warns, never runs pi, run continues"; show_calls; fi
   done
 done
-# Verified layout with an unreadable version (2) is still a verified install.
+# A verified Pi manifest with an unreadable version (2) is still a verified install.
 fresh
-rm "$PI_PKG/package.json" || die "rm package.json"
+pi_pkg_version 1.6
 STUB_PI_LATEST=1.6.1 run_update
 if [ "$RC" = 0 ] && has "✓ Pi CLI — unknown → 1.6.1" && called "pi-cli update --self --no-approve @ $HOME"; then
   ok "Pi CLI: a verified install with unreadable metadata is still updated"
