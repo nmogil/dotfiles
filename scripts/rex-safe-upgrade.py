@@ -258,7 +258,7 @@ def local_server_problem(info: dict) -> str | None:
     if not isinstance(pid, int) or pid <= 1:
         return f"the server reported no usable pid ({pid!r})"
     try:
-        exe = os.readlink(f"/proc/{pid}/exe").removesuffix(" (deleted)")  # deleted: the package was upgraded
+        exe = os.readlink(f"/proc/{pid}/exe")  # exe_name() drops " (deleted)" (package upgraded)
         uid = os.stat(f"/proc/{pid}").st_uid
     except OSError:
         return f"server pid {pid} isn't a process on this machine that can be inspected"
