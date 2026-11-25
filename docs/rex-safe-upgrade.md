@@ -103,16 +103,22 @@ a time.
 Every Rex call a run makes goes to one server: the one the first `rex whoami`
 reaches, by the address it reports (`rex -S <endpoint>`), including through
 the systemd handoff. So a run can't check the panes of one server and stop
-another. The exceptions are `rex version` (the local CLI) and the fallback
-`rex server start`, which starts a server rather than talking to one; what
-answers afterwards is checked at the same address.
+another. The one exception is `rex version`, which asks the local CLI.
+
+Only this machine's own Rex server is ever stopped. Before anything changes,
+and again right before the stop, the server must verify as local: its address
+is a unix socket (`unix:///path`; tcp, tailnet, https addresses and host labels
+are refused), and the pid it reports is a `rex` process of this account,
+here, that holds that socket. Otherwise the run stops with exit 3 and the plan
+says why.
 
 ### What `run` does
 
 1. Does nothing if the server already runs the installed version
    (`--even-if-current` overrides). Stops, changing nothing, if it can't tell
-   which version is installed (exit 2) or the server doesn't report its
-   instance id, pid and endpoint (exit 3).
+   which version is installed (exit 2), or the server doesn't report its
+   instance id, pid and endpoint or isn't verifiably this machine's own
+   (exit 3).
 2. Checks every pane. It stops, changing nothing, if any of these is true:
    - an agent is working or waiting for an answer, or hasn't reported its
      state (the agent process that started the run is exempt). Any status
@@ -145,7 +151,8 @@ answers afterwards is checked at the same address.
 5. After the pause, which can take minutes, and immediately before stopping,
    it runs every check from step 2 again and confirms the server is still the
    same instance (exit 2 or 3, nothing changed, if not). Then it asks the
-   server at its endpoint once more and runs `rex -S <endpoint> server stop`
+   server at its endpoint once more, verifies it as local again, and runs
+   `rex -S <endpoint> server stop`
    (the server saves sessions on stop), and copies the saved-session database
    as a backup. `rex server stop` can't name an instance, only an address: if
    another server replaced this one at the same address between those last two
@@ -153,13 +160,24 @@ answers afterwards is checked at the same address.
    once per run, to canonical absolute paths from absolute `PATH` entries,
    and always run from there.
 6. Waits up to 90 seconds for the Rex app to reconnect, which starts the new
-   server through the login server. If that doesn't happen, it runs
-   `rex server start` itself.
+   server through the login server. It doesn't start a server itself:
+   `rex server start` can't be told which address to serve, and a server it
+   can't verify is no recovery. If none comes back, it exits 4 with the steps
+   to take.
 7. Checks that a new server answers at the same address, with a complete
    identity (exit 4 otherwise), and whether it runs the installed version
    (exit 7 if not).
-8. Lists the command that resumes each agent, for its pane, in the log and
-   on the run's output. Nothing is typed (see [Why this exists](#why-this-exists)).
+8. Lists the command that resumes each agent, in the log and on the run's
+   output. Nothing is typed (see [Why this exists](#why-this-exists)). Each
+   line names the pane by its labels and by its session and block IDs, since
+   labels repeat:
+
+   ```
+   work / tab [session session:…01, block block:…02]: cd -- /srv/app && pi --session …
+   ```
+
+   `rex block ls -s <session>` lists a session's blocks, and
+   `rex focus -s <session> <block>` takes you to one.
    - Pi: `cd -- <dir> && pi --session <session file>`, with
      `PI_CODING_AGENT_DIR=…` for non-default profiles. A session with no
      messages yet reopens a fresh `pi`.
@@ -259,8 +277,8 @@ LaunchAgent `io.github.entwining.rexume`, but this tool doesn't run on macOS.
 | 0 | Restarted onto the installed version (the log lists each agent's resume command), or nothing to do |
 | 1 | No Rex server running |
 | 2 | Not safe right now (including: installed version unknown, panes changed before the stop); nothing changed |
-| 3 | Server identity incomplete or changed before the stop (nothing changed), or the old server didn't stop |
-| 4 | No new server with a complete identity came back at the same address; the log lists each pane's resume command |
+| 3 | Server identity incomplete, changed before the stop, or not verifiably this machine's own (nothing changed); or the old server didn't stop |
+| 4 | No new server with a complete identity came back at the same address; the log lists the steps and each pane's resume command |
 | 6 | Another run is in progress; nothing changed |
 | 7 | Restarted, but the server that came back isn't the installed version; the log lists the resume commands |
 | 8 | Couldn't tell whether rexume runs, or couldn't pause it (nothing changed); or it couldn't be started again after an otherwise successful run |
@@ -278,8 +296,10 @@ only by you. The last 8 runs are kept.
 
 While a run is going, `journalctl -u 'rex-safe-upgrade-*'` shows it too.
 
-If the server doesn't come back, start it with `rex server start`, or open the
-Rex app, then type the commands from `plan.json` into the panes.
+If the server doesn't come back, open the Rex app, or run `rex server start`
+and check that `rex whoami` reports the same address as before. Then type the
+commands from the log (or `plan.json`) into the panes, finding each by its
+block ID.
 
 ## Limits
 

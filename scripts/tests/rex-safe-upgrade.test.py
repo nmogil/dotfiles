@@ -167,9 +167,6 @@ FAKE_REX = textwrap.dedent(r"""
             b["program_status"] = {"records": []}
         if st["reconnect"]: st.update(running=st["comes_back_as"], instance=st["new_instance"])
         out({})
-    if cmd == ["server", "start"]:
-        if st["start_works"]: st.update(running=st["comes_back_as"], instance=st["new_instance"])
-        out({})
     save(); sys.stderr.write("fake rex: unsupported %r\n" % args); sys.exit(2)  # e.g. send: never typed
 """).lstrip().replace('@PY@', PY).replace('@BASH@', BASH or '').replace('@SLEEP@', SLEEP or '')
 
@@ -390,7 +387,22 @@ class Processes:
 S = 'session:00000000-0000-0000-0000-000000000001'
 OTHER = 'session:00000000-0000-0000-0000-000000000009'
 W = 'window:00000000-0000-0000-0000-000000000002'
-ENDPOINT = 'unix:///tmp/fake-rex.sock'
+# The fake Rex server: a copy of the interpreter named `rex`, so /proc shows
+# a rex executable, holding the endpoint's unix socket (argv[1], "-" for none).
+# With more arguments it runs them as its child once <out>.go exists, and
+# writes "<exit code>\n<output>" to <out>: a run started inside the server's
+# process tree, as from a Rex pane.
+FAKE_SERVER = ('import os, socket, subprocess, sys, time\n'
+               's = socket.socket(socket.AF_UNIX)\n'
+               'if sys.argv[1] != "-":\n'
+               '    s.bind(sys.argv[1]); s.listen()\n'
+               'if len(sys.argv) > 3:\n'
+               '    out = sys.argv[2]\n'
+               '    while not os.path.exists(out + ".go"): time.sleep(0.05)\n'
+               '    r = subprocess.run(sys.argv[3:], capture_output=True, text=True)\n'
+               '    open(out + ".tmp", "w").write(f"{r.returncode}\\n{r.stdout}{r.stderr}")\n'
+               '    os.replace(out + ".tmp", out)\n'
+               'time.sleep(600)\n')
 
 
 def wait_until(pred, timeout=10):
@@ -468,9 +480,14 @@ class Base(unittest.TestCase):
         self.sandbox = Sandbox(self, self.home, fixture_root=True)
         self.addCleanup(lambda: self.assertEqual(self.sandbox.calls(), [], 'a test reached a real rex/systemd'))
         self.env = dict(self.sandbox.env, FAKE_REX_STATE=str(self.state_file),
-                        REX_SAFE_UPGRADE_RECONNECT_WAIT='3', REX_SAFE_UPGRADE_START_WAIT='3')
+                        REX_SAFE_UPGRADE_RECONNECT_WAIT='3')
         self.procs = Processes(self.env)
         self.addCleanup(self.procs.teardown)
+        (self.home / 'server').mkdir()
+        self.rex_exe = self.home / 'server/rex'
+        shutil.copy(os.path.realpath(PY), self.rex_exe)
+        self.socket = self.home / 'rex.sock'
+        self.endpoint = f'unix://{self.socket}'
         self.blocks = []
         self.records = self.home / '.local/state/rex-safe-upgrade/panes'
         self.records.mkdir(parents=True)
@@ -501,9 +518,16 @@ class Base(unittest.TestCase):
                'agentDir': agent_dir, 'sessionFile': str(sfile), 'hasMessages': True}
         self.records.joinpath(b.removeprefix('block:') + '.json').write_text(json.dumps(rec))
 
+    def start_server(self, socket='-', run=None, out=None):
+        """A fake Rex server process; see FAKE_SERVER."""
+        extra = [str(out), *run] if run else []
+        return self.spawn([str(self.rex_exe), '-I', '-c', FAKE_SERVER, str(socket), *extra])
+
     def spawn_in_terminal(self, argv):
-        """argv as session leader of a new terminal, like a Rex pane's first program."""
+        """argv as session leader of a new terminal, like a Rex pane's first
+        program. self.pty is the terminal's other end, to type into."""
         master, slave = os.openpty()
+        self.pty = master
         self.addCleanup(os.close, master)  # after teardown: the terminal outlives its processes
         p = self.procs.start([*PTY_LAUNCHER, *argv], stdin=slave, stdout=slave, stderr=slave, cwd='/tmp')
         os.close(slave)
@@ -551,24 +575,33 @@ class Base(unittest.TestCase):
         return self.pane('python3.12', pid, app='hermes')
 
     STATE_DEFAULTS = dict(
-        running='1.0', installed='2.0', instance='old', new_instance='new', reconnect=True, start_works=True,
+        running='1.0', installed='2.0', instance='old', new_instance='new', reconnect=True, endpoint=None,
         on_second_ls={}, comes_back_as=None, rexume='inactive', rexume_stop_fails=False,
         rexume_stop_hangs=False, rexume_start_delay=0, rexume_start_fails=False, on_rexume_stop={},
         stop_hangs=False, fail_block_ls=[], route_flips=False)
 
-    def write_state(self, **kw):
+    def write_state(self, server_run=None, **kw):
+        """The fake server's state, with a real local server process behind
+        it. With server_run, the server runs that command as its child once
+        the state is written; its result lands in self.server_out."""
         unknown = set(kw) - set(self.STATE_DEFAULTS)
         assert not unknown, unknown
         st = {**self.STATE_DEFAULTS, **kw}
         st['comes_back_as'] = st['comes_back_as'] or st['installed']
-        self.server_pid = self.spawn([SLEEP, '60'])
+        st['endpoint'] = st['endpoint'] or self.endpoint
+        self.socket.unlink(missing_ok=True)
+        self.server_out = self.home / 'server-run.txt'
+        self.server_pid = self.start_server(self.socket, server_run, self.server_out)
+        self.assertTrue(wait_until(lambda: self.socket.exists()))
         # Another session listed first, so finding a pane's session means searching.
         other = {'session_id': OTHER, 'label': 'other', 'blocks': [], 'windows': []}
-        st.update(server_pid=self.server_pid, server_ticks=start_ticks(self.server_pid), endpoint=ENDPOINT,
+        st.update(server_pid=self.server_pid, server_ticks=start_ticks(self.server_pid),
                   ls_count=0, calls=[], bound=[], unbound=[], route_selected=False, systemctl_runtime_dirs=[],
                   sessions=[other, {'session_id': S, 'label': 'work', 'blocks': self.blocks,
                                     'windows': [{'window_id': W, 'label': 'tab'}]}])
         self.state_file.write_text(json.dumps(st))
+        if server_run:
+            Path(f'{self.server_out}.go').touch()
 
     def state(self):
         return json.loads(self.state_file.read_text())
@@ -823,6 +856,20 @@ class PlanTest(Base):
         self.assertIn("couldn't tell whether rexume is running", r.stdout)
         self.assertIn("couldn't tell which Rex version is installed", r.stdout)
 
+    def test_promoted_interactive_shell_with_a_background_job_blocks(self):
+        # The wrapper's foreground child is an interactive shell (idle at its
+        # prompt) that has a job of its own running in the background.
+        wrapper = self.spawn_in_terminal([BASH, *NOSTARTUP, '-lc', '"$1" --noprofile --norc -i; exec "$2" 60',
+                                          '_', BASH, SLEEP])
+        inner = lambda: [c for c in children(wrapper) if os.readlink(f'/proc/{c}/exe') == os.path.realpath(BASH)]
+        self.assertTrue(wait_until(inner))
+        time.sleep(0.5)  # let it reach its prompt
+        os.write(self.pty, f'{SLEEP} 600 &\n'.encode())
+        self.assertTrue(wait_until(lambda: any(proc_stat(c) and Path(f'/proc/{c}/comm').read_text().strip() == 'sleep'
+                                               for c in children(inner()[0]))))
+        self.pane('bash', wrapper, state=None)
+        self.assert_blocked('background processes would be stopped: sleep')
+
     # -- status that can't be trusted
     def test_idle_record_cannot_hide_a_working_wrapper_record(self):
         b, wrapper, _ = self.wrapper_pane(owner='pi')  # Pi says idle...
@@ -893,7 +940,7 @@ class RestartTest(Base):
         self.fresh = self.pi_pane(session_file=False, has_messages=False)
         self.hermes = self.hermes_pane()
         # Rex's saved sessions for this endpoint, to be backed up after stop.
-        sdir = self.home / '.local/state/rex/servers' / hashlib.sha256(ENDPOINT.encode()).hexdigest()
+        sdir = self.home / '.local/state/rex/servers' / hashlib.sha256(self.endpoint.encode()).hexdigest()
         sdir.mkdir(parents=True)
         (sdir / 'snapshot.db').write_text('saved')
 
@@ -910,24 +957,21 @@ class RestartTest(Base):
         log = self.log()
         self.assertIn('nothing was typed', log)
         self.assertIn('done: server restarted on 2.0; 3 agent(s) to resume as listed', log)
-        for b in (self.pi, self.fresh, self.hermes):
-            self.assertIn(f"work / tab: {plan[b]['resume_cmd']}", log)
+        for b in (self.pi, self.fresh, self.hermes):  # same label: the block ID tells them apart
+            self.assertIn(f"work / tab [session {S}, block {b}]: {plan[b]['resume_cmd']}", log)
+        self.assertIn('`rex focus -s <session> <block>`', log)
         self.assertEqual((self.run_dir / 'rex-state-backup/snapshot.db').read_text(), 'saved')
         self.assertEqual([c for c in self.state()['calls'] if c[:1] in (['send'], ['send-key'])], [])
         self.assertEqual(os.stat(self.run_dir).st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(self.run_dir / 'log.txt').st_mode & 0o777, 0o600)
 
-    def test_falls_back_to_starting_the_server(self):
+    def test_server_that_never_returns_leaves_manual_steps_and_starts_nothing(self):
+        # `rex server start` can't be told which address to serve, so the
+        # tool doesn't start an unverifiable server itself.
         self.write_state(reconnect=False)
-        r, _ = self.run_tool()
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn('starting the server here', self.log())
-        self.assertIn(['server', 'start'], self.state()['calls'])
-
-    def test_server_that_never_returns_leaves_manual_steps(self):
-        self.write_state(reconnect=False, start_works=False)
         r, plan = self.run_tool()
         self.assertEqual(r.returncode, 4)
+        self.assertNotIn(['server', 'start'], self.state()['calls'])
         log = self.log()
         self.assertIn('no new Rex server answered', log)
         for b in (self.pi, self.fresh, self.hermes):
@@ -1012,7 +1056,7 @@ class RestartTest(Base):
         self.assertIn('started rexume again', self.log())
 
     def test_rexume_is_started_again_when_the_server_does_not_return(self):
-        self.assert_rexume_restarted_after(4, reconnect=False, start_works=False)
+        self.assert_rexume_restarted_after(4, reconnect=False)
 
     def test_rexume_is_started_again_when_the_server_is_not_upgraded(self):
         self.assert_rexume_restarted_after(7, comes_back_as='1.0')
@@ -1091,25 +1135,63 @@ class RestartTest(Base):
         self.assertIn('preflight ok', r.stdout)
 
     def test_test_mode_never_starts_a_systemd_unit(self):
-        # A run started inside the server's process tree hands itself to a
-        # transient unit, which would drop the fakes. Here the "server" is
-        # this test process, so the tool takes that branch.
+        # A run started inside the server's process tree (as from a Rex pane)
+        # hands itself to a transient unit, which would drop the fakes.
         self.blocks.clear()
-        self.write_state()
-        st = self.state()
-        st.update(server_pid=os.getpid(), server_ticks=start_ticks(os.getpid()))
-        self.state_file.write_text(json.dumps(st))
-        r = self.tool('run')
-        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn('refusing to start a systemd unit', r.stdout)
+        self.write_state(server_run=[PY, '-I', str(TOOL), 'run'])
+        self.assertTrue(wait_until(self.server_out.exists, 60))
+        code, out = self.server_out.read_text().split('\n', 1)
+        self.assertEqual(code, '2', out)
+        self.assertIn('refusing to start a systemd unit', out)
         self.assertNotIn(['server', 'stop'], self.state()['calls'])
         # What it would have run: the canonical systemd-run, the selected
         # server's address, and a kill mode that lets recovery finish.
-        cmd = r.stdout.split('Would run:\n', 1)[1].split()
+        cmd = out.split('Would run:\n', 1)[1].split()
         self.assertEqual(cmd[0], os.path.realpath(self.fakebin / 'systemd-run'))
-        for want in (f'--endpoint={ENDPOINT}', 'KillMode=mixed', 'TimeoutStopSec=300'):
+        for want in (f'--endpoint={self.endpoint}', 'KillMode=mixed', 'TimeoutStopSec=300'):
             self.assertIn(want, cmd)
 
+
+    # -- only this machine's own, verified Rex server is ever stopped
+    def test_remote_server_is_never_stopped(self):
+        # A server reporting no panes at a remote or non-socket address.
+        self.blocks.clear()
+        for endpoint in ('https://rex.example.com:7443', 'tcp://10.0.0.5:7000', 'tailnet://vps',
+                         'vps', 'unix://relative/server.sock'):
+            with self.subTest(endpoint=endpoint):
+                self.write_state(endpoint=endpoint)
+                r, _ = self.run_tool()
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("isn't a local unix socket", r.stdout)
+                self.assertNotIn(['server', 'stop'], self.state()['calls'])
+                self.assertTrue(self.server_alive())
+                r = self.tool()  # the plan says so too
+                self.assertIn("not this machine's own Rex server", r.stdout)
+
+    def test_explicit_endpoint_must_be_a_local_socket(self):
+        self.write_state()
+        r = self.tool('run', '--endpoint=tcp://10.0.0.5:7000')
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertEqual(self.state()['calls'], [])
+
+    def test_server_pid_must_be_the_local_rex_holding_the_socket(self):
+        self.blocks.clear()
+        gone = self.spawn([SLEEP, '60'])
+        signal_process(gone, signal.SIGKILL)
+        self.assertTrue(wait_until(lambda: not Path(f'/proc/{gone}').exists()))
+        for make, why in ((lambda: self.spawn([SLEEP, '60']), 'not rex'),
+                          (lambda: self.start_server('-'), "doesn't hold the socket"),
+                          (lambda: gone, "isn't a process on this machine")):
+            with self.subTest(why=why):
+                self.write_state()
+                pid = make()
+                st = self.state()
+                st.update(server_pid=pid)
+                self.state_file.write_text(json.dumps(st))
+                r, _ = self.run_tool()
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn(why, r.stdout)
+                self.assertNotIn(['server', 'stop'], self.state()['calls'])
 
     # -- one server, start to finish
     def test_every_rex_call_goes_to_the_selected_server(self):
@@ -1168,8 +1250,8 @@ class RestartTest(Base):
         r, _ = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         bound = self.state()['bound']
-        stop = bound.index(['-S', ENDPOINT, 'server', 'stop'])
-        self.assertEqual(bound[stop - 1], ['-S', ENDPOINT, 'whoami', '--json'])
+        stop = bound.index(['-S', self.endpoint, 'server', 'stop'])
+        self.assertEqual(bound[stop - 1], ['-S', self.endpoint, 'whoami', '--json'])
 
     def test_pane_turning_busy_while_rexume_pauses_aborts(self):
         pid = self.blocks[1]['process']['foreground']['pid']

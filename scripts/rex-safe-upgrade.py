@@ -45,9 +45,8 @@ SHELLS = {"zsh", "bash", "sh", "fish", "dash"}
 SHELL_HELPERS = ("gitstatusd",)  # prompt helpers that live under an idle shell
 IDLE_STATES = {"idle", "done", "-"}  # "-": no status (decided per program kind)
 KEEP_RUNS = 8
-# Seconds to wait for the Rex app to relaunch the server, and for it to start.
+# Seconds to wait for the Rex app to relaunch the server.
 RECONNECT_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_RECONNECT_WAIT", 90))
-START_WAIT = float(os.environ.get("REX_SAFE_UPGRADE_START_WAIT", 30))
 # rexume (github.com/Entwining/rexume) also reopens agents after a server
 # restart. A run pauses its systemd user unit so the two don't both type.
 REXUME_UNIT = "rexume"
@@ -186,6 +185,61 @@ def identity(info: dict | None) -> tuple | None:
 
 def same_server(a: dict | None, b: dict | None) -> bool:
     return identity(a) is not None and identity(a) == identity(b)
+
+
+def socket_path(endpoint) -> str | None:
+    """The socket path of a local unix endpoint (unix:///path), else None:
+    tcp, tailnet, https, host labels and relative paths are all rejected."""
+    if not isinstance(endpoint, str) or not endpoint.startswith("unix://"):
+        return None
+    path = endpoint[len("unix://"):]
+    return path if path.startswith("/") and "\0" not in path else None
+
+
+def listening_socket_inodes(path: str) -> set[str]:
+    """Inodes of the unix sockets bound to path, from /proc/net/unix."""
+    inodes = set()
+    try:
+        lines = Path("/proc/net/unix").read_text().splitlines()[1:]
+    except OSError:
+        return inodes
+    for line in lines:
+        f = line.split(None, 7)  # Num RefCount Protocol Flags Type St Inode Path
+        if len(f) == 8 and f[7] == path:
+            inodes.add(f[6])
+    return inodes
+
+
+def local_server_problem(info: dict) -> str | None:
+    """Why the server isn't verifiably this machine's own Rex server, or None.
+    The endpoint must be a local unix socket, and the reported pid a local
+    rex process of this account that holds that socket. A remote or
+    unverifiable server is never stopped."""
+    endpoint, pid = info.get("endpoint"), info.get("pid")
+    path = socket_path(endpoint)
+    if not path:
+        return f"the server's address {endpoint!r} isn't a local unix socket (unix:///path)"
+    if not isinstance(pid, int) or pid <= 1:
+        return f"the server reported no usable pid ({pid!r})"
+    try:
+        exe = os.readlink(f"/proc/{pid}/exe").removesuffix(" (deleted)")  # deleted: the package was upgraded
+        uid = os.stat(f"/proc/{pid}").st_uid
+    except OSError:
+        return f"server pid {pid} isn't a process on this machine that can be inspected"
+    if os.path.basename(exe) != "rex":
+        return f"server pid {pid} runs {exe}, not rex"
+    if uid != os.getuid():
+        return f"server pid {pid} runs as uid {uid}, not as this account"
+    inodes = listening_socket_inodes(path)
+    if not inodes:
+        return f"no unix socket is bound at {path}"
+    try:
+        fds = {os.readlink(f"/proc/{pid}/fd/{fd}") for fd in os.listdir(f"/proc/{pid}/fd")}
+    except OSError:
+        return f"couldn't read server pid {pid}'s open files"
+    if not any(f"socket:[{i}]" in fds for i in inodes):
+        return f"server pid {pid} doesn't hold the socket at {path}"
+    return None
 
 
 def installed_version() -> str:
@@ -518,8 +572,9 @@ def inspect_pane(p: Pane) -> None:
     if kind and p.state == "-":  # an agent we can't see the state of might be mid-task
         add_problem(p, f"{kind} hasn't reported whether it's busy", hard=True)
 
-    # Jobs started from the pane's shell, or from a shell running in front of it.
-    shells = {pid for pid in (top, raw_fg) if pid and proc_name(pid) in SHELLS}
+    # Jobs started from the pane's shell, from a shell running in front of it,
+    # or from the shell a wrapper runs (an interactive shell's own jobs).
+    shells = {pid for pid in (top, raw_fg, p.fg_pid) if pid and proc_name(pid) in SHELLS}
     extra = sorted({c for sh in shells for c in real_children(sh)} - {p.fg_pid, raw_fg})
     if extra:
         add_problem(p, "background processes would be stopped: " + ", ".join(sorted({proc_name(c) for c in extra})))
@@ -791,6 +846,10 @@ def run_locked(r: Run, args) -> int:
     if identity(info) is None:
         r.log("ABORT, nothing changed: the Rex server didn't report its instance id, pid and endpoint")
         return 3
+    local = local_server_problem(info)
+    if local:
+        r.log(f"ABORT, nothing changed: not this machine's own Rex server: {local}")
+        return 3
     if running == installed and not args.even_if_current:
         r.log("server already runs the installed version; nothing to do")
         return 0
@@ -851,6 +910,15 @@ def restart_and_resume(r: Run, args, panes: list[Pane], info: dict) -> int:
         interrupts.restore()
 
 
+def list_resume_commands(r: Run, todo: list[Pane]) -> None:
+    """One line per pane, named by session and block ID: labels repeat."""
+    for p in todo:
+        r.log(f"  {p.label} [session {p.session}, block {p.block}]: {p.resume_cmd}")
+    if todo:
+        r.log("  Find a pane by its block ID with `rex block ls -s <session>`, "
+              "or go to it with `rex focus -s <session> <block>`.")
+
+
 def final_checks(r: Run, args, panes: list[Pane], info: dict) -> int | None:
     """Everything that blocks a run, checked again after rexume was paused
     (which can take minutes), immediately before the stop."""
@@ -870,8 +938,7 @@ def restart_phase(r: Run, args, panes: list[Pane], info: dict) -> int:
 
     def manual(reason: str) -> None:
         r.log(reason)
-        for p in todo:
-            r.log(f"  to resume {p.label}, type in that pane: {p.resume_cmd}")
+        list_resume_commands(r, todo)
 
     abort = final_checks(r, args, panes, info)
     if abort is not None:
@@ -883,6 +950,10 @@ def restart_phase(r: Run, args, panes: list[Pane], info: dict) -> int:
     endpoint, old_pid = info["endpoint"], info["pid"]
     if not same_server(server_info(endpoint), info):
         r.log("ABORT, nothing changed: the Rex server changed right before the stop")
+        return 3
+    local = local_server_problem(info)
+    if local:
+        r.log(f"ABORT, nothing changed: not this machine's own Rex server: {local}")
         return 3
     r.log(f"stopping server pid {old_pid} at {endpoint}")
     try:
@@ -904,17 +975,14 @@ def restart_phase(r: Run, args, panes: list[Pane], info: dict) -> int:
     except OSError as e:
         r.log(f"warning: couldn't back up saved sessions: {e}")
 
-    if not wait_for(lambda: server_info() is not None, RECONNECT_WAIT):
-        r.log(f"no reconnect from the Rex app in {RECONNECT_WAIT:.0f}s; starting the server here")
-        try:
-            subprocess.run([bin_path("rex"), "server", "start"], capture_output=True, text=True, timeout=60)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            r.log(f"warning: rex server start: {e}")
-    new = server_info() if wait_for(lambda: server_info() is not None, START_WAIT) else None
+    # The Rex app reconnecting starts the new server through the login server.
+    # `rex server start` can't be told which address to serve, so this tool
+    # doesn't start one itself: an unverified server is no recovery.
+    new = server_info() if wait_for(lambda: server_info() is not None, RECONNECT_WAIT) else None
     # The replacement must be a complete, new server at the same address.
     if not new or identity(new) is None or new.get("endpoint") != endpoint or same_server(new, info):
-        manual(f"FAIL: no new Rex server answered at {endpoint}. Start it with `rex server start` or open "
-               "the Rex app, then:")
+        manual(f"FAIL: no new Rex server answered at {endpoint} within {RECONNECT_WAIT:.0f}s. Open the Rex app "
+               f"(or run `rex server start`, and check `rex whoami` reports {endpoint}), then:")
         return 4
     r.log(f"server back: {new.get('rex_version')} pid {new.get('pid')}, {new.get('session_count')} sessions")
     upgraded = new.get("rex_version") == installed_version()
@@ -925,8 +993,7 @@ def restart_phase(r: Run, args, panes: list[Pane], info: dict) -> int:
     if todo:
         r.log("Rex can't show that a restored shell is at an empty prompt, so nothing was typed. "
               "In each pane, once its prompt shows, type:")
-        for p in todo:
-            r.log(f"  {p.label}: {p.resume_cmd}")
+        list_resume_commands(r, todo)
     if not upgraded:
         r.log(f"done, but the server was NOT upgraded: it runs {new.get('rex_version')}, "
               f"installed is {installed_version()}")
@@ -999,6 +1066,9 @@ def main() -> int:
         print(f"rex-safe-upgrade: test mode ({TEST_ROOT_ENV}), refusing to run; nothing changed:\n  "
               + "\n  ".join(problems))
         return 2
+    if args.endpoint is not None and not socket_path(args.endpoint):
+        print(f"--endpoint {args.endpoint!r} isn't a local unix socket (unix:///path); nothing changed.")
+        return 3
     info = server_info(args.endpoint)
     if not info:
         print("No Rex server is running; nothing to restart.")
@@ -1022,6 +1092,9 @@ def main() -> int:
             return 0
         if installed == "?":
             problems.append("couldn't tell which Rex version is installed (`rex version`)")
+        local = local_server_problem(info)
+        if local:
+            problems.append(f"not this machine's own Rex server: {local}")
         state, detail = rexume_state()
         if state == "active":
             print("rexume is active and will be paused during the restart (started again afterwards).")
@@ -1048,6 +1121,10 @@ def main() -> int:
         return 2
     if identity(info) is None:
         print("The Rex server didn't report its instance id, pid and endpoint; nothing changed.")
+        return 3
+    local = local_server_problem(info)
+    if local:
+        print(f"Not this machine's own Rex server ({local}); nothing changed.")
         return 3
     problems = blockers(inventory(args.self_id), args.allow_unresumable)
     if problems and (args.dry_run or not args.wait_idle):

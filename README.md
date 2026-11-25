@@ -149,7 +149,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `templates/herdr/`, `scripts/setup-herdr-config.sh` | Portable Herdr preferences and drift-safe installer |
 | `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
-| `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version and resume every agent in its pane (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
+| `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version once no agent's work would be lost, and list each agent's resume command (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
 | `config/rexboard/release.pins`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
@@ -397,7 +397,10 @@ Aliases in `.zshrc`: `hk` Hunk CLI, `hkd` diff viewer, `hkr` session review,
 Rex updates itself, but a running Rex server keeps its old version until it
 restarts, and a restart stops every program in its panes. `rex-safe-upgrade`
 records which conversation each Pi or Hermes pane has open, restarts the
-server, and reopens each one in its pane:
+server only when no agent is busy, and lists the command that reopens each
+conversation in its pane (it doesn't type them; Rex can't show when a restored
+shell is ready). If [rexume](https://github.com/Entwining/rexume) is
+installed, it reopens conversations itself once the restart is over:
 
 ```bash
 ./dot rex install --apply   # once per Linux machine; then /reload open Pi sessions
