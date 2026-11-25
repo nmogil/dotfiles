@@ -275,6 +275,17 @@ case "$MODE" in
       fail "refusing to create or update a work Pi profile while rexume is installed ($rexume_trace): rexume's Pi extension would load in it through the shared extensions, and rexume reopens Pi without PI_CODING_AGENT_DIR. See docs/rexume.md (work profile)."
     fi
     [ -d "$PERSONAL_DIR" ] || fail "personal Pi profile not found: $PERSONAL_DIR"
+    # Record this profile root (canonical) under the lock, before creating the
+    # work profile, so `./dot rexume` also checks roots set up with a one-off
+    # PI_HOME (docs/rexume.md). One line per root; never rewritten.
+    PROFILE_ROOTS="$HOME/.pi/.dotfiles-profile-roots"
+    profile_root="$(cd -P "$PI_ROOT" && pwd -P)" || fail "cannot resolve $PI_ROOT"
+    if [ -e "$PROFILE_ROOTS" ] && grep -Fxq -- "$profile_root" "$PROFILE_ROOTS"; then
+      echo "  ok     profile root recorded"
+    else
+      printf '%s\n' "$profile_root" >> "$PROFILE_ROOTS" || fail "cannot record $profile_root in $PROFILE_ROOTS"
+      echo "  record profile root $profile_root"
+    fi
     for source in "$ACCOUNT_EXTENSION_SOURCE" "$PI_ACCOUNT_SKILL_SOURCE" "$WORK_MODELS_SOURCE" "$GENERIC_CLOAK_SOURCE"; do
       [ -f "$source" ] || fail "required template missing: $source"
     done

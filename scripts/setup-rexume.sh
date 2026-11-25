@@ -155,8 +155,11 @@ call_limit() {
   else printf '%s' "$CALL_LIMIT"; fi
 }
 
-# bounded <cmd...>: run cmd for at most $(call_limit) seconds (macOS has no
-# timeout(1)). Returns its status; one above 128 means it was killed.
+# bounded <cmd...>: run cmd for at most $(call_limit) seconds, then TERM it and,
+# KILL_GRACE seconds later, KILL it (macOS has no timeout(1)); so a call can
+# take up to $(call_limit) + KILL_GRACE seconds. Returns its status; one above
+# 128 means it was killed.
+KILL_GRACE=2
 bounded() {
   local pid watcher rc=0 limit
   limit="$(call_limit)"
@@ -164,7 +167,7 @@ bounded() {
   pid=$!
   ( n=0
     while [ "$n" -lt "$limit" ]; do sleep 1; n=$((n + 1)); done
-    kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+    kill -TERM "$pid" 2>/dev/null; sleep "$KILL_GRACE"; kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watcher=$!
   wait "$pid" 2>/dev/null || rc=$?
   kill "$watcher" 2>/dev/null || true
@@ -175,6 +178,8 @@ bounded() {
 # daemon_active: 0 when the job runs; otherwise 1 with DAEMON_WHY set.
 daemon_active() {
   local out rc=0
+  # After a readiness timeout, the last result is reused: no further probe.
+  if [ -n "${DAEMON_CACHED:-}" ]; then DAEMON_WHY="$DAEMON_CACHED_WHY"; return "$DAEMON_CACHED"; fi
   DAEMON_WHY=""
   if [ "$OS" = Darwin ]; then
     if ! command -v launchctl >/dev/null 2>&1; then
@@ -231,6 +236,52 @@ WP_MSG="rexume can't be installed on a machine with a work Pi profile"
 wp_refusal() {
   printf '%s (%s) until Pi profiles stop sharing extensions: its extension would load in the work profile, and rexume reopens Pi without PI_CODING_AGENT_DIR. See docs/rexume.md (work profile).' \
     "$WP_MSG" "$WORK_PROFILES"
+}
+
+# registered_root_issues: sets ROOT_ISSUES for Pi profile roots that
+# `./dot pi profiles` recorded in ~/.pi/.dotfiles-profile-roots (one canonical
+# path per line), other than the default: any work profile there, or personal
+# extensions resolving to ~/.pi/agent/extensions. Fails closed: an unreadable
+# registry or a malformed, missing or unreadable entry is an issue too.
+registered_root_issues() {
+  local reg="$HOME/.pi/.dotfiles-profile-roots" line default def_ext ext wp
+  ROOT_ISSUES=""
+  [ -e "$reg" ] || [ -L "$reg" ] || return 0
+  if [ ! -f "$reg" ] || [ ! -r "$reg" ]; then ROOT_ISSUES="$reg can't be read"; return 0; fi
+  default="$(canonical_dir "$HOME/.pi")"
+  def_ext="$(dev_ino "$HOME/.pi/agent/extensions" || true)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      /*) ;;
+      *) ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }entry \"$line\" in $reg is not an absolute path"; continue ;;
+    esac
+    if [ ! -d "$line" ] || [ ! -r "$line" ] || [ ! -x "$line" ]; then
+      ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }registered root $line can't be read (if it's gone, remove its line from $reg)"
+      continue
+    fi
+    [ "$(canonical_dir "$line")" != "$default" ] || continue
+    wp="$(dotfiles_pi_work_profiles "$line" | tr '\n' ' ')"
+    if [ -n "$wp" ]; then ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }registered root $line has a work profile (${wp% })"; fi
+    ext="$line/agent/extensions"
+    if [ -L "$ext" ] && [ ! -e "$ext" ]; then
+      ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }$ext is a symlink that doesn't resolve"
+    elif [ -e "$ext" ] && [ -n "$def_ext" ] && [ "$(dev_ino "$ext" || true)" = "$def_ext" ]; then
+      ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }$ext resolves to $HOME/.pi/agent/extensions"
+    fi
+  done < "$reg"
+}
+
+# profile_check: sets PROFILE_REFUSAL when a work profile, under ~/.pi or a
+# registered root, rules rexume out.
+profile_check() {
+  PROFILE_REFUSAL=""
+  work_profiles
+  registered_root_issues
+  if [ -n "$WORK_PROFILES" ]; then PROFILE_REFUSAL="$(wp_refusal)"; fi
+  if [ -n "$ROOT_ISSUES" ]; then
+    PROFILE_REFUSAL="${PROFILE_REFUSAL:+$PROFILE_REFUSAL }rexume can't be installed while a Pi profile root that ./dot pi profiles set up has a work profile or shares the personal extensions: $ROOT_ISSUES. See docs/rexume.md (work profile)."
+  fi
 }
 
 # personal_issues <strict 0|1>: sets PI_ISSUES for personal-profile paths
@@ -298,6 +349,10 @@ do_check() {
   work_profiles
   if [ -n "$WORK_PROFILES" ]; then problems="${problems}
   a work Pi profile exists ($WORK_PROFILES); rexume must not be installed alongside one (see docs/rexume.md, work profile)"
+  fi
+  registered_root_issues
+  if [ -n "$ROOT_ISSUES" ]; then problems="${problems}
+  $ROOT_ISSUES; rexume must not be installed alongside a work profile (see docs/rexume.md, work profile)"
   fi
   if [ -z "$problems" ] && [ -n "$REXUME_BIN" ] && [ "$NO_STATUS" = 1 ]; then
     say "rexume is installed: binary, daemon active, personal Pi extension; no work Pi profile on this machine (rexume status not run)."
@@ -429,14 +484,18 @@ wait_ready() {
   case "$limit" in ''|*[!0-9]*) limit=20 ;; esac
   deadline=$(( $(date +%s) + limit ))
   READY_WHY="no time left to check"
+  LAST_DAEMON_RC="" LAST_DAEMON_WHY=""
   while :; do
-    # Before each call: stop when the budget is spent, else cap the call to it.
-    CALL_CAP=$(( deadline - $(date +%s) ))
+    # Before each call: stop when the budget can't cover a call plus its kill
+    # grace, else cap the call so call + grace fits in what is left.
+    CALL_CAP=$(( deadline - $(date +%s) - KILL_GRACE ))
     [ "$CALL_CAP" -gt 0 ] || break
     if ! daemon_active; then
+      LAST_DAEMON_RC=1 LAST_DAEMON_WHY="$DAEMON_WHY"
       READY_WHY="$DAEMON_WHY"
     else
-      CALL_CAP=$(( deadline - $(date +%s) ))
+      LAST_DAEMON_RC=0 LAST_DAEMON_WHY=""
+      CALL_CAP=$(( deadline - $(date +%s) - KILL_GRACE ))
       [ "$CALL_CAP" -gt 0 ] || break
       if status_call; then rc=0; break; fi
       READY_WHY="$STATUS_WHY"
@@ -456,14 +515,15 @@ do_apply() {
     dotfiles_profiles_lock rexume || exit 1
   fi
 
-  # 2. No rexume on a machine with a work Pi profile (fail closed).
-  work_profiles
-  if [ -n "$WORK_PROFILES" ]; then
+  # 2. No rexume on a machine with a work Pi profile, under ~/.pi or a root
+  #    ./dot pi profiles registered (fail closed).
+  profile_check
+  if [ -n "$PROFILE_REFUSAL" ]; then
     if [ "$MODE" = --dry-run ]; then
-      say "--apply would refuse: $(wp_refusal)"
+      say "--apply would refuse: $PROFILE_REFUSAL"
       return 0
     fi
-    die "refusing: $(wp_refusal) Nothing changed."
+    die "refusing: $PROFILE_REFUSAL Nothing changed."
   fi
   personal_issues 1
   if [ -n "$PI_ISSUES" ]; then
@@ -544,8 +604,8 @@ do_apply() {
 
   # 8. Hooks, extensions, daemon. The profile checks run again right before:
   #    the lock keeps ./dot pi profiles out, but not a hand-made profile.
-  work_profiles
-  if [ -n "$WORK_PROFILES" ]; then die "refusing to run rexume install: $(wp_refusal) (It appeared during this run.)"; fi
+  profile_check
+  if [ -n "$PROFILE_REFUSAL" ]; then die "refusing to run rexume install: $PROFILE_REFUSAL (It appeared during this run.)"; fi
   personal_issues 1
   if [ -n "$PI_ISSUES" ]; then die "refusing to run rexume install: $PI_ISSUES (changed during this run)."; fi
   run_install
@@ -556,7 +616,10 @@ do_apply() {
   fi
   if ! wait_ready; then
     say "rexume: the rexume daemon is not ready after ${DOTFILES_REXUME_READY_TIMEOUT:-20}s: $READY_WHY" >&2
-    # Report the rest without another status call, and fail.
+    # Report the rest with no further probe (the last daemon result, no status
+    # call), and fail.
+    DAEMON_CACHED="${LAST_DAEMON_RC:-1}"
+    DAEMON_CACHED_WHY="${LAST_DAEMON_WHY:-the rexume daemon was not checked: the readiness budget ran out}"
     NO_STATUS=1; do_check || true
     return 1
   fi
@@ -567,14 +630,46 @@ do_apply() {
 # ---------------------------------------------------------------- main
 # Only the default Pi root: rexume install writes ~/.pi/agent, and the profiles
 # lock and work-profile check use ~/.pi. Refuse when PI_HOME, as
-# setup-pi-profiles.sh resolves it (environment, then local.env), points
-# elsewhere. local.env is read in a subshell so it can't change this script.
+# setup-pi-profiles.sh resolves it (environment, overridden by local.env),
+# points elsewhere. local.env is read as DATA, never sourced: only full-line
+# comments and simple `[export ]PI_HOME=value` assignments (plain, "double" or
+# 'single' quoted, with no $, backticks, ~ or globs) are understood; any other
+# mention of PI_HOME refuses.
 canonical_dir() {
   local p="$1"
   while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
   if [ -d "$p" ]; then (cd -P -- "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
 }
-PI_HOME_SETTING="$(load_local_env >/dev/null 2>&1 || true; printf '%s' "${PI_HOME:-}")"
+# local_env_pi_home: sets LENV_SET=1 and LENV_PI_HOME to the last PI_HOME
+# assignment in local.env; fails with LENV_WHY when it can't be read as data.
+local_env_pi_home() {
+  local f line t v n=0 re
+  LENV_SET=0 LENV_PI_HOME="" LENV_WHY=""
+  re='^(export[[:space:]]+)?PI_HOME=("[^"$`\\]*"|'"'"'[^'"'"'$`]*'"'"'|[A-Za-z0-9_./@%+=:,-]*)[[:space:]]*$'
+  f="$(dotfiles_local_env_path)"
+  [ -e "$f" ] || [ -L "$f" ] || return 0
+  if [ ! -f "$f" ] || [ ! -r "$f" ]; then LENV_WHY="$f can't be read"; return 1; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$line" in *PI_HOME*) ;; *) continue ;; esac
+    t="${line#"${line%%[![:space:]]*}"}"
+    case "$t" in '#'*) continue ;; esac
+    if ! printf '%s\n' "$t" | grep -Eq "$re"; then
+      LENV_WHY="$f line $n mentions PI_HOME in a form this installer won't evaluate (only [export ]PI_HOME=value, with no \$, backticks, ~ or globs)"
+      return 1
+    fi
+    v="${t#*PI_HOME=}"
+    v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in
+      \"*\") v="${v#\"}"; v="${v%\"}" ;;
+      \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+    LENV_SET=1 LENV_PI_HOME="$v"
+  done < "$f"
+}
+local_env_pi_home || die "$LENV_WHY. Nothing changed."
+PI_HOME_SETTING="${PI_HOME:-}"
+if [ "$LENV_SET" = 1 ]; then PI_HOME_SETTING="$LENV_PI_HOME"; fi
 if [ -n "$PI_HOME_SETTING" ] && [ "$(canonical_dir "$PI_HOME_SETTING")" != "$(canonical_dir "$HOME/.pi")" ]; then
   die "PI_HOME is $PI_HOME_SETTING (environment or local.env), but rexume supports only the default Pi root $HOME/.pi: rexume install writes ~/.pi/agent, and the profiles lock and work-profile check use ~/.pi. Unset PI_HOME or point it at $HOME/.pi. Nothing changed."
 fi

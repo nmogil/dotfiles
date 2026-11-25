@@ -94,6 +94,23 @@ grep -Fq 'while rexume is installed' "$RX/out" && [ ! -e "$H/custom-pi/agent-cli
   || rx_fail "PI_HOME override: rexume under the default root blocks a work profile"
 printf '%s\n' 'ok   PI_HOME override: the lock and rexume detection stay on ~/.pi'
 
+# A one-off custom PI_HOME: profile setup records its root (canonical) in
+# ~/.pi/.dotfiles-profile-roots, and a later default `./dot rexume` (PI_HOME
+# unset) sees the custom work profile and refuses. The rexume run is its
+# read-only dry run (it writes nothing and never installs).
+H="$RX/custom-root"; rx_home "$H"; mkdir -p "$H/custom-pi/agent/extensions"
+RX_PI_HOME="$H/custom-pi" rx_profiles "$H" --apply || rx_fail "custom root: pi profiles --apply"
+[ -d "$H/custom-pi/agent-clientx" ] || rx_fail "custom root: work profile created under PI_HOME"
+grep -Fxq "$(cd -P "$H/custom-pi" && pwd -P)" "$H/.pi/.dotfiles-profile-roots" \
+  || rx_fail "custom root: recorded in ~/.pi/.dotfiles-profile-roots"
+RX_PI_HOME="$H/custom-pi" rx_profiles "$H" --apply || rx_fail "custom root: second --apply"
+[ "$(grep -c . "$H/.pi/.dotfiles-profile-roots")" = 1 ] || rx_fail "custom root: recorded once"
+env -u PI_HOME HOME="$H" XDG_CONFIG_HOME="$H/.config" DOTFILES_LOCAL_ENV="$H/.config/dotfiles/local.env" PATH="$RX_PATH" \
+  "$ROOT/dot" rexume --dry-run > "$RX/out" 2>&1 || rx_fail "custom root: ./dot rexume --dry-run"
+grep -Fq 'would refuse' "$RX/out" && grep -Fq 'custom-pi' "$RX/out" && grep -Fq 'agent-clientx' "$RX/out" \
+  || rx_fail "custom root: a later default ./dot rexume sees the custom work profile"
+printf '%s\n' 'ok   a custom-root work profile is registered and blocks a later default rexume'
+
 # A mixed-case work profile still counts for --check.
 H="$RX/mixed"; rx_home "$H"; mkdir -p "$H/.pi/AGENT-OTHER" "$H/.local/bin"
 printf '#!/bin/sh\n' > "$H/.local/bin/rexume"; chmod 755 "$H/.local/bin/rexume"

@@ -179,16 +179,32 @@ rule is at the profile level, and fails closed:
 - **Only the default Pi root.** rexume writes `~/.pi/agent`, and the lock and
   the work-profile check use `~/.pi`. So `./dot rexume` (every mode) refuses
   when `PI_HOME`, resolved the way `./dot pi profiles` resolves it
-  (environment, then `local.env`), isn't `~/.pi` once both are made canonical.
-  `./dot pi profiles` always uses `~/.pi/.dotfiles-profiles.lock` and looks
-  for rexume under `~/.pi` too, whatever `PI_HOME` says.
+  (environment, overridden by `local.env`), isn't `~/.pi` once both are made
+  canonical. `./dot rexume` never sources `local.env`; it reads it as data.
+  Full-line comments are skipped. A `PI_HOME=value` or
+  `export PI_HOME=value` line, with a plain, `"double"` or `'single'`
+  quoted value and no `$`, backticks, `~` or globs, is understood. Any other
+  mention of `PI_HOME` refuses. `./dot pi profiles` always uses
+  `~/.pi/.dotfiles-profiles.lock` and looks for rexume under `~/.pi` too,
+  whatever `PI_HOME` says.
+- **Profile roots registry.** Under the lock, `./dot pi profiles --apply`
+  records each profile root it sets up (canonical path, one per line) in
+  `~/.pi/.dotfiles-profile-roots` before creating the work profile.
+  `./dot rexume` refuses, and `--check` fails, when any registered root
+  other than `~/.pi` has a work profile, or has personal extensions that
+  resolve to `~/.pi/agent/extensions`. It fails closed on a registry or
+  entry it can't read. A root that no longer exists also refuses: remove its
+  line by hand. Roots set up before the registry existed aren't recorded;
+  rerun `./dot pi profiles --apply` with that `PI_HOME` to record one.
 - `rexume install` always runs with `PI_CODING_AGENT_DIR` removed.
 - `./dot rexume --check` fails while rexume is installed and any work profile
   exists.
 - After `rexume install`, the readiness wait checks its remaining budget
-  before every `systemctl`/`launchctl`/`rexume status` call and caps the
-  call to it. If the daemon isn't ready in time, `--apply` reports the rest
-  without another status call and fails.
+  before every `systemctl`/`launchctl`/`rexume status` call. It caps each
+  call so that the call plus its 2-second kill grace (TERM, then KILL) fits
+  in what's left. If the daemon isn't ready in time, `--apply` reports the
+  rest with no further probe (it reuses the last daemon result and makes no
+  status call) and fails.
 
 **On this Mac today** (`~/.pi/agent-work`, sharing `extensions`),
 `./dot rexume --apply` refuses. Don't work around it by hand.

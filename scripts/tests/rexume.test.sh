@@ -135,6 +135,7 @@ cat > "$STUB/systemctl" <<'EOF'
 echo "systemctl $*" >> "$STUB_LOG"
 case "$*" in
   "--user is-active --quiet rexume")
+    if [ "${STUB_SYSTEMCTL_HANG:-}" = ignore-term ]; then date +%s >> "$STUB_TMP/probe-starts"; trap '' TERM; exec sleep 30; fi
     if [ -n "${STUB_SYSTEMCTL_HANG:-}" ]; then exec sleep 30; fi
     [ -e "$STUB_TMP/daemon-active" ] ;;
   *) echo "systemctl $*" >> "$STUB_UNEXPECTED"; exit 1 ;;
@@ -580,6 +581,67 @@ fresh; mkdir -p "$HOMEDIR/.pi/agentx"; run --apply
 # --- the readiness wait never starts a call longer than its remaining budget ------------------------------
 fresh; t0="$(date +%s)"; READY_TIMEOUT=2 CALL_TIMEOUT=30 STUB_STATUS_HANG=1 run --apply; t1="$(date +%s)"
 [ "$RC" = 1 ] && has "not ready" && [ $((t1 - t0)) -lt 12 ]; res "each call in the readiness wait is capped to the remaining budget"
+
+# --- local.env is read as data, never executed ------------------------------------------------------------------
+MARK="$TMP/local-env-ran"
+fresh; mkdir -p "$HOMEDIR/.config/dotfiles"
+printf 'touch %s\nexport PI_HOME="%s/.pi"\n' "$MARK" "$HOMEDIR" > "$HOMEDIR/.config/dotfiles/local.env"
+ran=""
+for mode in --dry-run --check "--check --no-status" --apply; do
+  rm -f "$MARK"
+  # shellcheck disable=SC2086 # mode is one or two words on purpose
+  run $mode
+  [ ! -e "$MARK" ] || ran="$ran $mode"
+done
+[ -z "$ran" ] && [ "$RC" = 0 ] && installed; res "no rexume mode executes local.env (a quoted default PI_HOME is accepted as data)"
+lenv() { fresh; mkdir -p "$HOMEDIR/.config/dotfiles"; printf '%s\n' "$1" > "$HOMEDIR/.config/dotfiles/local.env"; run --apply; }
+lenv "PI_HOME=\"\$HOME/.pi\""
+[ "$RC" = 1 ] && has "local.env" && has "PI_HOME" && ! installed; res "a PI_HOME that needs expansion (\$HOME) is refused, not evaluated"
+lenv 'PI_HOME=$(pwd)'
+[ "$RC" = 1 ] && has "local.env" && ! installed; res "a PI_HOME command substitution is refused"
+lenv 'readonly PI_HOME=/x'
+[ "$RC" = 1 ] && has "local.env" && ! installed; res "PI_HOME in any other form (readonly) is refused"
+lenv "# PI_HOME=/somewhere/else (an example)"
+[ "$RC" = 0 ] && installed; res "a full-line comment mentioning PI_HOME is not a setting"
+lenv "export PI_HOME='$HOMEDIR/.pi'"
+[ "$RC" = 0 ] && installed; res "export PI_HOME='<default>' (single-quoted) is the default root"
+
+# --- profile roots registered by ./dot pi profiles (custom PI_HOME) ------------------------------------------------
+REG="$HOMEDIR/.pi/.dotfiles-profile-roots"
+custom_root() {  # custom_root <work|alias|plain>: a registered custom Pi root
+  mkdir -p "$HOMEDIR/custom-pi/agent"
+  case "$1" in
+    work) mkdir -p "$HOMEDIR/custom-pi/agent/extensions" "$HOMEDIR/custom-pi/agent-work" ;;
+    alias) ln -s "$HOMEDIR/.pi/agent/extensions" "$HOMEDIR/custom-pi/agent/extensions" ;;
+    plain) mkdir -p "$HOMEDIR/custom-pi/agent/extensions" ;;
+  esac
+  (cd -P "$HOMEDIR/custom-pi" && pwd -P) >> "$REG"
+}
+fresh; custom_root work; run --apply
+[ "$RC" = 1 ] && has "custom-pi" && has "agent-work" && ! installed && ! called "rex "; res "a registered custom root with a work profile makes --apply refuse (PI_HOME unset)"
+fresh; custom_root alias; run --apply
+[ "$RC" = 1 ] && has "custom-pi/agent/extensions" && ! installed; res "a registered custom root whose extensions alias ~/.pi/agent/extensions refuses"
+fresh; custom_root plain; run --apply
+[ "$RC" = 0 ] && installed; res "a registered custom root without a work profile or alias is fine"
+fresh; (cd -P "$HOMEDIR/.pi" && pwd -P) > "$REG"; run --apply
+[ "$RC" = 0 ] && installed; res "the default root in the registry is handled by the normal checks"
+fresh; echo "$HOMEDIR/gone-pi" > "$REG"; run --apply
+[ "$RC" = 1 ] && has "gone-pi" && ! installed; res "a registered root that can't be read refuses (fail closed)"
+fresh; echo "relative/pi" > "$REG"; run --apply
+[ "$RC" = 1 ] && has "relative/pi" && ! installed; res "a malformed registry entry refuses"
+fresh; custom_root work; before="$(snapshot)"; run
+[ "$RC" = 0 ] && has "would refuse" && has "custom-pi" && [ "$(snapshot)" = "$before" ]; res "dry-run reports a registered custom work profile and writes nothing"
+fresh; run --apply; custom_root work; run --check
+[ "$RC" = 1 ] && has "custom-pi"; res "--check exits 1 when rexume is installed and a registered root has a work profile"
+
+# --- the readiness budget includes the kill grace; no extra probe after a timeout --------------------------------
+# From the first readiness probe to the end of the run: the 3 s budget (one
+# probe capped at 3 - 2 = 1 s, plus the 2 s kill grace) and no further probe;
+# +1 s for whole-second clocks. Unbudgeted grace or an extra probe exceeds it.
+fresh; rm -f "$TMP/probe-starts"; READY_TIMEOUT=3 CALL_TIMEOUT=30 STUB_SYSTEMCTL_HANG=ignore-term run --apply; t1="$(date +%s)"
+[ "$RC" = 1 ] && has "not ready" && [ "$(grep -c . "$TMP/probe-starts")" = 1 ] \
+  && [ $((t1 - $(head -n 1 "$TMP/probe-starts"))) -le 4 ]
+res "a TERM-ignoring systemctl can't stretch the readiness budget (kill grace included), and no probe follows the timeout"
 
 # --- every daemon-manager and status call is bounded --------------------------------------------------------
 fresh; run --apply; t0="$(date +%s)"; CALL_TIMEOUT=1 STUB_SYSTEMCTL_HANG=1 run --check; t1="$(date +%s)"
