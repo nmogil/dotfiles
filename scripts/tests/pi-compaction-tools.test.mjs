@@ -10,6 +10,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// An explicitly requested extension that is missing is a failure, not a skip.
+const explicitExtension = process.env.PI_COMPACTION_EXTENSION;
+if (explicitExtension !== undefined && !existsSync(explicitExtension)) {
+  console.error(`FAIL pi-compaction-tools: PI_COMPACTION_EXTENSION does not exist (${explicitExtension})`);
+  process.exit(1);
+}
 let piPath = '';
 try { piPath = execFileSync('which', ['pi'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
 if (!piPath) {
@@ -28,7 +34,7 @@ const jiti = createJiti(import.meta.url, { alias: {
   '@earendil-works/pi-tui': join(root, 'node_modules/@earendil-works/pi-tui/dist/index.js'),
 }});
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(process.env.HOME, '.pi/agent');
-const extensionPath = process.env.PI_COMPACTION_EXTENSION ?? join(agentDir, 'npm/node_modules/@ogulcancelik/pi-codex-compaction/index.ts');
+const extensionPath = explicitExtension ?? join(agentDir, 'npm/node_modules/@ogulcancelik/pi-codex-compaction/index.ts');
 if (!existsSync(extensionPath)) {
   console.log(`SKIP pi-compaction-tools: Codex compaction extension not installed (${extensionPath})`);
   process.exit(0);
