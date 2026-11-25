@@ -84,9 +84,10 @@ rexume is active and will be paused during the restart (started again afterwards
 ```
 
 `run` is safe to start from inside a Rex pane, including from an agent. The
-agent that started it is found from `REX_BLOCK` (and `REX_SESSION` when set;
-Rex preview.23 no longer sets it, so the tool looks up the session holding that
-block). It checks everything first, then hands itself to a transient systemd unit
+agent that started it is found from `REX_BLOCK`. `REX_SESSION` is used as a
+hint when set; Rex preview.23 no longer sets it, and if it is missing or wrong
+the tool searches every session for that block, skipping sessions it can't
+list. It checks everything first, then hands itself to a transient systemd unit
 (`rex-safe-upgrade-<time>`, a user unit for non-root accounts) so it keeps going
 when the server stops and the pane closes. The pane comes back with its agent
 resumed. Only one run can be in progress at a time.
@@ -94,7 +95,9 @@ resumed. Only one run can be in progress at a time.
 ### What `run` does
 
 1. Does nothing if the server already runs the installed version
-   (`--even-if-current` overrides).
+   (`--even-if-current` overrides). Stops, changing nothing, if it can't tell
+   which version is installed (exit 2) or the server doesn't report its
+   instance id, pid and endpoint (exit 3).
 2. Checks every pane. It stops, changing nothing, if any of these is true:
    - an agent is working or waiting for an answer, or hasn't reported its
      state (the agent process that started the run is exempt);
@@ -105,28 +108,41 @@ resumed. Only one run can be in progress at a time.
      pane), or its recorded session file has disappeared;
    - Hermes's session can't be determined;
    - two panes have the same conversation open;
-   - Rex doesn't answer for a pane.
+   - Rex doesn't answer for a pane or a session, or a pane's foreground
+     shell can't be read;
+   - a pane's foreground shell runs a script or a command it can't attribute
+     to one program (see [Wrapper panes](#wrapper-panes)).
 
    `--allow-unresumable` waives only the "can't be resumed" cases: unknown
    programs, background jobs, unrecorded Pi, a Pi session file that has
-   disappeared, and an unknown Hermes session. Those programs are stopped and
-   not resumed. Busy agents, agents that haven't reported their state,
-   unreadable panes and duplicate conversations always block.
-3. Saves each pane's screen and the plan. Right before stopping, it checks the
-   server and every pane again; if anything changed, it stops without changing
-   anything.
-4. If rexume is active, pauses it (`systemctl --user stop rexume`); if that
-   fails, it stops with exit 8 and changes nothing. It checks once more that
-   the server it reaches is the one it checked (exit 3 otherwise), then runs
-   `rex server stop` (the server saves sessions on stop) and copies the
-   saved-session database as a backup. `rex` and `systemctl` are looked up on
-   `PATH` once per run and always run from that path afterwards.
-5. Waits up to 90 seconds for the Rex app to reconnect, which starts the new
+   disappeared, an unknown Hermes session, and shells running scripts or
+   commands. Those programs are stopped and not resumed. Busy agents, agents
+   that haven't reported their state, unreadable panes, sessions or shells,
+   and duplicate conversations always block.
+3. Saves each pane's screen and the plan.
+4. Asks whether rexume runs. If it can't tell (no reachable user manager, a
+   timeout, an unexpected answer), it stops with exit 8 and changes nothing.
+   If rexume is active it pauses it (`systemctl --user stop rexume`); if that
+   fails, exit 8 and nothing changed.
+5. After the pause, which can take minutes, and immediately before stopping,
+   it runs every check from step 2 again and confirms the server is still the
+   same instance (exit 2 or 3, nothing changed, if not). Then it asks the
+   server at its endpoint once more and runs `rex -S <endpoint> server stop`
+   (the server saves sessions on stop), and copies the saved-session database
+   as a backup. `rex server stop` can't name an instance, only an address: if
+   another server replaced this one at the same address between those last two
+   commands, that one would be stopped. `rex` and `systemctl` are resolved
+   once per run, to canonical absolute paths from absolute `PATH` entries,
+   and always run from there.
+6. Waits up to 90 seconds for the Rex app to reconnect, which starts the new
    server through the login server. If that doesn't happen, it runs
    `rex server start` itself.
-6. In each restored pane that shows a shell prompt it types the resume
-   command. A pane whose shell is running a command (`sh -c ...`) is not a
-   prompt, so nothing is typed there and the pane is reported instead:
+7. Types the resume command into each restored pane that positively shows an
+   idle prompt: Rex's foreground program is a shell started as an interactive
+   or login shell (not with `-c`, `--command`, a script or any option form it
+   doesn't recognize), with no programs under it, and the same shell for 2
+   seconds. It checks again right before typing and before pressing Enter; a
+   pane that fails any check gets nothing (or no Enter) and is reported:
    - Pi: `cd -- <dir> && pi --session <session file>`, with
      `PI_CODING_AGENT_DIR=…` for non-default profiles. A session with no
      messages yet reopens a fresh `pi`.
@@ -134,13 +150,16 @@ resumed. Only one run can be in progress at a time.
      the TUI's active-session file, which follows `/new` and `/resume`, then
      from how it was launched.
    A pane that fails doesn't stop the others.
-7. Checks that each pane runs the same conversation again: Pi's new record
+8. Checks that each pane runs the same conversation again: Pi's new record
    must name the same session file, and Hermes must have been resumed with the
    same id. It also checks that the server that came back is a new instance
    running the installed version.
-8. Starts rexume again if it paused it. This happens on every way out after
-   the pause: success, exits 3, 4, 5 and 7, errors, and the run being stopped
-   (SIGTERM/SIGHUP).
+9. Starts rexume again if it tried to pause it. This happens on every way
+   out once the stop was attempted: success, every failure exit, errors, and
+   the run being stopped by SIGTERM, SIGHUP or SIGINT. Recovery is armed
+   before `systemctl stop` runs, and further signals are ignored until rexume
+   is started again. If it can't be started, the run exits 8 (unless it
+   already failed with another code) and the log says how to start it.
 
 ### Wrapper panes
 
@@ -151,14 +170,23 @@ rex new -- sh -lc 'PI_CODING_AGENT_DIR="$1" pi --model "$2" --thinking "$3" "@$4
 ```
 
 show up in Rex with the `sh -lc` shell as their program, and Pi as its child.
-When the pane's foreground program is a shell running a `-c` command, it has
-exactly one child (prompt helpers aside), and that child is in the terminal's
-foreground process group, the tool treats the child as the pane's program:
-Pi there is checked and resumed exactly like Pi started from a prompt (same
-pane record, `/reload` hint, busy check, `PI_CODING_AGENT_DIR` from the
+The tool treats the child as the pane's program when all of these hold:
+
+- the foreground shell was started with a command (`-c`, `-lc`,
+  `-O extglob -c`, fish `--command`); a script, or any form it doesn't
+  recognize, blocks the run instead;
+- it has exactly one child (prompt helpers aside);
+- that child shares the shell's session and terminal and is in the
+  terminal's foreground process group.
+
+Pi there is then checked and resumed exactly like Pi started from a prompt
+(same pane record, `/reload` hint, busy check, `PI_CODING_AGENT_DIR` from the
 record). Rex may report the busy state under the wrapper's pid rather than
-Pi's (snapshot.2513 does); either counts. Any other process under the wrapper
-still blocks as a background process.
+Pi's (snapshot.2513 does). A status owned by the wrapper counts only if it
+names Pi and was updated after this Pi started; otherwise Pi's state is
+unknown, which always blocks. Any other process under the wrapper still blocks
+as a background process, and a shell whose process data can't be read blocks
+as unreadable.
 
 The restored pane is a fresh login shell, so the resume command is the usual
 `pi --session <file>`. The `--model`/`--thinking` flags from the original
@@ -173,16 +201,21 @@ Claude Code, Codex, omp and OpenCode conversations. During a `run` both would
 type into the same panes, so `rex-safe-upgrade` owns planned upgrades:
 
 - If `systemctl --user is-active rexume` says it's active when the restart
-  phase begins, the run stops it right before `rex server stop` and starts it
-  again once resume and verification are over, or on any other way out
-  (see step 8). Both are logged.
+  phase begins, the run stops it, checks everything again, and runs
+  `rex server stop`; it starts rexume again once resume and verification are
+  over, or on any other way out (see step 9). Both are logged.
+- Only a definite answer counts: "active" goes ahead with the pause;
+  "inactive" or "not installed" from the user manager changes nothing. Any
+  other outcome (no user manager reachable, a timeout, an odd answer) aborts
+  with exit 8 before touching Rex.
 - If stopping it fails, the run aborts with exit 8 before touching the server,
   and runs `systemctl --user start rexume` so it is left running.
-- If rexume isn't installed or isn't running, nothing changes.
 - The calls happen in the process that restarts the server. Inside Rex that is
-  the transient `rex-safe-upgrade-<time>` unit; for root it's a system unit,
-  so the tool passes `XDG_RUNTIME_DIR` (default `/run/user/<uid>`) to reach the
-  account's user manager.
+  the transient `rex-safe-upgrade-<time>` unit; for root it's a system unit.
+  `systemctl --user` gets this account's own user manager: `XDG_RUNTIME_DIR`
+  (or `/run/user/<uid>` when unset) must be an absolute directory owned by
+  this account, and an inherited `DBUS_SESSION_BUS_ADDRESS` is dropped.
+  Otherwise the state counts as unknown.
 
 rexume skips panes where a program is already running, so panes this tool
 resumed are left alone when it starts again. A pane this tool failed to resume
@@ -207,13 +240,13 @@ LaunchAgent `io.github.entwining.rexume`, but this tool doesn't run on macOS.
 |---|---|
 | 0 | Done, or nothing to do |
 | 1 | No Rex server running |
-| 2 | Not safe right now; nothing changed |
-| 3 | Server changed during preflight or right before the stop (nothing changed), or the old server didn't stop |
+| 2 | Not safe right now (including: installed version unknown, panes changed before the stop); nothing changed |
+| 3 | Server identity incomplete or changed before the stop (nothing changed), or the old server didn't stop |
 | 4 | Server didn't come back; the log lists the commands to resume each pane |
 | 5 | Some panes didn't resume; the log lists their commands |
 | 6 | Another run is in progress; nothing changed |
 | 7 | Agents resumed, but the server that came back isn't the installed version |
-| 8 | rexume is running and couldn't be paused; nothing changed |
+| 8 | Couldn't tell whether rexume runs, or couldn't pause it (nothing changed); or it couldn't be started again after an otherwise successful run |
 
 ## Logs and recovery
 
@@ -259,47 +292,58 @@ Rex app, then type the commands from `plan.json` into the panes.
 ## Test
 
 ```bash
-python3 scripts/tests/rex-safe-upgrade.test.py -v
+python3 scripts/tests/rex-safe-upgrade.test.py -v   # anywhere: installer + parser tests
 node scripts/tests/rex-pane-session.test.mjs
 ```
 
 The tests run the real tool against a stateful fake `rex` and a fake
-`systemctl` on `PATH`, and real processes: planning and every blocker
-(including which ones `--allow-unresumable` can't waive, reused pids and forged
-self-exemptions), Pi behind a real `sh -lc` wrapper in a real terminal, the
-run's own pane found from `REX_BLOCK` with and without `REX_SESSION`, a full
-restart with resume and verification, the app not reconnecting, the server
-never returning, the server coming back on the old version, a pane that fails,
-a pane restored running a command, the wrong conversation coming back, a
-change during preflight, a concurrent run, rexume paused and started again on
-success, failure and SIGTERM (and a stop that fails), and the installer. The
-second drives the Pi extension's handlers against real files, including a
-record that can't be removed. Neither starts Pi.
+`systemctl`, and real processes: planning and every blocker (including which
+ones `--allow-unresumable` can't waive, reused pids and forged
+self-exemptions), Pi behind a real `-lc` wrapper in a real terminal, shell
+command lines that fail closed, the run's own pane found from `REX_BLOCK` with
+a missing or stale `REX_SESSION`, a full restart with resume and verification,
+the last checks before the stop, restored panes that aren't a prompt, the app
+not reconnecting, the server never returning or coming back on the old
+version, failing panes and wrong conversations, a concurrent run, rexume
+paused and started again on every way out (including signals during its stop
+and during recovery) and rexume whose state is unknown, and the installer.
+The second drives the Pi extension's handlers against real files. Neither
+starts Pi.
 
-The tests must never reach a real Rex server or systemd, even when a test
-fails halfway. On 2026-11-25 one did: a test failed while its `run` was still
-going, cleanup deleted the fake `rex`, and the run's next `rex server stop`
-found `/usr/bin/rex` on `PATH` and stopped the VPS's real server. The layers
-since then:
+### Where the integration tests may run
 
-- `PATH` holds only the fakes, an allowlist of real tools (never `rex`,
-  `systemctl` or `systemd-run`), and tripwire copies of those three that
-  record any call. Every test fails if a tripwire fired.
-- `XDG_RUNTIME_DIR` is a temp dir and `DBUS_SESSION_BUS_ADDRESS` is unset.
-- `REX_SAFE_UPGRADE_FAKE_BIN` (set by the tests to the fakes' directory) puts
-  the tool in test mode: it exits 2 without doing anything unless `rex` and
-  `systemctl` resolve there and the runtime dir isn't `/run/user/*`, and it
-  never starts a systemd unit.
-- The tool resolves each command once per run, so deleted fakes make calls
-  fail instead of falling through to another `rex`.
-- Every process a test starts is killed with its children before the test's
-  temp dir is removed, and only if its pid still belongs to the same process.
+On 2026-11-25 a test run on the VPS stopped its real Rex server: a test failed
+while its `run` was still going, cleanup deleted the fake `rex`, and the run's
+next `rex server stop` found `/usr/bin/rex` on `PATH`.
 
-Even so, prefer running the Linux tests in a container, or on a machine with
-no Rex server you care about:
+The boundary is the machine, not the tests' `PATH`: the Linux integration
+tests run only in an isolated sandbox. They skip unless
+`REX_SAFE_UPGRADE_TEST_SANDBOX=1` is set and there is no `rex` binary, no Rex
+runtime directory under `/run/user` and no user systemd bus. Set the variable
+only in a throwaway container or a CI runner. With
+`REX_SAFE_UPGRADE_TEST_REQUIRE_SANDBOX=1` a missing sandbox fails the run
+instead of skipping it; CI runs them that way, in a container:
 
 ```bash
-docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh -c \
-  'apt-get update -qq && apt-get install -y -qq python3 procps nodejs >/dev/null &&
-   python3 scripts/tests/rex-safe-upgrade.test.py -v && node scripts/tests/rex-pane-session.test.mjs'
+docker run --rm --init --network none -v "$PWD:/w:ro" -w /w \
+  -e REX_SAFE_UPGRADE_TEST_SANDBOX=1 -e REX_SAFE_UPGRADE_TEST_REQUIRE_SANDBOX=1 \
+  python:3.12-slim python3 -B scripts/tests/rex-safe-upgrade.test.py -v
 ```
+
+Never set it on a machine that runs Rex. Inside the sandbox the tests add
+defense in depth, none of which is the boundary:
+
+- Every subprocess gets a minimal environment built from scratch (no
+  `BASH_ENV`, `ENV` or host variables) and absolute helper paths from
+  `/usr/bin:/bin`; bash runs with `--noprofile --norc`, and no fixture runs a
+  login shell.
+- `PATH` holds only the fakes, then tripwire copies of `rex`, `systemctl` and
+  `systemd-run` that record any call; every test fails if one fired.
+- `REX_SAFE_UPGRADE_TEST_ROOT` puts the tool in test mode: it exits 2 without
+  doing anything unless that directory carries the fixture marker, `rex` and
+  `systemctl` resolve to its `bin/`, and `HOME` and `XDG_RUNTIME_DIR` are
+  inside it with no session bus set; it never starts a systemd unit.
+- The test process is a child subreaper: everything a test starts, and every
+  orphan those leave, stays its child, is reaped as it exits, and is killed
+  through pidfds before the test's files are removed. Teardown repeats until
+  nothing is left, within a time limit.
