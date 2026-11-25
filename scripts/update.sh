@@ -3,16 +3,19 @@
 #   1. fetch exactly the tracked upstream branch from the verified remote, then
 #      fast-forward the public and private dotfiles repos to that fetched commit
 #      (git merge --ff-only --no-overwrite-ignore)
-#   2. re-verify both checkouts (path, remote, clean tree, HEAD = that commit,
+#   2. update the Pi CLI to the latest release (pi update --self; global npm
+#      installs only, independent of the repos; before re-verification)
+#   3. re-verify both checkouts (path, remote, clean tree, HEAD = that commit,
 #      freshness) and that the Pi baseline / Rex overlay files match the
 #      verified commit, then apply the Pi baseline — guarded so live files with
 #      local changes are never replaced — and its packages, and check it
-#   3. apply + check the Mac Rex image-paste config (Mac only)
-#   4. run cheap read-only checks (rex-safe-upgrade install, rexboard)
+#   4. apply + check the Mac Rex image-paste config (Mac only)
+#   5. run cheap read-only checks (rex-safe-upgrade install, rexboard)
 #
 # Never stashes, resets, or forces; never passes --force to installers; never
-# restarts Rex, updates the Pi CLI, or touches running agent sessions. Live
-# config changes only through the existing `./dot ... --apply` commands.
+# restarts Rex or touches running agent sessions (they keep the old Pi until
+# restarted). Live config changes only through `pi update --self` and the
+# existing `./dot ... --apply` commands.
 #
 # local.env is sourced as bash (scripts/lib/local-env.sh), so it must be a file
 # you trust; this script does not sandbox it.
@@ -32,6 +35,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DOT="$ROOT/dot"
 # shellcheck source=lib/local-env.sh
 . "$ROOT/scripts/lib/local-env.sh"
+# shellcheck source=lib/pi-cli.sh
+. "$ROOT/scripts/lib/pi-cli.sh"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +50,12 @@ Bring this machine up to date:
              (private) not at a canonical path or not the expected companion
              remote is skipped with a warning — never stashed, reset, or
              forced — and the applies that depend on it are skipped too
+  Pi CLI     pi update --self --no-approve (from $HOME), when pi is an
+             absolute global npm install; runs before the checkouts are
+             re-verified and does not depend on the repos. A failure is a
+             warning: the Pi config version gate (at least the baseline's
+             minimum) decides. Running Pi sessions keep the old version until
+             restarted
   Pi config  ./dot pi config apply --apply, packages --apply, then check
              (needs both repos, and baseline files identical to the verified
              private commit). Apply is skipped, unless --yes, when it would
@@ -58,8 +69,8 @@ Bring this machine up to date:
              installed
 
   --dry-run  Read-only: behind/ahead from the cached remote-tracking refs (no
-             fetch), apply previews and read-only checks; writes nothing to the
-             repos or temp files (output is kept in memory)
+             fetch), apply previews and read-only checks; never launches Pi
+             (versions come from package.json); writes nothing to the repos or temp files (output is kept in memory)
   --fetch    With --dry-run: fetch the tracked upstream branch first, which
              updates only its remote-tracking ref (never branches or worktrees)
   -y, --yes  Apply the Pi baseline even over live files with local changes
@@ -568,7 +579,68 @@ else
   fi
 fi
 
-# Re-verify every "ok" right before applying anything. A real run must also
+# -------------------------------------------------------------------- Pi CLI
+# Update Pi to the latest release BEFORE the checkouts are re-verified below:
+# it can run for a while (npm), and a checkout that changes meanwhile must not
+# be applied from. It runs after the updater hand-off (once, by the newest
+# updater) and does not come from the repos, so it does not need them. Only
+# an absolute pi that is a global npm install is updated, by that same path;
+# the version is read from its package.json (Pi is never launched to ask, so
+# --dry-run launches nothing). The apply's version gate (>= the baseline's
+# minimum) decides whether an older Pi blocks. Running sessions are untouched.
+update_pi_cli() {
+  local pi_path before="" after rc=0
+  pi_path="$(command -v pi 2>/dev/null)" || pi_path=""
+  if [ -z "$pi_path" ]; then
+    say_skip "Pi CLI: not installed (./dot pi install)"; return
+  fi
+  # Only a positively verified global npm install (0, or 2: verified but its
+  # version is unreadable) is run; 3 means the verifier itself failed.
+  pi_npm_version "$pi_path" || rc=$?
+  case "$rc" in
+    0) before="$PI_NPM_VERSION" ;;
+    1) say_skip "Pi CLI: not updated — $PI_NPM_PROBLEM; ./dot pi install"; return ;;
+    2) ;;
+    *) say_warn "Pi CLI: not updated — $PI_NPM_PROBLEM"; return ;;
+  esac
+  if [ "$DRY_RUN" = 1 ]; then
+    if [ -n "$before" ]; then say_skip "Pi CLI: $before installed; a real run runs pi update --self"
+    else say_skip "Pi CLI: installed version unavailable ($PI_NPM_PROBLEM); the version gate could not be previewed"; fi
+    return
+  fi
+  rc=0
+  capture in_home "$pi_path" update --self --no-approve || rc=$?
+  after=""
+  if pi_npm_version "$pi_path"; then after="$PI_NPM_VERSION"; fi
+  if [ "$rc" -ne 0 ]; then
+    say_warn "Pi CLI update failed (exit $rc) — continuing; the Pi config version gate decides"
+    log_lines | indent
+  elif [ -z "$after" ]; then
+    say_warn "Pi CLI: pi update --self ran, but the installed version is unavailable ($PI_NPM_PROBLEM)"
+    log_lines | indent
+  elif [ "$before" = "$after" ]; then
+    # Pi prints "pi is already up to date (vX)" only when it confirmed that.
+    if log_lines | grep -Eq 'is already up to date'; then
+      say_ok "Pi CLI — $after (latest)"
+    else
+      say_warn "Pi CLI — $after unchanged; pi update --self did not confirm it is the latest"
+      log_lines | indent
+    fi
+  else
+    say_ok "Pi CLI — ${before:-unknown} → $after"
+    note "running Pi sessions keep ${before:-the old version} until restarted"
+  fi
+}
+section "Pi CLI"
+if [ "$HANDOFF_OK" = 0 ]; then
+  say_skip "Pi CLI: not updated (updater hand-off invalid)"
+else
+  update_pi_cli
+fi
+
+section "Pi config"
+# Re-verify every "ok" right before applying anything (and after the Pi CLI
+# update above). A real run must also
 # prove freshness (see verify_fresh); when that cannot be established — e.g. a
 # hand-off with no matching fetch — applying needs --yes.
 reverify() {  # reverify <label> <dir> <expected-key> <commit> <remote-key> <before>
@@ -615,8 +687,8 @@ gate_reason() {
 # state, written only after apply AND packages succeed). That covers local
 # edits and deletions of managed files and pre-existing files the new baseline
 # starts managing. No record means no previous baseline: every differing live
-# file is protected. --yes drops the guard.
-section "Pi config"
+# file is protected. --yes drops the guard. (Its section header is printed
+# above, before the re-verification whose warnings gate it.)
 REVIEW_HINT="review with ./dot pi config apply (preview) or, on the Mac, ./dot pi config capture; --yes applies anyway (with backups)"
 APPLIED_STATE="$HOME/.local/state/dotfiles/pi-config-applied"
 BUNDLE_REL="${BUNDLE#"$PRIVATE"/}"

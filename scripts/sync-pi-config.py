@@ -14,6 +14,12 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
+# Shared Pi version helper; never write bytecode into the repo (a dry run of
+# ./dot update must write nothing).
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import pi_version  # noqa: E402
+
 SETTINGS = ".pi/agent/settings.json"
 OWNERSHIP = ".local/state/dotfiles/pi-config-files.json"
 # User-approved floating exception; other packages still require exact versions.
@@ -183,11 +189,25 @@ def capture(home: Path) -> dict[str, bytes]:
     return result
 
 
+def installed_pi() -> tuple[str, str]:
+    """(absolute pi path, version from its package.json). Never launches Pi:
+    its entry point can write even for --version, and previews write nothing.
+    Raises pi_version.NotNpmLayout / MetadataUnavailable."""
+    pi_path = shutil.which("pi")
+    if pi_path is None:
+        raise pi_version.NotNpmLayout("pi is not installed (./dot pi install)")
+    return pi_path, pi_version.installed_version(pi_path)
+
+
 def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
     manifest = object_file(safe_path(bundle, "manifest.json"))
     version = manifest.get("piVersion")
     files = manifest.get("files")
-    if manifest.get("version") != 1 or not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+    try:
+        pi_version.parse(version)
+    except ValueError:
+        version = None
+    if manifest.get("version") != 1 or version is None:
         raise ValueError("invalid Pi baseline manifest")
     if not isinstance(files, dict) or SETTINGS not in files:
         raise ValueError("baseline is missing its file manifest or settings")
@@ -257,9 +277,10 @@ def main() -> int:
         if args.exclude:
             parser.error("capture always records the full source baseline")
         files = capture(home)
-        version = subprocess.check_output(["pi", "--version"], text=True).strip()
-        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-            raise ValueError("could not determine Pi version")
+        try:
+            version = installed_pi()[1]
+        except ValueError as error:
+            raise ValueError(f"could not determine the Pi version: {error}") from None
         manifest = {"version": 1, "piVersion": version, "files": {
             name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())
         }}
@@ -314,11 +335,20 @@ def main() -> int:
         elif target.exists() and target.read_bytes() == data:
             continue
         changes[name] = data
-    version = subprocess.check_output(["pi", "--version"], text=True).strip()
-    version_ok = version == manifest["piVersion"]
-    print(f"Pi CLI: {version} (baseline {manifest['piVersion']})")
-    if not version_ok:
-        raise ValueError("Pi version differs; install the baseline version first")
+    # The manifest's piVersion is a MINIMUM: Pi floats to the latest release.
+    # Previews (apply/packages without --apply) report an unreadable version;
+    # check and every write refuse it.
+    minimum = manifest["piVersion"]
+    pi_path = "pi"
+    try:
+        pi_path, version = installed_pi()
+    except ValueError as error:
+        if args.apply or args.command == "check":
+            raise ValueError(f"cannot verify the Pi CLI version (minimum {minimum}): {error}") from None
+        print(f"Pi CLI: version gate not previewed — {error} (minimum {minimum})")
+    else:
+        print(f"Pi CLI: {version} (minimum {minimum})")
+        pi_version.require(version, minimum)
     package_drift = []
     for source in package_sources:
         if source in FLOATING_PACKAGES:
@@ -354,7 +384,7 @@ def main() -> int:
             if args.apply:
                 environment = dict(os.environ, PI_CODING_AGENT_DIR=str(home / ".pi/agent"))
                 with tempfile.TemporaryDirectory(prefix="pi-packages-") as directory:
-                    subprocess.run(["pi", "install", source, "--no-approve"], cwd=directory,
+                    subprocess.run([pi_path, "install", source, "--no-approve"], cwd=directory,
                                    env=environment, check=True)
         return 0
     # Local changes: a live file this run would replace or archive that does

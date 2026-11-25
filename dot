@@ -22,21 +22,14 @@ DOT_ROOT="$(script_path)"
 # time). Lets pi_doctor honor DOTFILES_PI_BLOCKLIST from ~/.config/dotfiles/local.env.
 # shellcheck source=scripts/lib/local-env.sh
 [ -f "$DOT_ROOT/scripts/lib/local-env.sh" ] && . "$DOT_ROOT/scripts/lib/local-env.sh"
+# Pi CLI helpers: PI_MIN_VERSION, pi_version_at_least, pi_npm_version.
+# shellcheck source=scripts/lib/pi-cli.sh
+. "$DOT_ROOT/scripts/lib/pi-cli.sh"
 
 run() {  # run <script> [args...] — fail clearly if the script is missing
   local script="$DOT_ROOT/$1"; shift
   [ -f "$script" ] || { echo "dot: missing script: $script" >&2; exit 1; }
   exec bash "$script" "$@"
-}
-
-pi_uses_npm_layout() {
-  local pi_path="$1" resolved
-  command -v node >/dev/null 2>&1 || return 1
-  resolved="$(node -e 'const fs = require("node:fs"); try { process.stdout.write(fs.realpathSync(process.argv[1])); } catch { process.exit(1); }' "$pi_path" 2>/dev/null || true)"
-  case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 usage() {
@@ -47,9 +40,10 @@ Usage: ./dot <command> [args]
 
   help                 Show this help
   doctor               Read-only environment health check
-  update [--dry-run]   Fast-forward public+private repos, apply Pi baseline +
-                       packages, apply Mac Rex config, run checks (one line/step;
-                       --dry-run is read-only, add --fetch to refresh refs)
+  update [--dry-run]   Fast-forward public+private repos, update the Pi CLI to
+                       the latest, apply Pi baseline + packages, apply Mac Rex
+                       config, run checks (one line/step; --dry-run is
+                       read-only, add --fetch to refresh refs)
   setup mac            Run macOS setup (setup.sh)
   setup linux          Run Linux/VPS setup (setup-linux.sh)
   repos clone [file]   Bulk-clone repos from repos.txt (clone-repos.sh)
@@ -75,7 +69,7 @@ Usage: ./dot <command> [args]
   pi profiles [flags]  Prepare/check personal + work profiles (--apply/--check/--dry-run)
   pi subagents [flags] Install/check pinned Pi Codex subagents (--apply/--check/--dry-run)
   pi extensions [flags] Install/check reviewed Pi core extensions (--apply/--check/--dry-run)
-  pi install           Install the pi CLI (opt-in; prompts before running)
+  pi install           Install the latest pi CLI via npm (opt-in; prompts first)
   rex install [flags]  Install/check rex-safe-upgrade + Pi pane recorder
                        (--apply/--check/--dry-run; see docs/rex-safe-upgrade.md)
   rexboard [flags]     Install/check rexboard (Mac: Homebrew; Linux: pinned,
@@ -95,7 +89,7 @@ EOF
 }
 
 packages_check() {
-  local pdir="$DOT_ROOT/packages" any=0 pi_path="" pi_version=""
+  local pdir="$DOT_ROOT/packages" any=0 pi_path="" pi_rc=0
   echo "== packages check =="
   if command -v brew >/dev/null 2>&1 && [ -f "$DOT_ROOT/Brewfile" ]; then
     any=1; echo "-- Brewfile (brew bundle check) --"
@@ -115,19 +109,23 @@ packages_check() {
     any=1; echo "-- npm.global --"
     while read -r pkg; do
       pkg="${pkg%%#*}"; pkg="$(echo "$pkg" | tr -d '[:space:]')"; [ -n "$pkg" ] || continue
-      if [ "$pkg" = "@earendil-works/pi-coding-agent@1.6.0" ]; then
+      if [ "$pkg" = "$PI_PACKAGE" ] || [ "$pkg" = "$PI_PACKAGE@latest" ]; then
+        # Pi floats to the latest release; require a global npm install of at
+        # least PI_MIN_VERSION (read from package.json; Pi is never launched).
         pi_path="$(command -v pi 2>/dev/null || true)"
-        pi_version="$(pi --version 2>/dev/null || true)"
+        pi_rc=0; [ -z "$pi_path" ] || pi_npm_version "$pi_path" || pi_rc=$?
         case "$pi_path" in
           *"/.vite-plus/"*) echo "  MISS $pkg (Pi still uses Vite+ layout)" ;;
           "") echo "  MISS $pkg" ;;
           *)
-            if [ "$pi_version" = "1.6.0" ] && pi_uses_npm_layout "$pi_path"; then
-              echo "  ok   $pkg ($pi_version)"
-            elif [ "$pi_version" = "1.6.0" ]; then
-              echo "  MISMATCH $pkg (Pi is not the required npm package layout: $pi_path)"
+            if [ "$pi_rc" = 1 ] || [ "$pi_rc" = 3 ]; then
+              echo "  MISMATCH $pkg ($PI_NPM_PROBLEM)"
+            elif [ "$pi_rc" != 0 ]; then
+              echo "  MISMATCH $pkg (Pi version unavailable: $PI_NPM_PROBLEM)"
+            elif pi_version_at_least "$PI_NPM_VERSION" "$PI_MIN_VERSION"; then
+              echo "  ok   $pkg ($PI_NPM_VERSION; minimum $PI_MIN_VERSION)"
             else
-              echo "  MISMATCH $pkg (active Pi: ${pi_version:-unknown} at $pi_path)"
+              echo "  MISMATCH $pkg ($(pi_too_old_hint "$PI_NPM_VERSION" "$PI_MIN_VERSION"))"
             fi
             ;;
         esac
@@ -138,7 +136,7 @@ packages_check() {
 }
 
 pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
-  local dest="${PI_HOME:-$HOME/.pi}" offender pi_bin pi_version scaffold
+  local dest="${PI_HOME:-$HOME/.pi}" offender pi_bin pi_rc scaffold
   echo "== pi doctor =="
   # The scaffold is not tracked in this public repo (unlicensed upstream; see
   # docs/licensing.md). Resolve it from local.env, falling back to a fork-local
@@ -155,16 +153,20 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
     pi_bin="$HOME/.vite-plus/bin/pi"
   fi
   if [ -n "$pi_bin" ]; then
-    pi_version="$("$pi_bin" --version 2>/dev/null || true)"
     case "$pi_bin" in
       *"/.vite-plus/"*) echo "  WARN Pi uses Vite+ layout; run ./dot pi install before subagents" ;;
       *)
-        if [ "$pi_version" = "1.6.0" ] && pi_uses_npm_layout "$pi_bin"; then
-          echo "  ok   pinned Pi CLI present: $pi_bin ($pi_version)"
-        elif [ "$pi_version" = "1.6.0" ]; then
-          echo "  WARN Pi 1.6.0 is not the required npm package layout: $pi_bin"
+        pi_rc=0; pi_npm_version "$pi_bin" || pi_rc=$?
+        if [ "$pi_rc" = 1 ]; then
+          echo "  WARN Pi at $pi_bin is not the required npm package layout ($PI_NPM_PROBLEM)"
+        elif [ "$pi_rc" = 3 ]; then
+          echo "  WARN $PI_NPM_PROBLEM"
+        elif [ "$pi_rc" != 0 ]; then
+          echo "  WARN Pi version unavailable: $PI_NPM_PROBLEM"
+        elif pi_version_at_least "$PI_NPM_VERSION" "$PI_MIN_VERSION"; then
+          echo "  ok   Pi CLI present: $pi_bin ($PI_NPM_VERSION; minimum $PI_MIN_VERSION)"
         else
-          echo "  WARN Pi version mismatch: expected 1.6.0, found ${pi_version:-unknown} at $pi_bin"
+          echo "  WARN $(pi_too_old_hint "$PI_NPM_VERSION" "$PI_MIN_VERSION"): $pi_bin"
         fi
         ;;
     esac

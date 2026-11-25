@@ -1,19 +1,37 @@
 #!/usr/bin/env bash
 # Integration test for the public Pi Codex subagent installer. Uses a temp HOME
-# and a fake Pi CLI to verify the exact package pin through `./dot pi subagents`.
+# and a fake global npm Pi to verify the exact package pin and the minimum Pi
+# version through `./dot pi subagents`. Uses the private scaffold when one is
+# configured, otherwise a minimal public fixture (placeholder routing assets),
+# so CI exercises the gates too.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/scripts/lib/local-env.sh"
 load_local_env || true
-SCAFFOLD="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
-if [ ! -f "$SCAFFOLD/agent/pi-codex-subagents/SYSTEM.md" ]; then
-  printf '%s\n' 'skip Pi subagents test (no scaffold source; set DOTFILES_PI_SCAFFOLD_DIR)'
-  exit 0
-fi
-export DOTFILES_PI_SCAFFOLD_DIR="$SCAFFOLD"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+SCAFFOLD="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
+if [ ! -f "$SCAFFOLD/agent/pi-codex-subagents/SYSTEM.md" ]; then
+  SCAFFOLD="$TMP/fixture-scaffold"
+  for asset in pi-codex-subagents/SYSTEM.md pi-codex-subagents/config.json \
+    pi-codex-subagents/agents/engineer.md pi-codex-subagents/agents/architect.md \
+    pi-codex-subagents/agents/analyst.md pi-codex-subagents/agents/reviewer.md \
+    pi-codex-subagents/agents/sol-reviewer.md pi-codex-subagents/agents/claude-reviewer.md \
+    pi-codex-subagents/agents/writer.md pi-codex-subagents/agents/adjudicator.md \
+    pi-codex-subagents/agents/fast.md skills/subagent-routing/SKILL.md \
+    skills/coding-agent-account-routing/SKILL.md; do
+    mkdir -p "$(dirname "$SCAFFOLD/agent/$asset")"
+    printf 'fixture %s\n' "$asset" > "$SCAFFOLD/agent/$asset"
+  done
+  printf '%s\n' 'using the public fixture scaffold (no private scaffold configured)'
+fi
+export DOTFILES_PI_SCAFFOLD_DIR="$SCAFFOLD"
+. "$ROOT/scripts/lib/pi-cli.sh"
+PI_PACKAGE_JSON="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
+set_pi_version() {  # the fake Pi's version lives in its package.json, as npm installs it
+  printf '{"name": "@earendil-works/pi-coding-agent", "version": "%s"}\n' "$1" > "$PI_PACKAGE_JSON"
+}
 
 AGENT_DIR="$TMP/.pi/agent"
 FAKE_PI="$TMP/bin/pi"
@@ -52,8 +70,8 @@ set -euo pipefail
 : "${PI_CODING_AGENT_DIR:?}"
 : "${PI_TEST_CALLS:?}"
 if [ "${1:-}" = "--version" ]; then
-  printf '%s\n' "${PI_TEST_VERSION:-1.6.0}"
-  exit 0
+  echo "the installer must read package.json, not launch pi --version" >&2
+  exit 97
 fi
 printf '%s\n' "$*" >> "$PI_TEST_CALLS"
 [ "${1:-}" = install ] || { echo "unsupported fake Pi command" >&2; exit 2; }
@@ -84,6 +102,7 @@ printf '%s\n' '{"name":"@ogulcancelik/pi-codex-subagents","version":"0.3.5"}' \
 SH
 chmod +x "$FAKE_PI_TARGET"
 ln -s "$FAKE_PI_TARGET" "$FAKE_PI"
+set_pi_version "$PI_MIN_VERSION"
 
 HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
   PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --apply >/dev/null
@@ -155,12 +174,48 @@ if HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
 fi
 mv "$TMP/SYSTEM.md" "$AGENT_DIR/pi-codex-subagents/SYSTEM.md"
 
-if HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
-  PI_TEST_VERSION="0.81.1" PI_TEST_CALLS="$CALLS" \
-  "$ROOT/dot" pi subagents --check >/dev/null 2>&1; then
-  echo "expected incompatible Pi version check to fail" >&2
+set_pi_version 0.81.1
+if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --check 2>&1)"; then
+  echo "expected a Pi older than the minimum to fail the check" >&2
   exit 1
 fi
+printf '%s\n' "$check_output" | grep -Fq "older than the minimum $PI_MIN_VERSION" \
+  && printf '%s\n' "$check_output" | grep -Fq "pi update" \
+  || { printf '%s\n' "$check_output"; echo "expected the minimum-version failure to say to run pi update" >&2; exit 1; }
+# Newer than the minimum is compatible; versions compare numerically.
+set_pi_version 99.10.0
+check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --check 2>&1)" \
+  || { printf '%s\n' "$check_output"; echo "expected a newer Pi to pass the check" >&2; exit 1; }
+printf '%s\n' "$check_output" | grep -Fq "ok   compatible Pi runtime: 99.10.0 (minimum $PI_MIN_VERSION)" \
+  || { printf '%s\n' "$check_output"; echo "expected the check to report the installed version and minimum" >&2; exit 1; }
+# Unreadable metadata and a project-local install (not global npm) both fail.
+set_pi_version 1.6
+if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --check 2>&1)"; then
+  echo "expected unreadable Pi metadata to fail the check" >&2; exit 1
+fi
+printf '%s\n' "$check_output" | grep -Fq "FAIL Pi version unavailable" \
+  || { printf '%s\n' "$check_output"; echo "expected the check to say the Pi version is unavailable" >&2; exit 1; }
+printf '{"name": "evil-package", "version": "99.10.0"}\n' > "$PI_PACKAGE_JSON"
+if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --apply 2>&1)"; then
+  echo "expected a package.json naming another package to be refused" >&2; exit 1
+fi
+printf '%s\n' "$check_output" | grep -Fq "must be a global npm install" \
+  || { printf '%s\n' "$check_output"; echo "expected a name mismatch to be not-the-install" >&2; exit 1; }
+set_pi_version 99.10.0
+LOCAL_PI="$TMP/project/node_modules/.bin/pi"
+mkdir -p "$TMP/project/node_modules/@earendil-works" "$(dirname "$LOCAL_PI")"
+cp -R "$TMP/lib/node_modules/@earendil-works/pi-coding-agent" "$TMP/project/node_modules/@earendil-works/"
+ln -s ../@earendil-works/pi-coding-agent/dist/bundle/cli.js "$LOCAL_PI"
+if HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$LOCAL_PI" PI_TEST_CALLS="$CALLS" \
+  "$ROOT/dot" pi subagents --apply >/dev/null 2>&1; then
+  echo "expected a project-local Pi to be refused" >&2; exit 1
+fi
+test "$(wc -l < "$CALLS")" -eq 3  # two installs above plus the injected failure; none since
+set_pi_version "$PI_MIN_VERSION"
 
 python3 - "$AGENT_DIR/settings.json" <<'PY'
 import json
@@ -203,10 +258,10 @@ fi
 
 BAD_PI="$TMP/badbin/pi"
 mkdir -p "$(dirname "$BAD_PI")"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 1.6.0' > "$BAD_PI"
+printf '%s\n' '#!/usr/bin/env bash' "echo $PI_MIN_VERSION" > "$BAD_PI"
 chmod +x "$BAD_PI"
 doctor_output="$(HOME="$TMP" DOTFILES_PI_CONFIG_DIR="$TMP/no-pi-config" PATH="$TMP/badbin:$PATH" "$ROOT/dot" pi doctor)"
 printf '%s\n' "$doctor_output" | grep -Fq \
-  'WARN Pi 1.6.0 is not the required npm package layout'
+  "WARN Pi at $BAD_PI is not the required npm package layout"
 
-printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets/runtime'
+printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets and the minimum Pi runtime'

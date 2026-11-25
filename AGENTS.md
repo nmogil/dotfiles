@@ -31,7 +31,8 @@ and dispatches to them.
 | Obsidian sync | `setup-obsidian-sync.sh` |
 | VPS memory/systemd guardrails | `server/` |
 | Health checks | `scripts/doctor.sh` |
-| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
+| One-command machine update (`./dot update`) | `scripts/update.sh` (fetch the tracked branch only, fast-forward to that commit, `pi update --self` (global npm installs only), then re-verify checkouts + freshness, hash baseline/overlay files against the verified commit, then a guarded Pi apply (`--protect-local`) + Mac Rex config, cheap checks) |
+| Pi CLI minimum version | `PI_MIN_VERSION` in `scripts/lib/pi-cli.sh` (bash compare); `scripts/lib/pi_version.py` (Python, also the global-npm/package.json reader). Pi floats to latest; gates are "installed >= minimum", never exact; versions come from package.json — read-only paths never launch Pi |
 | CI (Ubuntu + macOS) | `.github/workflows/ci.yml` |
 | Herdr portable config | `templates/herdr/` + `scripts/setup-herdr-config.sh` |
 | Hermes portable config | `templates/hermes/config.portable.yaml` + `scripts/setup-hermes-config.sh` |
@@ -88,7 +89,8 @@ bash -n dot scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes
   setup.sh setup-linux.sh clone-repos.sh \
   harden-vps.sh setup-obsidian-sync.sh   # syntax-check shell scripts
 bash scripts/tests/local-env.test.sh
-bash scripts/tests/update.test.sh          # ./dot update: temp repos/HOME + stubbed dot
+bash scripts/tests/update.test.sh          # ./dot update: temp repos/HOME + stubbed dot and pi
+bash scripts/tests/pi-version.test.sh      # Pi minimum-version compare + packages check/doctor gates
 bash scripts/tests/agent-configs.test.sh      # local override + portable defaults
 bash scripts/tests/pi-profiles.test.sh     # profile isolation + idempotence
 bash scripts/tests/claude-hooks.test.sh    # Claude memory-hook merge + idempotence
@@ -104,7 +106,7 @@ node scripts/tests/rex-pane-session.test.mjs     # Pi pane recorder
 
 CI (`.github/workflows/ci.yml`) runs `bash -n` on every tracked shell script and
 all `scripts/tests/*.test.{sh,py,mjs}` on Ubuntu and macOS for every PR and push
-to `main` (plus `update.test.sh` under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
+to `main` (plus `update.test.sh` and `pi-version.test.sh` under macOS `/bin/bash` 3.2). Tests that need what CI lacks — the private companion repo, an
 installed Pi, a live Rex, Linux `/proc` (skipped on macOS), PyYAML — print a
 skip reason instead of failing. Keep new tests hermetic (temp `HOME`, stubs).
 

@@ -39,7 +39,7 @@ jobs:
 
       - name: shellcheck (dot update)
         if: runner.os == 'Linux'
-        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh scripts/setup-rexboard.sh scripts/tests/rexboard.test.sh
+        run: shellcheck -x --severity=warning scripts/update.sh scripts/tests/update.test.sh scripts/setup-rexboard.sh scripts/tests/rexboard.test.sh scripts/lib/pi-cli.sh scripts/tests/pi-version.test.sh
 
       - name: Shell tests
         run: |
@@ -58,6 +58,7 @@ jobs:
           /bin/bash --version | head -n 1
           /bin/bash scripts/tests/update.test.sh
           /bin/bash scripts/tests/rexboard.test.sh
+          /bin/bash scripts/tests/pi-version.test.sh
 
       - name: Python tests
         run: |

@@ -28,6 +28,8 @@ script_dir() {
 ROOT="$(cd "$(script_dir)/.." && pwd)"
 # shellcheck source=lib/local-env.sh
 . "$ROOT/scripts/lib/local-env.sh"
+# shellcheck source=lib/pi-cli.sh
+. "$ROOT/scripts/lib/pi-cli.sh"
 dotfiles_load_config
 
 SRC="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
@@ -57,8 +59,9 @@ Usage: scripts/setup-pi-agent.sh [--apply] [--force] [--install] [--dry-run]
                that already exist.
   --force      With --apply: overwrite existing files, backing each up first
                to <file>.bak.<timestamp>.
-  --install    Print/run the pinned npm Pi CLI install and migrate an existing
-               Vite+ Pi global package after confirmation. Not run during --apply.
+  --install    Print/run the npm install of the latest Pi CLI (must be at least
+               $PI_MIN_VERSION) and migrate an existing Vite+ Pi global package
+               after confirmation. Not run during --apply.
   -h, --help   This help.
 
 Source: $SRC
@@ -88,15 +91,6 @@ resolve_path() {
   printf '%s/%s\n' "$dir" "$(basename "$src")"
 }
 
-pi_uses_npm_layout() {
-  local resolved
-  resolved="$(resolve_path "$1" 2>/dev/null || true)"
-  case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 find_standalone_npm() {
   local dir node_bin npm_cli version
   if [ -n "${PI_NPM_NODE:-}" ] || [ -n "${PI_NPM_CLI:-}" ]; then
@@ -123,14 +117,14 @@ find_standalone_npm() {
 }
 
 install_cli() {
-  local package="@earendil-works/pi-coding-agent@1.6.0"
-  local package_name="@earendil-works/pi-coding-agent"
-  local current="" resolved="" npm_prefix="" npm_pi=""
+  local package="$PI_PACKAGE@latest"
+  local package_name="$PI_PACKAGE"
+  local current="" resolved="" npm_prefix="" npm_pi="" version="" smoke="" smoke_rc=0
   local NPM_NODE="" NPM_CLI=""
 
   cat <<EOF
 == Install the Pi CLI (npm) ==
-Pinned command:
+Command (latest release; at least $PI_MIN_VERSION is required):
 
   npm install -g $package
 
@@ -148,17 +142,22 @@ EOF
     case "$current:$resolved" in
       *"/.vite-plus/"*) echo "Current Pi uses Vite+: $current (migration needed)" ;;
       *)
-        if [ "$(pi --version 2>/dev/null || true)" = "1.6.0" ] \
-          && pi_uses_npm_layout "$current"; then
-          echo "Pi npm installation already active: $current (1.6.0)"
-          return 0
+        if pi_npm_version "$current"; then
+          version="$PI_NPM_VERSION"
+          if pi_version_at_least "$version" "$PI_MIN_VERSION"; then
+            echo "Pi npm installation already active: $current ($version; minimum $PI_MIN_VERSION)"
+            echo "./dot update keeps it on the latest release (pi update --self)."
+            return 0
+          fi
+          echo "$(pi_too_old_hint "$version" "$PI_MIN_VERSION"); it will be replaced: $current"
+        else
+          echo "Current Pi will be replaced: $PI_NPM_PROBLEM"
         fi
-        echo "Current Pi is not the pinned npm package and will be replaced: $current"
         ;;
     esac
   fi
 
-  printf "Install pinned npm Pi and remove the Vite+ Pi package? [y/N] "
+  printf "Install the latest npm Pi and remove the Vite+ Pi package? [y/N] "
   read -r ans
   case "$ans" in
     y|Y)
@@ -178,11 +177,24 @@ EOF
         echo "setup-pi-agent: npm installed Pi but no executable was found at $npm_pi" >&2
         exit 1
       }
-      [ "$($npm_pi --version)" = "1.6.0" ] \
-        && pi_uses_npm_layout "$npm_pi" || {
-        echo "setup-pi-agent: npm Pi version/layout verification failed" >&2
+      pi_npm_version "$npm_pi" || {
+        echo "setup-pi-agent: npm Pi verification failed: $PI_NPM_PROBLEM" >&2
         exit 1
       }
+      version="$PI_NPM_VERSION"
+      pi_version_at_least "$version" "$PI_MIN_VERSION" || {
+        echo "setup-pi-agent: $(pi_too_old_hint "$version" "$PI_MIN_VERSION")" >&2
+        exit 1
+      }
+      # Smoke test (an install path, so launching Pi is fine here): the new
+      # absolute executable must start and report the installed version
+      # BEFORE the working Vite+ Pi is removed. On failure the old Pi stays.
+      smoke_rc=0
+      smoke="$(cd "$HOME" && "$npm_pi" --version 2>/dev/null < /dev/null)" || smoke_rc=$?
+      if [ "$smoke_rc" -ne 0 ] || [ "$smoke" != "$version" ]; then
+        echo "setup-pi-agent: the new Pi did not start: $npm_pi --version exited $smoke_rc and printed '${smoke:0:80}' (expected $version); the existing Pi was left in place" >&2
+        exit 1
+      fi
 
       if [ -e "$HOME/.vite-plus/bin/pi" ] || [ -L "$HOME/.vite-plus/bin/pi" ]; then
         command -v vp >/dev/null 2>&1 || {
@@ -203,12 +215,13 @@ EOF
           exit 1
           ;;
       esac
-      [ "$(pi --version 2>/dev/null || true)" = "1.6.0" ] \
-        && pi_uses_npm_layout "$current" || {
-        echo "setup-pi-agent: active Pi is not the pinned npm version/layout" >&2
+      version=""
+      ! pi_npm_version "$current" || version="$PI_NPM_VERSION"
+      pi_version_at_least "$version" "$PI_MIN_VERSION" || {
+        echo "setup-pi-agent: active Pi ($current, ${version:-unknown}) is not a global npm install at version >= $PI_MIN_VERSION${PI_NPM_PROBLEM:+: $PI_NPM_PROBLEM}" >&2
         exit 1
       }
-      echo "Pi npm installation active: $(command -v pi) ($(pi --version))"
+      echo "Pi npm installation active: $current ($version)"
       ;;
     *) echo "Skipped. Run 'npm install -g $package' when ready." ;;
   esac

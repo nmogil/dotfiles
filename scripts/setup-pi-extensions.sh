@@ -17,7 +17,7 @@ case "$MODE" in
 esac
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
 python3 - "$MODE" "${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}" \
-  "${PI_CODING_AGENT_DIR:-$PI_ROOT/agent}" "$PI_ROOT/agent" "${PI_BIN:-pi}" <<'PY'
+  "${PI_CODING_AGENT_DIR:-$PI_ROOT/agent}" "$PI_ROOT/agent" "${PI_BIN:-pi}" "$ROOT/scripts/lib" <<'PY'
 import json
 import os
 import re
@@ -27,7 +27,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-mode, scaffold, agent_dir, personal_dir, pi = sys.argv[1:]
+mode, scaffold, agent_dir, personal_dir, pi, lib = sys.argv[1:]
+sys.dont_write_bytecode = True  # never write bytecode into the repo
+sys.path.insert(0, lib)
+import pi_version  # noqa: E402
 scaffold, agent = Path(scaffold), Path(agent_dir)
 settings_path = agent / "settings.json"
 template = json.loads((scaffold / "agent/settings.example.json").read_text())
@@ -92,12 +95,17 @@ if mode == "--check":
 if mode == "--dry-run" or not failed:
     raise SystemExit(0)
 
-expected_pi = json.loads((scaffold / "package.json").read_text())["dependencies"]["@earendil-works/pi-coding-agent"]
-pi_path = Path(shutil.which(pi) or pi).resolve()
-if not re.search(r"/node_modules/@earendil-works/pi-coding-agent/dist/(?:bundle/)?cli\.js$", str(pi_path)) or "/.vite-plus/" in str(pi_path):
-    raise SystemExit("Pi must use the npm layout; run ./dot pi install first")
-if subprocess.check_output([pi, "--version"], text=True).strip() != expected_pi:
-    raise SystemExit(f"Run ./dot pi install first (requires Pi {expected_pi})")
+# The scaffold's Pi dependency is a MINIMUM: Pi floats to the latest release.
+minimum_pi = json.loads((scaffold / "package.json").read_text())["dependencies"]["@earendil-works/pi-coding-agent"]
+# Only a global npm install is supported; its version comes from package.json
+# (Pi is not launched to ask), and the same absolute path runs the installs.
+pi = shutil.which(pi) or pi
+try:
+    pi_version.require(pi_version.installed_version(pi), minimum_pi)
+except pi_version.NotNpmLayout as error:
+    raise SystemExit(f"Pi must be a global npm install; run ./dot pi install first: {error}")
+except ValueError as error:
+    raise SystemExit(str(error))
 backups = agent / "backups"
 backups.mkdir(parents=True, exist_ok=True)
 backup = Path(tempfile.mkdtemp(prefix="pi-core-", dir=backups))
