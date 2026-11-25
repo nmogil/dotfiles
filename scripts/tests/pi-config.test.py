@@ -207,9 +207,46 @@ class PiConfigTest(unittest.TestCase):
         self.run_cli("apply", self.vps, apply=True)
         self.assertEqual((self.vps / ".pi/agent/skills/test/local-note.txt").read_text(), "keep")
 
-    def test_version_mismatch_refuses_apply(self):
+    def set_pi_version(self, version):
+        (self.root / "bin/pi").write_text(f"#!/bin/sh\nprintf '{version}\\n'\n")
+
+    def test_older_pi_than_the_minimum_refuses_apply(self):
+        self.run_cli("capture", apply=True)  # manifest piVersion (the minimum) = 1.4.0
+        self.set_pi_version("1.3.9")
+        result = self.run_cli("apply", self.vps, apply=True, expected=2)
+        self.assertFalse(self.vps.exists())
+        self.assertIn("Pi CLI: 1.3.9 (minimum 1.4.0)", result.stdout)
+        self.assertIn("older than the minimum 1.4.0", result.stderr)
+        self.assertIn("pi update", result.stderr)
+        self.assertNotIn("baseline version", result.stdout + result.stderr)
+
+    def test_newer_pi_than_the_minimum_is_accepted(self):
         self.run_cli("capture", apply=True)
-        (self.root / "bin/pi").write_text("#!/bin/sh\nprintf '0.0.1\\n'\n")
+        self.set_pi_version("1.4.1")
+        result = self.run_cli("apply", self.vps, apply=True)
+        self.assertIn("Pi CLI: 1.4.1 (minimum 1.4.0)", result.stdout)
+        self.assertTrue((self.vps / ".pi/agent/extensions/test.ts").exists())
+        self.run_cli("check", self.vps)
+
+    def test_pi_equal_to_the_minimum_is_accepted(self):
+        self.run_cli("capture", apply=True)
+        result = self.run_cli("apply", self.vps, apply=True)
+        self.assertIn("Pi CLI: 1.4.0 (minimum 1.4.0)", result.stdout)
+
+    def test_minimum_compares_numerically_not_lexically(self):
+        self.set_pi_version("1.9.0")
+        self.run_cli("capture", apply=True)  # minimum 1.9.0
+        self.set_pi_version("1.10.0")
+        self.run_cli("apply", self.vps, apply=True)
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        manifest["piVersion"] = "1.10.0"
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        self.set_pi_version("1.9.0")
+        self.run_cli("check", self.vps, expected=2)
+
+    def test_unparsable_installed_version_is_refused(self):
+        self.run_cli("capture", apply=True)
+        self.set_pi_version("1.4.0-beta.1")
         self.run_cli("apply", self.vps, apply=True, expected=2)
         self.assertFalse(self.vps.exists())
 
@@ -367,6 +404,39 @@ class PiConfigTest(unittest.TestCase):
         self.run_cli("capture", apply=True)
         self.run_cli("check", self.vps, expected=2, extra_args=("--protect-local",))
         self.run_cli("apply", self.vps, expected=2, extra_args=("--previous-bundle", str(self.bundle)))
+
+
+class PiVersionHelperTest(unittest.TestCase):
+    """The one Python version-compare helper (scripts/lib/pi_version.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        import sys
+        path = SCRIPT.parent / "lib" / "pi_version.py"
+        spec = importlib.util.spec_from_file_location("pi_version", path)
+        cls.module = importlib.util.module_from_spec(spec)
+        dont_write = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.module)
+        finally:
+            sys.dont_write_bytecode = dont_write
+
+    def test_at_least(self):
+        at_least = self.module.at_least
+        for installed, minimum in (("1.6.0", "1.6.0"), ("1.6.1", "1.6.0"), ("1.7.0", "1.6.9"),
+                                   ("2.0.0", "1.99.99"), ("1.10.0", "1.9.0"), ("1.6.10", "1.6.9")):
+            self.assertTrue(at_least(installed, minimum), (installed, minimum))
+        for installed, minimum in (("1.5.9", "1.6.0"), ("1.6.0", "1.6.1"), ("1.9.0", "1.10.0"),
+                                   ("0.81.1", "1.6.0")):
+            self.assertFalse(at_least(installed, minimum), (installed, minimum))
+
+    def test_parse_rejects_non_release_versions(self):
+        self.assertEqual(self.module.parse("1.10.0"), (1, 10, 0))
+        for junk in ("", "1.6", "1.6.0.1", "v1.6.0", "1.6.0-beta.1", " 1.6.0", "1.x.0", None, 160):
+            with self.assertRaises(ValueError, msg=repr(junk)):
+                self.module.parse(junk)
 
 
 if __name__ == "__main__":

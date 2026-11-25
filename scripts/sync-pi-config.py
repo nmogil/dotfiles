@@ -14,6 +14,12 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
+# Shared Pi version helper; never write bytecode into the repo (a dry run of
+# ./dot update must write nothing).
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import pi_version  # noqa: E402
+
 SETTINGS = ".pi/agent/settings.json"
 OWNERSHIP = ".local/state/dotfiles/pi-config-files.json"
 # User-approved floating exception; other packages still require exact versions.
@@ -314,11 +320,10 @@ def main() -> int:
         elif target.exists() and target.read_bytes() == data:
             continue
         changes[name] = data
+    # The manifest's piVersion is a MINIMUM: Pi floats to the latest release.
     version = subprocess.check_output(["pi", "--version"], text=True).strip()
-    version_ok = version == manifest["piVersion"]
-    print(f"Pi CLI: {version} (baseline {manifest['piVersion']})")
-    if not version_ok:
-        raise ValueError("Pi version differs; install the baseline version first")
+    print(f"Pi CLI: {version} (minimum {manifest['piVersion']})")
+    pi_version.require(version, manifest["piVersion"])
     package_drift = []
     for source in package_sources:
         if source in FLOATING_PACKAGES:

@@ -17,13 +17,14 @@ script_dir() {
 ROOT="$(cd "$(script_dir)/.." && pwd)"
 # shellcheck source=lib/local-env.sh
 . "$ROOT/scripts/lib/local-env.sh"
+# shellcheck source=lib/pi-cli.sh
+. "$ROOT/scripts/lib/pi-cli.sh"
 load_local_env || true
 PI_SCAFFOLD_DIR="${DOTFILES_PI_SCAFFOLD_DIR:-$ROOT/templates/pi}"
 TEMPLATE_AGENT_DIR="$PI_SCAFFOLD_DIR/agent"
 PACKAGE_NAME="@ogulcancelik/pi-codex-subagents"
 PACKAGE_VERSION="0.3.5"
 PACKAGE_SOURCE="npm:$PACKAGE_NAME@$PACKAGE_VERSION"
-EXPECTED_PI_VERSION="1.6.0"
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$PI_ROOT/agent}"
 PI_BIN="${PI_BIN:-pi}"
@@ -206,17 +207,22 @@ remove_legacy_settings_packages() {
   fi
 }
 
+# pi_runtime_matches: Pi uses the npm layout at version >= PI_MIN_VERSION.
+# Sets PI_RUNTIME_VERSION and, on failure, PI_RUNTIME_PROBLEM.
+PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
 pi_runtime_matches() {
-  local pi_path resolved version
+  local pi_path
+  PI_RUNTIME_VERSION="" PI_RUNTIME_PROBLEM=""
   pi_path="$(command -v "$PI_BIN" 2>/dev/null || true)"
-  [ -n "$pi_path" ] || return 1
-  resolved="$(node -e 'const fs = require("node:fs"); try { process.stdout.write(fs.realpathSync(process.argv[1])); } catch { process.exit(1); }' "$pi_path" 2>/dev/null || true)"
-  case "$resolved" in
-    */node_modules/@earendil-works/pi-coding-agent/dist/cli.js|*/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js) ;;
-    *) return 1 ;;
-  esac
-  version="$("$PI_BIN" --version 2>/dev/null || true)"
-  [ "$version" = "$EXPECTED_PI_VERSION" ]
+  if [ -z "$pi_path" ] || ! pi_uses_npm_layout "$pi_path"; then
+    PI_RUNTIME_PROBLEM="Pi must use the npm layout at version >= $PI_MIN_VERSION (./dot pi install)"
+    return 1
+  fi
+  PI_RUNTIME_VERSION="$("$PI_BIN" --version 2>/dev/null || true)"
+  if ! pi_version_at_least "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION"; then
+    PI_RUNTIME_PROBLEM="$(pi_too_old_hint "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION")"
+    return 1
+  fi
 }
 
 settings_has_package() {
@@ -257,9 +263,9 @@ NODE
 check_installation() {
   local failed=0
   if pi_runtime_matches; then
-    echo "  ok   compatible Pi runtime: $EXPECTED_PI_VERSION"
+    echo "  ok   compatible Pi runtime: $PI_RUNTIME_VERSION (minimum $PI_MIN_VERSION)"
   else
-    echo "  FAIL Pi must use npm layout at exact version $EXPECTED_PI_VERSION"
+    echo "  FAIL $PI_RUNTIME_PROBLEM"
     failed=1
   fi
 
@@ -304,7 +310,7 @@ case "$MODE" in
     cat <<EOF
 
 Would:
-  1. install $PACKAGE_SOURCE with Pi $EXPECTED_PI_VERSION;
+  1. install $PACKAGE_SOURCE with Pi >= $PI_MIN_VERSION;
   2. remove legacy pi-subagents/pi-herdr package entries; and
   3. archive active legacy routing assets under $LEGACY_BACKUP_DIR.
 
@@ -330,7 +336,7 @@ EOF
       exit 1
     }
     pi_runtime_matches || {
-      echo "setup-pi-subagents: Pi must use npm layout at exact version $EXPECTED_PI_VERSION" >&2
+      echo "setup-pi-subagents: $PI_RUNTIME_PROBLEM" >&2
       exit 1
     }
     node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 19)) process.exit(1)' || {

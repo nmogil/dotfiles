@@ -3,10 +3,12 @@
 
 @anthropic-ai/claude-code
 @openai/codex
-@earendil-works/pi-coding-agent@1.6.0
+@earendil-works/pi-coding-agent  # floats to latest; must be >= the minimum in scripts/lib/pi-cli.sh
 hunkdiff              # Linux path for hunk; macOS gets it from the Brewfile
 obsidian-headless
 
-# Pi is installed by `./dot pi install`, pinned there to the version verified
-# with runtime-importing extensions. npm's standard global layout is required;
-# the Vite+ global layout currently breaks runtime imports used by Pi extensions.
+# Pi is installed by `./dot pi install` (npm, @latest) and kept on the latest
+# release by `./dot update` (pi update --self). `./dot packages check` requires
+# at least PI_MIN_VERSION (scripts/lib/pi-cli.sh). npm's standard global layout
+# is required; the Vite+ global layout currently breaks runtime imports used by
+# Pi extensions.

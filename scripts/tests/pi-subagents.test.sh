@@ -14,6 +14,8 @@ fi
 export DOTFILES_PI_SCAFFOLD_DIR="$SCAFFOLD"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+. "$ROOT/scripts/lib/pi-cli.sh"
+export PI_TEST_VERSION="${PI_TEST_VERSION:-$PI_MIN_VERSION}"
 
 AGENT_DIR="$TMP/.pi/agent"
 FAKE_PI="$TMP/bin/pi"
@@ -52,7 +54,7 @@ set -euo pipefail
 : "${PI_CODING_AGENT_DIR:?}"
 : "${PI_TEST_CALLS:?}"
 if [ "${1:-}" = "--version" ]; then
-  printf '%s\n' "${PI_TEST_VERSION:-1.6.0}"
+  printf '%s\n' "${PI_TEST_VERSION:?}"
   exit 0
 fi
 printf '%s\n' "$*" >> "$PI_TEST_CALLS"
@@ -155,12 +157,21 @@ if HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
 fi
 mv "$TMP/SYSTEM.md" "$AGENT_DIR/pi-codex-subagents/SYSTEM.md"
 
-if HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+if check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
   PI_TEST_VERSION="0.81.1" PI_TEST_CALLS="$CALLS" \
-  "$ROOT/dot" pi subagents --check >/dev/null 2>&1; then
-  echo "expected incompatible Pi version check to fail" >&2
+  "$ROOT/dot" pi subagents --check 2>&1)"; then
+  echo "expected a Pi older than the minimum to fail the check" >&2
   exit 1
 fi
+printf '%s\n' "$check_output" | grep -Fq "older than the minimum $PI_MIN_VERSION" \
+  && printf '%s\n' "$check_output" | grep -Fq "pi update" \
+  || { printf '%s\n' "$check_output"; echo "expected the minimum-version failure to say to run pi update" >&2; exit 1; }
+# Newer than the minimum is compatible; versions compare numerically.
+check_output="$(HOME="$TMP" PI_CODING_AGENT_DIR="$AGENT_DIR" PI_BIN="$FAKE_PI" \
+  PI_TEST_VERSION="99.10.0" PI_TEST_CALLS="$CALLS" "$ROOT/dot" pi subagents --check 2>&1)" \
+  || { printf '%s\n' "$check_output"; echo "expected a newer Pi to pass the check" >&2; exit 1; }
+printf '%s\n' "$check_output" | grep -Fq "ok   compatible Pi runtime: 99.10.0 (minimum $PI_MIN_VERSION)" \
+  || { printf '%s\n' "$check_output"; echo "expected the check to report the installed version and minimum" >&2; exit 1; }
 
 python3 - "$AGENT_DIR/settings.json" <<'PY'
 import json
@@ -203,10 +214,10 @@ fi
 
 BAD_PI="$TMP/badbin/pi"
 mkdir -p "$(dirname "$BAD_PI")"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 1.6.0' > "$BAD_PI"
+printf '%s\n' '#!/usr/bin/env bash' "echo $PI_MIN_VERSION" > "$BAD_PI"
 chmod +x "$BAD_PI"
 doctor_output="$(HOME="$TMP" DOTFILES_PI_CONFIG_DIR="$TMP/no-pi-config" PATH="$TMP/badbin:$PATH" "$ROOT/dot" pi doctor)"
 printf '%s\n' "$doctor_output" | grep -Fq \
-  'WARN Pi 1.6.0 is not the required npm package layout'
+  "WARN Pi $PI_MIN_VERSION is not the required npm package layout"
 
-printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets/runtime'
+printf '%s\n' 'ok   Pi Codex subagent installer migrates legacy state and verifies exact assets and the minimum Pi runtime'

@@ -21,7 +21,7 @@ fallback when the variable is unset.
 ./dot pi profiles --apply     # prepare separate personal/work profiles
 ./dot pi subagents --dry-run  # preview pinned Pi subagent package installation
 ./dot pi subagents --apply    # install the pinned Codex subagent package
-./dot pi install              # install pinned npm Pi; migrates Vite+ Pi after confirmation
+./dot pi install              # install the latest npm Pi; migrates Vite+ Pi after confirmation
 ```
 
 The scaffold's own README covers the post-copy manual steps
@@ -198,16 +198,22 @@ reviewed, not treated as runtime failure.
 
 ## Installing the pi CLI
 
-Install the tested npm distribution:
+Install the latest npm distribution:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@0.84.1
+npm install -g @earendil-works/pi-coding-agent@latest
 ```
 
-`./dot pi install` prints the command and prompts before running it. It requires
+`./dot pi install` prints the command and prompts before running it. The
+installed version must be at least `PI_MIN_VERSION` (`scripts/lib/pi-cli.sh`);
+an active npm Pi that already meets it is left alone. `./dot update` keeps Pi on
+the latest release with `pi update --self`, and `./dot packages check`,
+`./dot pi doctor`, `./dot pi subagents`, and `./dot pi extensions` accept any
+version at or above the minimum (the extensions minimum is the scaffold's Pi
+dependency). The installer requires
 Node.js >=22.19 and npm outside Vite+'s managed runtime (system/NodeSource on
 Linux or Homebrew on macOS). If the system global prefix is not writable, the
-installer uses the user-owned `~/.local` prefix. After the npm executable passes a version check,
+installer uses the user-owned `~/.local` prefix. After the npm executable passes the layout and minimum-version checks,
 it removes only Vite+'s global Pi package
 with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
 available for project tooling.

@@ -448,7 +448,17 @@ Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
    remaining steps; it receives the checkout paths, pre- and post-update
    commit IDs, and remotes, and re-verifies them (missing or mismatched state
    means "don't apply"; freshness it cannot re-establish needs `--yes`).
-2. **Pi config** — right before applying, both checkouts are re-verified (same
+2. **Pi CLI** — first in the Pi section: `pi update --self --no-approve`
+   (run from `$HOME`) moves Pi to the latest release, reported as
+   `Pi CLI — 1.6.0 → 1.6.1` or `Pi CLI — 1.6.1 (latest)`. It runs only when
+   `pi` is installed with the npm package layout (otherwise a skip line), does
+   not depend on the repos, and a failure is a warning, not a stop: the Pi
+   config version gate below decides. Running Pi sessions keep the old version
+   until you restart them. `--dry-run` never runs it. The dotfiles require
+   *at least* a minimum Pi version (the baseline manifest's `piVersion`, the
+   scaffold's dependency, and `PI_MIN_VERSION` in `scripts/lib/pi-cli.sh`),
+   never an exact one.
+3. **Pi config** — right before applying, both checkouts are re-verified (same
    path and remote, clean, HEAD is the commit just checked, which contains the
    fetched remote-tracking ref recorded in `FETCH_HEAD` and descends from the
    pre-update commit). The baseline (`DOTFILES_PI_CONFIG_DIR`, default
@@ -474,9 +484,10 @@ Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
    or rerun with `--yes`. Package/dependency drift never blocks. Apply backs up
    every file it replaces under `~/.local/state/dotfiles/pi-config-backups/`.
    Apply and packages are separate steps: if packages fails, Pi is left
-   partially applied (new config, old packages) until you fix it and rerun. It
-   never updates the Pi CLI itself; restart Pi sessions to load package changes.
-3. **Rex** — Mac only, when this repo is verified, plus the private repo when
+   partially applied (new config, old packages) until you fix it and rerun.
+   Apply refuses a Pi older than the baseline's minimum (run `pi update
+   --self`); restart Pi sessions to load package changes.
+4. **Rex** — Mac only, when this repo is verified, plus the private repo when
    a private Rex overlay exists (`DOTFILES_REX_OVERLAY_DIR`, default `rex/`
    beside the scaffold; its files must likewise match the verified commit):
    `./dot rex config --apply` then `--check`. Existing files that differ
@@ -489,7 +500,7 @@ Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
 
 When a repo is skipped or not verified, or its fetch fails, the applies that
 depend on it are skipped with a `!` line; read-only checks still run.
-`--dry-run` never fetches and writes nothing — not to either repo and not even
+`--dry-run` never fetches, never updates Pi, and writes nothing — not to either repo and not even
 temp files (command output is kept in memory); `--fetch` updates only the
 tracked upstream branches' remote-tracking refs (and `FETCH_HEAD`).
 

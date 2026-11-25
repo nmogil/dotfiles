@@ -4,9 +4,10 @@ The Mac's live **personal** Pi configuration is the authority. Capture reviewed
 changes into the private dotfiles companion, then apply that baseline on other
 machines. Do not copy the whole `~/.pi` directory or sync profiles bidirectionally.
 
-The sync tooling requires Python 3.9+ and an installed Pi CLI matching the
-baseline version. A missing/mismatched CLI fails the check deliberately; it does
-not silently downgrade or install Pi.
+The sync tooling requires Python 3.9+ and an installed Pi CLI at least the
+baseline's minimum version. A missing or older CLI fails the check deliberately
+(run `pi update --self` or `./dot update`); the sync tool itself never installs
+or downgrades Pi.
 
 ## Ownership
 
@@ -95,9 +96,13 @@ Package drift never blocks. Apply backs up what it replaces; a failed
 `packages` step leaves Pi partially applied until rerun. See the README's
 "Updating".
 
-The installed Pi CLI must match `manifest.json`'s `piVersion`. Both machines
-currently use **1.6.0**; the public CLI installer and package manifest pin that
-version too. Change those pins deliberately when upgrading the source machine.
+`manifest.json`'s `piVersion` is a **minimum**: the installed Pi CLI must be
+that version or newer (numeric `x.y.z` compare). Pi itself floats to the latest
+release — `./dot update` runs `pi update --self` before applying, and
+`./dot pi install` installs `@latest`. `capture` records the capturing machine's
+Pi version, so a capture on a newer Mac raises the minimum; other machines pick
+it up on their next `./dot update`. The public scripts' own floor is
+`PI_MIN_VERSION` in `scripts/lib/pi-cli.sh`.
 
 ## What is managed
 

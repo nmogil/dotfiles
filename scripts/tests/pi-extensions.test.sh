@@ -15,6 +15,9 @@ trap 'rm -rf "$TMP"' EXIT
 : > "$TMP/empty.env"
 export DOTFILES_LOCAL_ENV="$TMP/empty.env" PI_HOME="$TMP/.pi"
 export PI_BIN="$TMP/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" PI_TEST_CALLS="$TMP/calls"
+# The scaffold's Pi dependency is the minimum; the stub reports it by default.
+PI_MINIMUM="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["dependencies"]["@earendil-works/pi-coding-agent"])' "$SCAFFOLD/package.json")"
+export PI_TEST_VERSION="$PI_MINIMUM"
 AGENT="$PI_HOME/agent"
 export PI_CODING_AGENT_DIR="$AGENT"
 mkdir -p "$AGENT" "$(dirname "$PI_BIN")"
@@ -23,7 +26,7 @@ cp "$AGENT/settings.json" "$TMP/before.json"
 cat > "$PI_BIN" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "$1" = --version ]; then echo 1.6.0; exit 0; fi
+if [ "$1" = --version ]; then echo "$PI_TEST_VERSION"; exit 0; fi
 [ "$1" = install ] || exit 2
 [ "${PI_TEST_FAIL_INSTALL:-0}" != 1 ] || exit 42
 printf '%s\n' "$2" >> "$PI_TEST_CALLS"
@@ -57,7 +60,22 @@ test ! -e "$AGENT/backups"
 if "$ROOT/dot" pi extensions --check >/dev/null; then
   echo 'expected missing extension pins to fail check' >&2; exit 1
 fi
-"$ROOT/dot" pi extensions --apply >/dev/null
+# A Pi older than the minimum is refused before anything is installed.
+if older_out="$(PI_TEST_VERSION=0.0.1 "$ROOT/dot" pi extensions --apply 2>&1)"; then
+  echo 'expected a Pi older than the minimum to be refused' >&2; exit 1
+fi
+printf '%s\n' "$older_out" | grep -Fq "Pi 0.0.1 is older than the minimum $PI_MINIMUM" \
+  && printf '%s\n' "$older_out" | grep -Fq 'pi update' \
+  || { printf '%s\n' "$older_out"; echo 'expected the refusal to name the minimum and pi update' >&2; exit 1; }
+test ! -e "$PI_TEST_CALLS"
+cmp "$TMP/before.json" "$AGENT/settings.json"
+if PI_TEST_VERSION=1.0 "$ROOT/dot" pi extensions --apply >/dev/null 2>&1; then
+  echo 'expected an unparsable Pi version to be refused' >&2; exit 1
+fi
+test ! -e "$PI_TEST_CALLS"
+# Newer than the minimum is accepted (numeric compare: minor + 10).
+newer="$(python3 -c 'import sys; a, b, c = map(int, sys.argv[1].split(".")); print(f"{a}.{b + 10}.0")' "$PI_MINIMUM")"
+PI_TEST_VERSION="$newer" "$ROOT/dot" pi extensions --apply >/dev/null
 "$ROOT/dot" pi extensions --apply >/dev/null
 "$ROOT/dot" pi extensions --check >/dev/null
 test "$(wc -l < "$PI_TEST_CALLS")" -eq 5
@@ -116,7 +134,7 @@ fi
 test "$(wc -l < "$PI_TEST_CALLS")" -eq 7
 
 printf '%s\n' '{}' > "$FAIL/settings.json"
-printf '%s\n' '#!/usr/bin/env bash' 'echo 1.6.0' > "$TMP/not-npm-pi"
+printf '%s\n' '#!/usr/bin/env bash' "echo $PI_MINIMUM" > "$TMP/not-npm-pi"
 chmod +x "$TMP/not-npm-pi"
 if PI_CODING_AGENT_DIR="$FAIL" PI_BIN="$TMP/not-npm-pi" "$ROOT/dot" pi extensions --apply >/dev/null 2>&1; then
   echo 'expected non-npm Pi layout to be rejected' >&2; exit 1
@@ -148,4 +166,4 @@ printf '%s\n' '{"version":"0.1.8"}' > "$AGENT/npm/node_modules/@ogulcancelik/pi-
 "$ROOT/dot" pi extensions --apply >/dev/null
 "$ROOT/dot" pi extensions --check >/dev/null
 test "$(wc -l < "$PI_TEST_CALLS")" -eq 8
-echo 'ok   core extension updates are opt-in, idempotent, backed up, profile-safe, and keep compaction floating'
+echo 'ok   core extension updates need Pi >= the scaffold minimum, are opt-in, idempotent, backed up, profile-safe, and keep compaction floating'
