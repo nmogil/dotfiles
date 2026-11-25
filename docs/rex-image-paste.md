@@ -52,13 +52,36 @@ automatically updated checkout.
 file under `DOTFILES_REX_OVERLAY_DIR` (default: `rex/` beside
 `DOTFILES_PI_SCAFFOLD_DIR`) is copied to the same path beside `init.lua`,
 except a top-level `README.md` and `*.example.json` templates. `init.lua`
-loads `dotfiles_private.lua` when it exists and skips it quietly when it does
-not, so this repo works on its own; an error inside the overlay still fails
-`rex config check`. Overlay files get the same rules as the public ones:
-differing files need `--force` (with backups), symlinks and unsafe names are
-refused, and nothing may replace `init.lua` or `rex-image-paste/`. The private
-companion uses it for the "Transfer pi Session to Host…" action, whose source
-has no license and so cannot live here.
+checks whether `dotfiles_private.lua` (or `dotfiles_private/init.lua`) exists
+beside it; if so it is required normally, so any error inside the overlay fails
+`rex config check`, and if not it is skipped, so this repo works on its own.
+The private companion uses it for the "Transfer pi Session to Host…" action,
+whose source has no license and so cannot live here.
+
+Overlay files get the same rules as the public ones, plus a few more:
+
+- Differing files need `--force`, which backs them up first. Symlinks and
+  unsafe names are refused.
+- The full destination map (including the real basename of a custom
+  `REX_CONFIG`) must be free of collisions, compared case-insensitively
+  because the Mac filesystem is: no duplicate destinations, no path that is a
+  file in one place and a directory in another, and nothing that maps onto the
+  config file or `rex-image-paste/`.
+- Machine-local files are never shipped: an overlay containing
+  `transfer-targets.json` (a per-machine allowlist) is refused, and the
+  existing one is left alone.
+- `--apply` first assembles the merged result (the destination files that will
+  remain, plus the public and overlay files) in a temporary directory and runs
+  `rex config check` on it. If that fails, nothing in the destination changes.
+- Each file is replaced by writing a temporary file in the same directory and
+  renaming it over the old one, so readers never see a partial file and hard
+  links to the old file are not written through.
+
+The installer trusts its source and destination trees. It refuses symlinks
+inside them but does not defend against symlinked ancestors of the
+destination (a symlinked `~/.config` is common and fine) or against other
+processes changing either tree while it runs. Do not edit the overlay or the
+Rex config directory concurrently with `./dot rex config`.
 
 ## Limits
 
