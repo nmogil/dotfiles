@@ -25,10 +25,19 @@ dotfiles_load_config
 # canonical when it exists) with CDPATH disabled, so a relative PI_HOME can't
 # land in a CDPATH entry of the same name. Registration and every profile write
 # below use this one path.
+# No newline anywhere in it: the profile-roots registry is line-based, and
+# command substitution drops trailing newlines (the trailing "x" keeps them, so
+# they are refused rather than silently resolving to a different directory).
+NL='
+'
 PI_ROOT="${PI_HOME:-$HOME/.pi}"
 case "$PI_ROOT" in /*) ;; *) PI_ROOT="$PWD/$PI_ROOT" ;; esac
+case "$PI_ROOT" in *"$NL"*) echo "setup-pi-profiles: PI_HOME contains a newline; refusing (the profile-roots registry is line-based)" >&2; exit 1 ;; esac
 if [ -d "$PI_ROOT" ]; then
-  PI_ROOT="$(CDPATH='' cd -P -- "$PI_ROOT" && pwd -P)" || { echo "setup-pi-profiles: cannot resolve $PI_ROOT" >&2; exit 1; }
+  PI_ROOT="$(CDPATH='' cd -P -- "$PI_ROOT" && pwd -P && printf x)" || { echo "setup-pi-profiles: cannot resolve $PI_ROOT" >&2; exit 1; }
+  PI_ROOT="${PI_ROOT%x}"
+  PI_ROOT="${PI_ROOT%"$NL"}"
+  case "$PI_ROOT" in *"$NL"*) echo "setup-pi-profiles: PI_HOME resolves to a path containing a newline; refusing (the profile-roots registry is line-based)" >&2; exit 1 ;; esac
 fi
 PERSONAL_DIR="$PI_ROOT/agent"
 WORK_SLUG="$DOTFILES_PI_WORK_PROFILE_SLUG"

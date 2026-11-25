@@ -33,7 +33,7 @@ rx_profiles() {  # rx_profiles <home> <flag>: ./dot pi profiles pinned to the fi
   HOME="$1" PI_HOME="${RX_PI_HOME:-$1/.pi}" XDG_CONFIG_HOME="$1/.config" DOTFILES_LOCAL_ENV="$1/.config/dotfiles/local.env" \
     HERMES_HOME="$1/.hermes" \
     DOTFILES_PI_SCAFFOLD_DIR="$FIX" DOTFILES_PROFILES_LOCK_TIMEOUT="${RX_LOCK_TIMEOUT:-10}" PATH="$RX_PATH" \
-    "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1
+    ${RX_EXEC:+exec} "$ROOT/dot" pi profiles "$2" > "$RX/out" 2>&1
 }
 rx_fail() { printf 'FAIL %s\n' "$1"; sed 's/^/       /' "$RX/out"; exit 1; }
 rx_refuses_work_profile() {  # rx_refuses_work_profile <home> <name>
@@ -128,9 +128,11 @@ printf '%s\n' 'ok   CDPATH never redirects a relative PI_HOME (registry and writ
 
 # The registry must be a regular file (not a symlink, FIFO or directory); it
 # is never read or appended through anything else. Bounded: a FIFO would block.
-bounded_profiles() {  # bounded_profiles <home>: rx_profiles --apply, killed after 10 s
-  rx_profiles "$1" --apply & bp=$!
-  ( sleep 10; kill "$bp" 2>/dev/null ) & bw=$!
+bounded_profiles() {  # bounded_profiles <home>: rx_profiles --apply, KILLed after 10 s
+  # RX_EXEC: the background subshell becomes ./dot (which execs the installer),
+  # so the kill reaches the installer itself, not a wrapper.
+  (RX_EXEC=1 rx_profiles "$1" --apply) & bp=$!
+  ( sleep 10; kill -KILL "$bp" 2>/dev/null ) >/dev/null 2>&1 & bw=$!
   wait "$bp"; brc=$?
   kill "$bw" 2>/dev/null; wait "$bw" 2>/dev/null
   return "$brc"
@@ -147,6 +149,24 @@ for kind in symlink fifo dir; do
     || rx_fail "registry $kind: refused clearly, nothing written"
 done
 printf '%s\n' 'ok   a symlinked, FIFO or directory registry is refused before reading or appending'
+
+# No newline in PI_HOME or its resolved path: the registry is line-based, and
+# command substitution would drop a trailing newline (writing to a different
+# directory). Both dirs exist, so a resolution that drops it would go ahead.
+NL='
+'
+H="$RX/nl"; rx_home "$H"; mkdir -p "$H/trail$NL/agent/extensions" "$H/trail/agent/extensions" "$H/in${NL}side/agent/extensions"
+for bad in "$H/trail$NL" "$H/in${NL}side"; do
+  if RX_PI_HOME="$bad" rx_profiles "$H" --apply; then rx_fail "newline PI_HOME: pi profiles --apply went ahead"; fi
+  grep -Fq 'newline' "$RX/out" && [ ! -e "$H/.pi/.dotfiles-profile-roots" ] && [ ! -e "$H/trail/agent-clientx" ] \
+    && [ ! -e "$H/trail$NL/agent-clientx" ] && [ ! -e "$H/in${NL}side/agent-clientx" ] \
+    || rx_fail "newline PI_HOME: refused, nothing recorded or written"
+done
+ln -s "trail$NL" "$H/trail-link"
+if RX_PI_HOME="$H/trail-link" rx_profiles "$H" --apply; then rx_fail "newline in the resolved path: --apply went ahead"; fi
+grep -Fq 'newline' "$RX/out" && [ ! -e "$H/trail/agent-clientx" ] && [ ! -e "$H/.pi/.dotfiles-profile-roots" ] \
+  || rx_fail "newline in the resolved path: refused, nothing recorded or written"
+printf '%s\n' 'ok   a newline in PI_HOME or its resolved path is refused'
 
 # A mixed-case work profile still counts for --check.
 H="$RX/mixed"; rx_home "$H"; mkdir -p "$H/.pi/AGENT-OTHER" "$H/.local/bin"

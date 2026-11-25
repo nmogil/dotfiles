@@ -246,7 +246,7 @@ wp_refusal() {
 # extensions resolving to ~/.pi/agent/extensions. Fails closed: an unreadable
 # registry or a malformed, missing or unreadable entry is an issue too.
 registered_root_issues() {
-  local reg="$HOME/.pi/.dotfiles-profile-roots" line default def_ext ext wp
+  local reg="$HOME/.pi/.dotfiles-profile-roots" line default def_ext ext wp resolved
   ROOT_ISSUES=""
   [ -e "$reg" ] || [ -L "$reg" ] || return 0
   # Only a regular file is read: never through a symlink, and never a FIFO
@@ -265,7 +265,13 @@ registered_root_issues() {
       ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }registered root $line can't be read (if it's gone, remove its line from $reg)"
       continue
     fi
-    [ "$(canonical_dir "$line")" != "$default" ] || continue
+    resolved="$(canonical_dir "$line"; printf x)"
+    resolved="${resolved%x}"
+    if has_newline "$resolved"; then
+      ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }registered root $line resolves to a path containing a newline"
+      continue
+    fi
+    [ "$resolved" != "$default" ] || continue
     wp="$(dotfiles_pi_work_profiles "$line" | tr '\n' ' ')"
     if [ -n "$wp" ]; then ROOT_ISSUES="${ROOT_ISSUES:+$ROOT_ISSUES; }registered root $line has a work profile (${wp% })"; fi
     ext="$line/agent/extensions"
@@ -640,12 +646,23 @@ do_apply() {
 # comments and simple `[export ]PI_HOME=value` assignments (plain, "double" or
 # 'single' quoted, with no $, backticks, ~ or globs) are understood; any other
 # mention of PI_HOME refuses.
-canonical_dir() {  # absolute (relative to the cwd), canonical when it exists
-  local p="$1"
+# canonical_dir <path>: absolute (relative to the cwd), canonical when it
+# exists. A trailing "x" keeps command substitution from dropping a trailing
+# newline, so callers can refuse paths with newlines (see has_newline).
+canonical_dir() {
+  local p="$1" r
   case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
   while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
-  if [ -d "$p" ]; then (CDPATH='' cd -P -- "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"; else printf '%s' "$p"; fi
+  if [ -d "$p" ] && r="$(CDPATH='' cd -P -- "$p" 2>/dev/null && pwd -P && printf x)"; then
+    r="${r%x}"
+    printf '%s' "${r%"$NL"}"
+  else
+    printf '%s' "$p"
+  fi
 }
+NL='
+'
+has_newline() { case "$1" in *"$NL"*) return 0 ;; esac; return 1; }
 # local_env_pi_home: sets LENV_SET=1 and LENV_PI_HOME to the last PI_HOME
 # assignment in local.env; fails with LENV_WHY when it can't be read as data.
 local_env_pi_home() {
@@ -676,6 +693,11 @@ local_env_pi_home() {
 local_env_pi_home || die "$LENV_WHY. Nothing changed."
 PI_HOME_SETTING="${PI_HOME:-}"
 if [ "$LENV_SET" = 1 ]; then PI_HOME_SETTING="$LENV_PI_HOME"; fi
+PI_HOME_RESOLVED="$(canonical_dir "${PI_HOME_SETTING:-$HOME/.pi}"; printf x)"
+PI_HOME_RESOLVED="${PI_HOME_RESOLVED%x}"
+if has_newline "$PI_HOME_SETTING" || has_newline "$PI_HOME_RESOLVED"; then
+  die "PI_HOME contains (or resolves to) a path with a newline; refusing. Nothing changed."
+fi
 if [ -n "$PI_HOME_SETTING" ] && [ "$(canonical_dir "$PI_HOME_SETTING")" != "$(canonical_dir "$HOME/.pi")" ]; then
   die "PI_HOME is $PI_HOME_SETTING (environment or local.env), but rexume supports only the default Pi root $HOME/.pi: rexume install writes ~/.pi/agent, and the profiles lock and work-profile check use ~/.pi. Unset PI_HOME or point it at $HOME/.pi. Nothing changed."
 fi

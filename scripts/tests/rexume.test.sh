@@ -227,10 +227,12 @@ brew_has() {
 }
 # run <args...>: the installer as if started from a `pi-work` shell
 # (PI_CODING_AGENT_DIR set to the work profile), on a PATH of stubs + SYSBIN only.
-run() {
+# run_exec replaces the calling (sub)shell with the installer, so a watchdog's
+# kill reaches the installer itself (run_bounded).
+run_exec() {
   local xdg="XDG_RUNTIME_DIR=$TMP/run"
   [ -z "${NO_XDG:-}" ] || xdg="NO_XDG=1"
-  (cd "${RUN_CWD:-$TMP}" && env -i HOME="$HOMEDIR" ${RUN_CDPATH:+CDPATH="$RUN_CDPATH"} PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
+  cd "${RUN_CWD:-$TMP}" && exec env -i HOME="$HOMEDIR" ${RUN_CDPATH:+CDPATH="$RUN_CDPATH"} PATH="${STUB_PATH:-$STUB}:$SYSBIN" "$xdg" \
     PI_CODING_AGENT_DIR="$HOMEDIR/.pi/agent-work" ${RUN_PI_HOME:+PI_HOME="$RUN_PI_HOME"} \
     STUB_LOG="$TMP/calls" STUB_TMP="$TMP" STUB_UNEXPECTED="$UNEXPECTED" \
     STUB_OS="${STUB_OS:-Linux}" STUB_ARCH="${STUB_ARCH:-x86_64}" STUB_CELLAR="$CELLAR" STUB_BREWBIN="$BREWBIN" \
@@ -241,8 +243,17 @@ run() {
     STUB_MACOS="${STUB_MACOS:-15.5}" DOTFILES_REXUME_READY_TIMEOUT="${READY_TIMEOUT:-20}" \
     DOTFILES_REXUME_CALL_TIMEOUT="${CALL_TIMEOUT:-10}" DOTFILES_PROFILES_LOCK_TIMEOUT="${LOCK_TIMEOUT:-10}" \
     STUB_SYSTEMCTL_HANG="${STUB_SYSTEMCTL_HANG:-}" STUB_STATUS_HANG="${STUB_STATUS_HANG:-}" \
-    "$BASH" "$REPO/scripts/setup-rexume.sh" "$@") > "$OUT" 2>&1
-  RC=$?
+    "$BASH" "$REPO/scripts/setup-rexume.sh" "$@"
+}
+run() { (run_exec "$@") > "$OUT" 2>&1; RC=$?; }
+# run_bounded <args...>: run, but KILLed after 10 s (RC 137): for cases that
+# would block forever if the installer regressed (e.g. reading a FIFO).
+run_bounded() {
+  local rp rw
+  (run_exec "$@") > "$OUT" 2>&1 & rp=$!
+  ( sleep 10; kill -KILL "$rp" 2>/dev/null ) >/dev/null 2>&1 & rw=$!
+  wait "$rp"; RC=$?
+  kill "$rw" 2>/dev/null; wait "$rw" 2>/dev/null
 }
 mac() { STUB_PATH="$STUB:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run "$@"; }
 has() { grep -Fq -- "$1" "$OUT"; }
@@ -650,9 +661,18 @@ for kind in symlink fifo dir; do
     fifo) mkfifo "$REG" ;;
     dir) mkdir "$REG" ;;
   esac
-  run --apply
-  [ "$RC" = 1 ] && has "not a regular file" && ! installed; res "a $kind registry is refused (fail closed)"
+  run_bounded --apply
+  [ "$RC" = 1 ] && has "not a regular file" && ! installed; res "a $kind registry is refused (fail closed, within 10 s)"
 done
+
+# --- no newline in a Pi root (the registry is line-based) ------------------------------------------------------------
+NL='
+'
+fresh; mkdir -p "$HOMEDIR/trail$NL/agent-work" "$HOMEDIR/trail/agent"; ln -s "trail$NL" "$HOMEDIR/trail-link"
+echo "$HOMEDIR/trail-link" > "$REG"; run --apply
+[ "$RC" = 1 ] && has "newline" && ! installed; res "a registered root resolving to a path with a (trailing) newline refuses"
+fresh; RUN_PI_HOME="$HOMEDIR/.pi$NL" run --apply
+[ "$RC" = 1 ] && has "newline" && ! installed; res "a PI_HOME with a newline refuses"
 
 # --- the readiness budget includes the kill grace; no extra probe after a timeout --------------------------------
 # From the first readiness probe to the end of the run: the 3 s budget (one

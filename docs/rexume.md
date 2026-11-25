@@ -198,7 +198,10 @@ rule is at the profile level, and fails closed:
   relative `PI_HOME` is resolved once, against the current directory, to an
   absolute canonical path. Registration and every profile write use that
   path. Every `cd`-based resolution in these installers disables `CDPATH`,
-  so a directory of the same name on `CDPATH` can't redirect it. A root that no longer exists also refuses: remove its
+  so a directory of the same name on `CDPATH` can't redirect it. The registry
+  is line-based, so `./dot pi profiles` refuses a `PI_HOME` containing a
+  newline, or resolving to a path that does (even a trailing one). `./dot
+  rexume` applies the same rule to `PI_HOME` and to each registered root. A root that no longer exists also refuses: remove its
   line by hand. Roots set up before the registry existed aren't recorded;
   rerun `./dot pi profiles --apply` with that `PI_HOME` to record one.
 - `rexume install` always runs with `PI_CODING_AGENT_DIR` removed.
