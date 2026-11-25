@@ -407,6 +407,19 @@ if should_install "lazygit"; then
 fi
 
 # -----------------------------------------------------------------------------
+# Step 8b: rexboard (pinned release, checksum-verified; see docs/rexboard.md)
+# -----------------------------------------------------------------------------
+if should_install "rexboard (agent attention board for Rex)"; then
+    section "rexboard"
+    if [ "$(uname -m)" = x86_64 ]; then
+        run bash "$DOTFILES_DIR/scripts/setup-rexboard.sh" --apply \
+            || log "rexboard not installed — see ./dot rexboard and docs/rexboard.md"
+    else
+        log "No pinned rexboard build for $(uname -m) — skipping"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Step 9: flyctl
 # -----------------------------------------------------------------------------
 if should_install "flyctl"; then

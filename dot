@@ -78,6 +78,9 @@ Usage: ./dot <command> [args]
   pi install           Install the pi CLI (opt-in; prompts before running)
   rex install [flags]  Install/check rex-safe-upgrade + Pi pane recorder
                        (--apply/--check/--dry-run; see docs/rex-safe-upgrade.md)
+  rexboard [flags]     Install/check rexboard (Mac: Homebrew; Linux: pinned,
+                       checksum-verified release; --apply/--check/--dry-run;
+                       see docs/rexboard.md)
   rex upgrade [args]   Restart Rex onto the installed version and resume agents
                        (no args: show the plan only; 'run' to do it)
   rex config [flags]   Install/check Mac Rex image paste (--apply/--check/--force;
@@ -333,6 +336,7 @@ case "$cmd" in
       config)  shift; run scripts/setup-rex-config.sh "$@" ;;
       *) echo "dot: rex needs 'install', 'upgrade', or 'config'" >&2; usage; exit 1 ;;
     esac ;;
+  rexboard) run scripts/setup-rexboard.sh "$@" ;;
   chezmoi) chezmoi_wrap "$@" ;;
   *) echo "dot: unknown command: $cmd" >&2; usage; exit 1 ;;
 esac

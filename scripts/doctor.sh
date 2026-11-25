@@ -46,7 +46,7 @@ for f in "${required[@]}"; do
 done
 
 # --- scripts executable ---
-for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-rex-safe-upgrade.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
+for s in dot setup.sh setup-linux.sh clone-repos.sh harden-vps.sh setup-obsidian-sync.sh scripts/doctor.sh scripts/setup-herdr-config.sh scripts/setup-hermes-config.sh scripts/setup-pi-agent.sh scripts/setup-pi-profiles.sh scripts/setup-pi-subagents.sh scripts/setup-rex-safe-upgrade.sh scripts/setup-rexboard.sh scripts/tests/agent-configs.test.sh scripts/tests/local-env.test.sh scripts/tests/pi-git-interceptor.test.sh scripts/tests/pi-profiles.test.sh scripts/tests/pi-scaffold.test.sh scripts/tests/pi-subagents.test.sh; do
   [ -e "$ROOT/$s" ] || continue
   if [ -x "$ROOT/$s" ]; then PASS "executable: $s"; else WARN "not executable: $s (chmod +x $s)"; fi
 done
@@ -110,6 +110,17 @@ if have rex && [ "$(uname -s)" = Linux ]; then
   else
     WARN "Rex server runs $rex_running, installed $rex_installed (run: rex-safe-upgrade)"
   fi
+fi
+
+# rexboard (opt-in): checked only where Rex or rexboard is present.
+if have rex || have rexboard || [ -e "$HOME/.local/bin/rexboard" ]; then
+  rexboard_rc=0
+  rexboard_msg="$("$ROOT/scripts/setup-rexboard.sh" --check 2>&1)" || rexboard_rc=$?
+  case "$rexboard_rc" in
+    0) PASS "rexboard: $rexboard_msg" ;;
+    3) WARN "rexboard not installed (optional: ./dot rexboard --apply)" ;;
+    *) WARN "rexboard: $(printf '%s' "$rexboard_msg" | head -n 1)" ;;
+  esac
 fi
 
 echo

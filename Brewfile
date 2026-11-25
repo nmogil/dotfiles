@@ -4,6 +4,7 @@
 tap "tw93/tap"
 tap "2389-research/tap"
 tap "jurplel/tap"
+tap "vanducng/tap"
 
 # CLI Tools
 brew "ca-certificates"
@@ -28,6 +29,8 @@ brew "sox"             # Audio processing
 brew "yazi"            # Terminal file manager
 brew "zoxide"          # Smarter cd command
 brew "tw93/tap/mole"   # Mole app
+# Attention board for agent panes across Rex hosts (docs/rexboard.md); upstream ships Apple Silicon only.
+brew "vanducng/tap/rexboard" if Hardware::CPU.arm?
 
 # Optional but useful CLI tools (uncomment if wanted)
 # brew "bat"          # Better cat with syntax highlighting
