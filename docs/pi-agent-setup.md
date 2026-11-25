@@ -214,8 +214,10 @@ version at or above the minimum (the extensions minimum is the scaffold's Pi
 dependency). The installer requires
 Node.js >=22.19 and npm outside Vite+'s managed runtime (system/NodeSource on
 Linux or Homebrew on macOS). If the system global prefix is not writable, the
-installer uses the user-owned `~/.local` prefix. After the npm executable passes the layout and minimum-version checks,
-it removes only Vite+'s global Pi package
+installer uses the user-owned `~/.local` prefix. After the npm executable passes the layout and minimum-version checks
+and a smoke test (`<prefix>/bin/pi --version` must exit 0 and print the installed
+version; otherwise the installer fails and the old Pi stays), it removes only
+Vite+'s global Pi package
 with `vp remove -g @earendil-works/pi-coding-agent`; Vite+ itself remains
 available for project tooling.
 

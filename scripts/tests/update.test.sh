@@ -690,6 +690,38 @@ if [ "$RC" = 0 ] && has "- Pi CLI: installed version unavailable" && has "the ve
   ok "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"
 else bad "Pi CLI: --dry-run with unreadable Pi metadata says the gate could not be previewed (no Pi launch)"; fi
 
+# Only a POSITIVELY verified global npm install may run pi update --self: when
+# the verifier itself cannot run (python3 missing: 127) or crashes, warn and
+# skip — never run whatever pi is on PATH.
+mkdir -p "$TMP/py127" "$TMP/pycrash" || die "mkdir"
+printf '#!/bin/sh\nexit 127\n' > "$TMP/py127/python3" || die "py127"
+printf '#!/bin/sh\necho "Traceback (most recent call last):" >&2\necho "SystemError: stub crash" >&2\nexit 1\n' \
+  > "$TMP/pycrash/python3" || die "pycrash"
+chmod +x "$TMP/py127/python3" "$TMP/pycrash/python3" || die "chmod"
+for broken in py127 pycrash; do
+  for kind in plain npm; do
+    fresh; use_pi "$kind"
+    PATH="$TMP/$broken:$PATH" STUB_PI_LATEST=1.6.1 run_update
+    if [ "$RC" = 0 ] && has "! Pi CLI: not updated — could not verify" \
+      && ! grep -q '^plain pi' "$TMP/calls" && ! grep -q '^pi-cli' "$TMP/calls" && [ ! -e "$PI_LAUNCHES" ] \
+      && [ "$(pi_pkg_version)" = 1.6.0 ] && called "pi config apply --apply"; then
+      ok "Pi CLI: verifier $broken + $kind pi: warns, never runs pi, run continues"
+    else bad "Pi CLI: verifier $broken + $kind pi: warns, never runs pi, run continues"; show_calls; fi
+  done
+done
+# Verified layout with an unreadable version (2) is still a verified install.
+fresh
+rm "$PI_PKG/package.json" || die "rm package.json"
+STUB_PI_LATEST=1.6.1 run_update
+if [ "$RC" = 0 ] && has "✓ Pi CLI — unknown → 1.6.1" && called "pi-cli update --self --no-approve @ $HOME"; then
+  ok "Pi CLI: a verified install with unreadable metadata is still updated"
+else bad "Pi CLI: a verified install with unreadable metadata is still updated"; show_calls; fi
+fresh
+PATH="$TMP/py127:$PATH" run_update --dry-run
+[ "$RC" = 0 ] && has "! Pi CLI: not updated — could not verify" && [ ! -e "$PI_LAUNCHES" ] \
+  && ok "Pi CLI: --dry-run with a broken verifier warns and launches nothing" \
+  || bad "Pi CLI: --dry-run with a broken verifier warns and launches nothing"
+
 # The checkouts are (re-)verified AFTER the long Pi/npm update, so a checkout
 # that changes while it runs is not applied from.
 fresh; push_upstream public; push_upstream private

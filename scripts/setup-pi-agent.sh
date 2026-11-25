@@ -119,7 +119,7 @@ find_standalone_npm() {
 install_cli() {
   local package="$PI_PACKAGE@latest"
   local package_name="$PI_PACKAGE"
-  local current="" resolved="" npm_prefix="" npm_pi="" version=""
+  local current="" resolved="" npm_prefix="" npm_pi="" version="" smoke="" smoke_rc=0
   local NPM_NODE="" NPM_CLI=""
 
   cat <<EOF
@@ -186,6 +186,15 @@ EOF
         echo "setup-pi-agent: $(pi_too_old_hint "$version" "$PI_MIN_VERSION")" >&2
         exit 1
       }
+      # Smoke test (an install path, so launching Pi is fine here): the new
+      # absolute executable must start and report the installed version
+      # BEFORE the working Vite+ Pi is removed. On failure the old Pi stays.
+      smoke_rc=0
+      smoke="$(cd "$HOME" && "$npm_pi" --version 2>/dev/null < /dev/null)" || smoke_rc=$?
+      if [ "$smoke_rc" -ne 0 ] || [ "$smoke" != "$version" ]; then
+        echo "setup-pi-agent: the new Pi did not start: $npm_pi --version exited $smoke_rc and printed '${smoke:0:80}' (expected $version); the existing Pi was left in place" >&2
+        exit 1
+      fi
 
       if [ -e "$HOME/.vite-plus/bin/pi" ] || [ -L "$HOME/.vite-plus/bin/pi" ]; then
         command -v vp >/dev/null 2>&1 || {

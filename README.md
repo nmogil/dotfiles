@@ -454,8 +454,9 @@ Run `rexboard`. See [`docs/rexboard.md`](docs/rexboard.md).
    same absolute path that was checked, moves Pi to the latest release,
    reported as `Pi CLI — 1.6.0 → 1.6.1` or `Pi CLI — 1.6.1 (latest)` (only when
    Pi says it is already up to date; otherwise "unchanged" is a warning). It
-   runs only when `pi` is an absolute global npm install (otherwise a skip
-   line), does not depend on the repos, and a failure is a warning, not a
+   runs only when `pi` is positively verified as an absolute global npm
+   install (otherwise a skip line; a warning when the verifier itself cannot
+   run), does not depend on the repos, and a failure is a warning, not a
    stop: the Pi config version gate below decides. Versions are read from the
    package's `package.json`. Running Pi sessions keep the old version until
    you restart them. `--dry-run` never launches Pi at all. The dotfiles require

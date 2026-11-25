@@ -594,10 +594,14 @@ update_pi_cli() {
   if [ -z "$pi_path" ]; then
     say_skip "Pi CLI: not installed (./dot pi install)"; return
   fi
+  # Only a positively verified global npm install (0, or 2: verified but its
+  # version is unreadable) is run; 3 means the verifier itself failed.
   pi_npm_version "$pi_path" || rc=$?
   case "$rc" in
     0) before="$PI_NPM_VERSION" ;;
     1) say_skip "Pi CLI: not updated — $PI_NPM_PROBLEM; ./dot pi install"; return ;;
+    2) ;;
+    *) say_warn "Pi CLI: not updated — $PI_NPM_PROBLEM"; return ;;
   esac
   if [ "$DRY_RUN" = 1 ]; then
     if [ -n "$before" ]; then say_skip "Pi CLI: $before installed; a real run runs pi update --self"

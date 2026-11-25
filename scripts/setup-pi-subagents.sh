@@ -224,7 +224,8 @@ pi_runtime_matches() {
   case "$rc" in
     0) PI_RUNTIME_VERSION="$PI_NPM_VERSION" ;;
     1) PI_RUNTIME_PROBLEM="Pi must be a global npm install at version >= $PI_MIN_VERSION: $PI_NPM_PROBLEM"; return 1 ;;
-    *) PI_RUNTIME_PROBLEM="Pi version unavailable (minimum $PI_MIN_VERSION): $PI_NPM_PROBLEM"; return 1 ;;
+    2) PI_RUNTIME_PROBLEM="Pi version unavailable (minimum $PI_MIN_VERSION): $PI_NPM_PROBLEM"; return 1 ;;
+    *) PI_RUNTIME_PROBLEM="$PI_NPM_PROBLEM"; return 1 ;;
   esac
   if ! pi_version_at_least "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION"; then
     PI_RUNTIME_PROBLEM="$(pi_too_old_hint "$PI_RUNTIME_VERSION" "$PI_MIN_VERSION")"

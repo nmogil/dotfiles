@@ -111,6 +111,27 @@ npm_version "$TMP/bin/pi"
 set_version "$PKGDIR" 1.6.1
 [ ! -e "$LAUNCHES" ] && ok "pi_npm_version never launches Pi" || bad "pi_npm_version never launches Pi"
 
+# A verifier that cannot run (127) or crashes is "could not verify" (3), never
+# "verified install, unreadable version" (2) — callers may run Pi only on 0/2.
+mkdir -p "$TMP/py127" "$TMP/pycrash" "$TMP/pyempty"
+printf '#!/bin/sh\nexit 127\n' > "$TMP/py127/python3"
+printf '#!/bin/sh\necho "Traceback (most recent call last):" >&2\nexit 1\n' > "$TMP/pycrash/python3"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/pyempty/python3"   # "success" without a version is not proof
+chmod +x "$TMP/py127/python3" "$TMP/pycrash/python3" "$TMP/pyempty/python3"
+for broken in py127 pycrash pyempty; do
+  for target in "$TMP/bin/pi" "$TMP/other/pi"; do
+    rc=0; PATH="$TMP/$broken:$PATH" pi_npm_version "$target" || rc=$?
+    [ "$rc" = 3 ] && [ -z "$PI_NPM_VERSION" ] && printf '%s' "$PI_NPM_PROBLEM" | grep -Fq 'could not verify' \
+      && ok "broken verifier ($broken) on ${target#"$TMP"/} is could-not-verify (3)" \
+      || bad "broken verifier ($broken) on ${target#"$TMP"/} is could-not-verify (3) (rc=$rc)"
+  done
+done
+OUT="$(PATH="$TMP/py127:$HPATH" "$ROOT/dot" packages check 2>&1)"
+printf '%s\n' "$OUT" | grep -F -- "@earendil-works/pi-coding-agent" | grep -Fq "MISMATCH" \
+  && printf '%s\n' "$OUT" | grep -Fq "could not verify" \
+  && ok "packages check: a broken verifier is a mismatch, not ok" || bad "packages check: a broken verifier is a mismatch, not ok"
+OUT=""
+
 # --- ./dot packages check / pi doctor ------------------------------------------------
 packages() { set_version "$PKGDIR" "$1"; OUT="$(PATH="${2:-$HPATH}" "$ROOT/dot" packages check 2>&1)"; }
 pi_line() { printf '%s\n' "$OUT" | grep -F -- "$PKG"; }

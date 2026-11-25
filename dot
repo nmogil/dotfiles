@@ -118,7 +118,7 @@ packages_check() {
           *"/.vite-plus/"*) echo "  MISS $pkg (Pi still uses Vite+ layout)" ;;
           "") echo "  MISS $pkg" ;;
           *)
-            if [ "$pi_rc" = 1 ]; then
+            if [ "$pi_rc" = 1 ] || [ "$pi_rc" = 3 ]; then
               echo "  MISMATCH $pkg ($PI_NPM_PROBLEM)"
             elif [ "$pi_rc" != 0 ]; then
               echo "  MISMATCH $pkg (Pi version unavailable: $PI_NPM_PROBLEM)"
@@ -159,6 +159,8 @@ pi_doctor() {  # read-only checks for the Pi agent scaffold; never writes
         pi_rc=0; pi_npm_version "$pi_bin" || pi_rc=$?
         if [ "$pi_rc" = 1 ]; then
           echo "  WARN Pi at $pi_bin is not the required npm package layout ($PI_NPM_PROBLEM)"
+        elif [ "$pi_rc" = 3 ]; then
+          echo "  WARN $PI_NPM_PROBLEM"
         elif [ "$pi_rc" != 0 ]; then
           echo "  WARN Pi version unavailable: $PI_NPM_PROBLEM"
         elif pi_version_at_least "$PI_NPM_VERSION" "$PI_MIN_VERSION"; then

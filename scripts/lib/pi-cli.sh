@@ -37,20 +37,25 @@ pi_version_at_least() {
 # live in <prefix>/bin, resolving to <prefix>/lib/node_modules/<package>/dist/
 # [bundle/]cli.js; project-local, pnpm, and Vite+ installs are refused (they
 # break runtime imports used by Pi extensions). Callers run this same path.
-# Sets PI_NPM_VERSION, or PI_NPM_PROBLEM (a reason). Returns 0 version read,
-# 1 not a supported global npm install, 2 install found but its version is
-# unavailable (or python3 is missing).
+# Sets PI_NPM_VERSION, or PI_NPM_PROBLEM (a reason). Returns:
+#   0  verified global npm install; version read
+#   1  verified NOT a supported global npm install
+#   2  verified global npm install, but its package.json version is unreadable
+#   3  could not verify at all (python3 missing, crashed, or answered outside
+#      the protocol) — nothing is known about this pi, so never run it
+# Only 0 and 2 are positive verifications of the layout.
 PI_NPM_VERSION="" PI_NPM_PROBLEM=""
 pi_npm_version() {
   local out rc=0
   PI_NPM_VERSION="" PI_NPM_PROBLEM=""
   out="$(python3 -B "$PI_CLI_LIB_DIR/pi_version.py" installed-version "$1" 2>&1 < /dev/null)" || rc=$?
   case "$rc" in
-    0) PI_NPM_VERSION="$out"; return 0 ;;
+    0) if pi_version_at_least "$out" 0.0.0; then PI_NPM_VERSION="$out"; return 0; fi ;;
     3) PI_NPM_PROBLEM="$out"; return 1 ;;
     4) PI_NPM_PROBLEM="$out"; return 2 ;;
-    *) PI_NPM_PROBLEM="could not run python3 to read the Pi version${out:+: $out}"; return 2 ;;
   esac
+  PI_NPM_PROBLEM="could not verify $1 (Pi install verifier exited $rc${out:+: $(printf '%s' "$out" | tail -n 1)})"
+  return 3
 }
 
 # pi_too_old_hint <installed> <minimum>: the one message for a Pi that fails
