@@ -29,6 +29,8 @@ import re
 import shlex
 import shutil
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import time
@@ -197,7 +199,9 @@ def socket_path(endpoint) -> str | None:
 
 
 def listening_socket_inodes(path: str) -> set[str]:
-    """Inodes of the unix sockets bound to path, from /proc/net/unix."""
+    """Inodes of the listening stream sockets bound to path, from
+    /proc/net/unix (a name alone also matches datagram sockets and unlinked
+    listeners that kept it)."""
     inodes = set()
     try:
         lines = Path("/proc/net/unix").read_text().splitlines()[1:]
@@ -205,9 +209,23 @@ def listening_socket_inodes(path: str) -> set[str]:
         return inodes
     for line in lines:
         f = line.split(None, 7)  # Num RefCount Protocol Flags Type St Inode Path
-        if len(f) == 8 and f[7] == path:
+        if len(f) == 8 and f[7] == path and f[4] == "0001" and int(f[3], 16) & 0x10000:  # stream, listening
             inodes.add(f[6])
     return inodes
+
+
+def socket_peer(path: str) -> tuple[int, int] | None:
+    """(pid, uid) of the process that listens on the socket that actually
+    answers at path, from SO_PEERCRED; None if nothing accepts there."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect(path)
+            pid, uid, _gid = struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                              struct.calcsize("3i")))
+            return pid, uid
+    except OSError:
+        return None
 
 
 def local_server_problem(info: dict) -> str | None:
@@ -232,13 +250,19 @@ def local_server_problem(info: dict) -> str | None:
         return f"server pid {pid} runs as uid {uid}, not as this account"
     inodes = listening_socket_inodes(path)
     if not inodes:
-        return f"no unix socket is bound at {path}"
+        return f"no stream socket is listening at {path}"
     try:
         fds = {os.readlink(f"/proc/{pid}/fd/{fd}") for fd in os.listdir(f"/proc/{pid}/fd")}
     except OSError:
         return f"couldn't read server pid {pid}'s open files"
     if not any(f"socket:[{i}]" in fds for i in inodes):
         return f"server pid {pid} doesn't hold the socket at {path}"
+    # The listener that actually answers at the path must be that process.
+    peer = socket_peer(path)
+    if peer is None:
+        return f"nothing accepts connections at {path}"
+    if peer != (pid, os.getuid()):
+        return f"the socket at {path} answers as pid {peer[0]} (uid {peer[1]}), not server pid {pid}"
     return None
 
 
@@ -576,6 +600,19 @@ def inspect_pane(p: Pane) -> None:
     # or from the shell a wrapper runs (an interactive shell's own jobs).
     shells = {pid for pid in (top, raw_fg, p.fg_pid) if pid and proc_name(pid) in SHELLS}
     extra = sorted({c for sh in shells for c in real_children(sh)} - {p.fg_pid, raw_fg})
+    # An agent among them (say, Pi beside a background job in a wrapper that
+    # couldn't be promoted) still has its busy and unknown states checked:
+    # stopping it is never waivable when it is, or may be, mid-task.
+    records = status.get("records") or []
+    for c in extra:
+        ckind = agent_kind(proc_exe_name(c), proc_cmdline(c))
+        if not ckind:
+            continue
+        cstate, cmalformed = program_state(records, {"pid": c, "wrapper": raw_fg}, ckind)
+        if cmalformed or cstate == "-":
+            add_problem(p, f"{ckind} (pid {c}) hasn't reported whether it's busy", hard=True)
+        elif cstate not in ("idle", "done"):
+            add_problem(p, f"{ckind} (pid {c}) is {cstate}", hard=True)
     if extra:
         add_problem(p, "background processes would be stopped: " + ", ".join(sorted({proc_name(c) for c in extra})))
 
@@ -820,7 +857,7 @@ def new_run_name() -> str:
     return f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
 
 
-def do_run(args) -> int:
+def do_run(args, first: dict) -> int:
     lock = acquire_lock()
     if not lock:
         print("ABORT: another rex-safe-upgrade run is in progress; nothing changed", flush=True)
@@ -828,16 +865,22 @@ def do_run(args) -> int:
     run_dir = Path(args.run_dir) if args.run_dir else RUNS / new_run_name()
     r = Run(run_dir)
     try:
-        return run_locked(r, args)
+        return run_locked(r, args, first)
     finally:
         prune_runs(keep=run_dir)
 
 
-def run_locked(r: Run, args) -> int:
+def run_locked(r: Run, args, first: dict) -> int:
+    """first: the identity checked (as this machine's own server) before any
+    call was bound to its address. Every later answer must be that server."""
     info = server_info()
     if not info:
         r.log("ABORT: no Rex server is running")
         return 1
+    if not same_server(info, first):
+        r.log(f"ABORT, nothing changed: the server at {first.get('endpoint')} isn't the one first checked "
+              f"(instance {first.get('instance_id')}, pid {first.get('pid')})")
+        return 3
     running, installed = info.get("rex_version", "?"), installed_version()
     r.log(f"running {running}, installed {installed}, server pid {info.get('pid')}")
     if installed == "?":
@@ -1058,7 +1101,10 @@ def main() -> int:
     ap.add_argument("--even-if-current", action="store_true", help="restart even if already up to date")
     ap.add_argument("--self-id", help=argparse.SUPPRESS)  # block:pid:start of the calling agent
     ap.add_argument("--run-dir", help=argparse.SUPPRESS)
-    ap.add_argument("--endpoint", help=argparse.SUPPRESS)  # the server the caller selected
+    # The server the caller checked, carried through the systemd-run handoff.
+    ap.add_argument("--endpoint", help=argparse.SUPPRESS)
+    ap.add_argument("--instance-id", help=argparse.SUPPRESS)
+    ap.add_argument("--server-pid", type=int, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
     problems = test_mode_problems()
@@ -1076,6 +1122,21 @@ def main() -> int:
     if args.endpoint and info.get("endpoint") != args.endpoint:
         print(f"The server at {args.endpoint} reports a different address; nothing changed.")
         return 3
+    if (args.instance_id, args.server_pid) != (None, None) and (
+            (info.get("instance_id"), info.get("pid")) != (args.instance_id, args.server_pid)):
+        print(f"The server at {args.endpoint} isn't the one the run was started for (instance "
+              f"{args.instance_id}, pid {args.server_pid}); nothing changed.")
+        return 3
+    if args.command == "run":
+        # Checked on this first answer, before anything is bound to its
+        # address: a remote server may report a path that exists here too.
+        if identity(info) is None:
+            print("The Rex server didn't report its instance id, pid and endpoint; nothing changed.")
+            return 3
+        local = local_server_problem(info)
+        if local:
+            print(f"Not this machine's own Rex server ({local}); nothing changed.")
+            return 3
     if info.get("endpoint"):
         bind_endpoint(info["endpoint"])  # every later rex call goes to this server
     running, installed = info.get("rex_version", "?"), installed_version()
@@ -1109,7 +1170,7 @@ def main() -> int:
         return 0
 
     if not is_ancestor(info.get("pid") or -1, os.getpid()):
-        return do_run(args)
+        return do_run(args, info)
 
     # Inside the Rex server's process tree: stopping the server would kill us,
     # so check here, then hand the run to a transient systemd unit.
@@ -1119,13 +1180,6 @@ def main() -> int:
     if installed == "?":
         print("Couldn't tell which Rex version is installed (`rex version`); nothing changed.")
         return 2
-    if identity(info) is None:
-        print("The Rex server didn't report its instance id, pid and endpoint; nothing changed.")
-        return 3
-    local = local_server_problem(info)
-    if local:
-        print(f"Not this machine's own Rex server ({local}); nothing changed.")
-        return 3
     problems = blockers(inventory(args.self_id), args.allow_unresumable)
     if problems and (args.dry_run or not args.wait_idle):
         print("Not safe right now, nothing changed:\n  " + "\n  ".join(problems))
@@ -1150,7 +1204,8 @@ def main() -> int:
            f"--setenv=XDG_RUNTIME_DIR={os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}",
            f"--setenv=PATH={os.environ.get('PATH', '/usr/bin:/bin')}",
            os.path.realpath(sys.executable), os.path.realpath(__file__), "run", f"--run-dir={run_dir}",
-           f"--endpoint={info['endpoint']}", f"--wait-idle={args.wait_idle}", f"--self-id={args.self_id or ''}"]
+           f"--endpoint={info['endpoint']}", f"--instance-id={info['instance_id']}", f"--server-pid={info['pid']}",
+           f"--wait-idle={args.wait_idle}", f"--self-id={args.self_id or ''}"]
     cmd += [f for f, on in (("--allow-unresumable", args.allow_unresumable),
                             ("--even-if-current", args.even_if_current)) if on]
     if TEST_MODE:  # a transient unit drops the test's environment, fakes included

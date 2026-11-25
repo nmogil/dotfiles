@@ -105,12 +105,21 @@ reaches, by the address it reports (`rex -S <endpoint>`), including through
 the systemd handoff. So a run can't check the panes of one server and stop
 another. The one exception is `rex version`, which asks the local CLI.
 
-Only this machine's own Rex server is ever stopped. Before anything changes,
-and again right before the stop, the server must verify as local: its address
-is a unix socket (`unix:///path`; tcp, tailnet, https addresses and host labels
-are refused), and the pid it reports is a `rex` process of this account,
-here, that holds that socket. Otherwise the run stops with exit 3 and the plan
-says why.
+Only this machine's own Rex server is ever stopped. The first answer is
+checked before anything is bound to its address (a remote server may report
+a socket path that also exists here), and again right before the stop:
+
+- its address is a unix socket (`unix:///path`; tcp, tailnet, https addresses
+  and host labels are refused);
+- the pid it reports is a `rex` process of this account, here, holding a
+  listening stream socket at that path;
+- the listener that actually answers at the path is that process: the tool
+  connects and reads the peer's pid and uid (`SO_PEERCRED`), so a datagram
+  socket or an unlinked listener that kept the name doesn't count.
+
+That server's full identity (instance id, pid, address) is carried into the
+run and through the systemd handoff, and every later answer must match it.
+Otherwise the run stops with exit 3 and the plan says why.
 
 ### What `run` does
 
@@ -121,7 +130,9 @@ says why.
    (exit 3).
 2. Checks every pane. It stops, changing nothing, if any of these is true:
    - an agent is working or waiting for an answer, or hasn't reported its
-     state (the agent process that started the run is exempt). Any status
+     state (the agent process that started the run is exempt). This also
+     holds for an agent that runs beside a background job, where the pane's
+     program can't be attributed to it. Any status
      record of the running program that isn't idle counts, even next to an
      idle one; a record without a state, or a state Rex doesn't define,
      counts as unknown;

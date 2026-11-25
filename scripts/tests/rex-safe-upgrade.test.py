@@ -111,7 +111,8 @@ FAKE_REX = textwrap.dedent(r"""
     def ticks(pid): return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
     def out(v): save(); print(json.dumps(v)); sys.exit(0)
     def fail(): save(); sys.exit(1)
-    if args[:1] == ["-S"]:  # an explicit server address must be this server's
+    bound = args[:1] == ["-S"]
+    if bound:  # an explicit server address must be this server's
         st["bound"].append(args[:4])
         if args[1] != st["endpoint"]: fail()
         args = args[2:]
@@ -137,8 +138,11 @@ FAKE_REX = textwrap.dedent(r"""
         print("rex " + st["installed"]); sys.exit(0)
     if cmd[:1] == ["whoami"]:
         if not st["running"]: fail()
-        out({"rex_version": st["running"], "pid": st["server_pid"], "instance_id": st["instance"],
-             "endpoint": st["endpoint"], "session_count": len(st["sessions"])})
+        me = {"rex_version": st["running"], "pid": st["server_pid"], "instance_id": st["instance"],
+              "endpoint": st["endpoint"], "session_count": len(st["sessions"])}
+        if not bound and not st["first_answered"]:  # the default route may first reach another server
+            st["first_answered"] = True; me.update(st["first_whoami"])
+        out(me)
     if cmd[:1] == ["ls"]:
         st["ls_count"] += 1
         for bid, change in st["on_second_ls"].items():
@@ -388,14 +392,16 @@ S = 'session:00000000-0000-0000-0000-000000000001'
 OTHER = 'session:00000000-0000-0000-0000-000000000009'
 W = 'window:00000000-0000-0000-0000-000000000002'
 # The fake Rex server: a copy of the interpreter named `rex`, so /proc shows
-# a rex executable, holding the endpoint's unix socket (argv[1], "-" for none).
+# a rex executable, holding the endpoint's unix socket (argv[1]: a path to
+# listen on, "dgram:<path>" for a datagram socket, "-" for none).
 # With more arguments it runs them as its child once <out>.go exists, and
 # writes "<exit code>\n<output>" to <out>: a run started inside the server's
 # process tree, as from a Rex pane.
 FAKE_SERVER = ('import os, socket, subprocess, sys, time\n'
-               's = socket.socket(socket.AF_UNIX)\n'
-               'if sys.argv[1] != "-":\n'
-               '    s.bind(sys.argv[1]); s.listen()\n'
+               'if sys.argv[1].startswith("dgram:"):\n'
+               '    s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM); s.bind(sys.argv[1][6:])\n'
+               'elif sys.argv[1] != "-":\n'
+               '    s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen()\n'
                'if len(sys.argv) > 3:\n'
                '    out = sys.argv[2]\n'
                '    while not os.path.exists(out + ".go"): time.sleep(0.05)\n'
@@ -578,7 +584,7 @@ class Base(unittest.TestCase):
         running='1.0', installed='2.0', instance='old', new_instance='new', reconnect=True, endpoint=None,
         on_second_ls={}, comes_back_as=None, rexume='inactive', rexume_stop_fails=False,
         rexume_stop_hangs=False, rexume_start_delay=0, rexume_start_fails=False, on_rexume_stop={},
-        stop_hangs=False, fail_block_ls=[], route_flips=False)
+        stop_hangs=False, fail_block_ls=[], route_flips=False, first_whoami={})
 
     def write_state(self, server_run=None, **kw):
         """The fake server's state, with a real local server process behind
@@ -596,7 +602,8 @@ class Base(unittest.TestCase):
         # Another session listed first, so finding a pane's session means searching.
         other = {'session_id': OTHER, 'label': 'other', 'blocks': [], 'windows': []}
         st.update(server_pid=self.server_pid, server_ticks=start_ticks(self.server_pid),
-                  ls_count=0, calls=[], bound=[], unbound=[], route_selected=False, systemctl_runtime_dirs=[],
+                  ls_count=0, calls=[], bound=[], unbound=[], route_selected=False, first_answered=False,
+                  systemctl_runtime_dirs=[],
                   sessions=[other, {'session_id': S, 'label': 'work', 'blocks': self.blocks,
                                     'windows': [{'window_id': W, 'label': 'tab'}]}])
         self.state_file.write_text(json.dumps(st))
@@ -855,6 +862,16 @@ class PlanTest(Base):
         self.assertIn('Not safe right now', r.stdout)
         self.assertIn("couldn't tell whether rexume is running", r.stdout)
         self.assertIn("couldn't tell which Rex version is installed", r.stdout)
+
+    def test_agent_beside_a_background_job_is_never_waived_when_busy_or_unknown(self):
+        # Two children: the wrapper can't be promoted, but Pi's own status
+        # (working here, missing in the second pane) still decides.
+        self.wrapper_pane(script='"$3" 60 & "$1" "$2"; exec "$3" 60', kids=2, owner='pi', state='working')
+        self.wrapper_pane(script='"$3" 60 & "$1" "$2"; exec "$3" 60', kids=2, owner='pi')
+        self.blocks[-1]['program_status']['records'] = []
+        r = self.assert_blocked(extra=['--allow-unresumable'])
+        self.assertRegex(r.stdout, r"pi \(pid \d+\) is working")
+        self.assertRegex(r.stdout, r"pi \(pid \d+\) hasn't reported whether it's busy")
 
     def test_promoted_interactive_shell_with_a_background_job_blocks(self):
         # The wrapper's foreground child is an interactive shell (idle at its
@@ -1148,7 +1165,8 @@ class RestartTest(Base):
         # server's address, and a kill mode that lets recovery finish.
         cmd = out.split('Would run:\n', 1)[1].split()
         self.assertEqual(cmd[0], os.path.realpath(self.fakebin / 'systemd-run'))
-        for want in (f'--endpoint={self.endpoint}', 'KillMode=mixed', 'TimeoutStopSec=300'):
+        for want in (f'--endpoint={self.endpoint}', '--instance-id=old', f'--server-pid={self.server_pid}',
+                     'KillMode=mixed', 'TimeoutStopSec=300'):
             self.assertIn(want, cmd)
 
 
@@ -1167,6 +1185,54 @@ class RestartTest(Base):
                 self.assertTrue(self.server_alive())
                 r = self.tool()  # the plan says so too
                 self.assertIn("not this machine's own Rex server", r.stdout)
+
+    def test_first_answer_is_checked_before_anything_is_bound(self):
+        # The default route first reaches another server that reports a path
+        # which exists here too; -S <path> would then reach the local one.
+        gone = self.spawn([SLEEP, '60'])
+        signal_process(gone, signal.SIGKILL)
+        self.assertTrue(wait_until(lambda: not Path(f'/proc/{gone}').exists()))
+        for first, why in (({'instance_id': 'remote', 'pid': gone}, "isn't a process on this machine"),
+                           ({'instance_id': 'remote'}, "isn't the one first checked")):
+            with self.subTest(why=why):
+                self.write_state(first_whoami=first)
+                r, _ = self.run_tool()
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn(why, r.stdout)
+                self.assertNotIn(['server', 'stop'], self.state()['calls'])
+                self.assertTrue(self.server_alive())
+
+    def test_handoff_runs_only_on_the_server_it_was_started_for(self):
+        self.write_state()
+        for ident in ('--instance-id=someone-else', f'--server-pid={os.getpid()}'):
+            with self.subTest(ident=ident):
+                full = {'--instance-id': '--instance-id=old', '--server-pid': f'--server-pid={self.server_pid}'}
+                full[ident.split('=')[0]] = ident
+                r = self.tool('run', f'--endpoint={self.endpoint}', *full.values())
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("isn't the one the run was started for", r.stdout)
+        self.assertNotIn(['server', 'stop'], self.state()['calls'])
+
+    def test_socket_check_follows_the_listener_that_answers(self):
+        self.blocks.clear()
+        for case in ('datagram', 'unlinked listener'):
+            with self.subTest(case=case):
+                self.write_state()
+                old = self.server_pid
+                self.socket.unlink()  # the old listener keeps its name in /proc/net/unix
+                if case == 'datagram':
+                    pid = self.start_server(f'dgram:{self.socket}')  # a rex holding a datagram socket there
+                else:
+                    self.start_server(self.socket)  # another listener now answers at the path
+                    pid = old
+                self.assertTrue(wait_until(self.socket.exists))
+                st = self.state()
+                st.update(server_pid=pid)
+                self.state_file.write_text(json.dumps(st))
+                r, _ = self.run_tool()
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertRegex(r.stdout, "doesn't hold the socket|answers as pid")
+                self.assertNotIn(['server', 'stop'], self.state()['calls'])
 
     def test_explicit_endpoint_must_be_a_local_socket(self):
         self.write_state()
