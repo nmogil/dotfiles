@@ -10,6 +10,7 @@ pass=0; failn=0
 ok()  { printf 'ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf 'FAIL %s\n' "$1"; failn=$((failn+1)); [ -f "$OUT" ] && sed 's/^/       /' "$OUT"; }
 die() { echo "fixture error: $*" >&2; exit 1; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
 OUT="$TMP/out"
@@ -80,6 +81,12 @@ run() {
   RC=$?
 }
 has() { grep -Fq -- "$1" "$OUT"; }
+# no_stage: true when ~/.local/bin holds no leftover .rexboard.* staging file.
+no_stage() {
+  local f
+  for f in "$HOMEDIR"/.local/bin/.rexboard.*; do [ -e "$f" ] && return 1; done
+  return 0
+}
 home_files() { (cd "$HOMEDIR" && find . -mindepth 1 | LC_ALL=C sort); }
 
 # --- usage -------------------------------------------------------------------
@@ -195,6 +202,10 @@ fresh; brew_has 0.36.0; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\n' > "$TMP/o
 STUB_PATH="$STUB:$TMP/otherbin:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
 [ "$RC" = 1 ] && has "shadows the Homebrew one" && ok "macOS --check flags a non-Homebrew rexboard ahead of Homebrew's on PATH" \
   || bad "macOS --check flags a non-Homebrew rexboard ahead of Homebrew's on PATH"
+fresh; brew_has 0.36.0; chmod 644 "$CELLAR/rexboard/0.36.0/bin/rexboard"
+STUB_PATH="$STUB:$BREWBIN" STUB_OS=Darwin STUB_ARCH=arm64 run --check
+[ "$RC" = 1 ] && ok "macOS --check does not pass a Homebrew rexboard that is not executable" \
+  || bad "macOS --check does not pass a Homebrew rexboard that is not executable"
 fresh; STUB_BREW_CELLAR_FAIL=1 STUB_OS=Darwin STUB_ARCH=arm64 run --check
 [ "$RC" = 1 ] && has "brew --cellar failed" && ok "macOS --check treats a failed Homebrew query as a problem, not as absence" \
   || bad "macOS --check treats a failed Homebrew query as a problem, not as absence"
@@ -233,7 +244,7 @@ before="$(sha "$DST")"; : > "$HOMEDIR/.local/state/dotfiles"   # a file where th
 run --apply --force
 [ "$RC" = 1 ] && [ "$(sha "$DST")" = "$before" ] && ! has "installed rexboard" \
   && ok "a failed backup leaves the original binary untouched" || bad "a failed backup leaves the original binary untouched"
-[ -z "$(ls -A "$HOMEDIR/.local/bin" | grep -v '^rexboard$')" ] && ok "a failed install leaves no staging file" \
+no_stage && ok "a failed install leaves no staging file" \
   || bad "a failed install leaves no staging file"
 fresh; mkdir -p "$HOMEDIR/.local/bin"; chmod 555 "$HOMEDIR/.local/bin"
 run --apply
@@ -249,8 +260,9 @@ run --check
 [ "$RC" = 1 ] && has "not executable" && ok "Linux --check flags a matching but non-executable binary" \
   || bad "Linux --check flags a matching but non-executable binary"
 run --apply
-[ "$RC" = 0 ] && [ -x "$DST" ] && [ "$(sha "$DST")" = "$BINARY_SHA" ] && ok "Linux --apply restores the execute bit on the pinned binary" \
-  || bad "Linux --apply restores the execute bit on the pinned binary"
+[ "$RC" = 0 ] && [ "$(mode_of "$DST")" = 744 ] && [ "$(sha "$DST")" = "$BINARY_SHA" ] \
+  && ok "Linux --apply restores only the owner execute bit on the pinned binary (644 -> 744)" \
+  || bad "Linux --apply restores only the owner execute bit on the pinned binary (644 -> 744)"
 fresh; run --apply; mkdir -p "$TMP/otherbin"; printf '#!/bin/sh\n' > "$TMP/otherbin/rexboard"; chmod 755 "$TMP/otherbin/rexboard"
 STUB_PATH="$STUB:$TMP/otherbin:$HOMEDIR/.local/bin" run --check
 [ "$RC" = 1 ] && has "shadows" && ok "Linux --check flags another rexboard ahead of ~/.local/bin on PATH" \
@@ -265,7 +277,7 @@ exec /usr/bin/curl "$@"
 EOF
 chmod 755 "$STUB/curl"
 run --apply
-[ "$RC" = 1 ] && [ "$(cat "$DST")" = raced ] && [ -z "$(ls -A "$HOMEDIR/.local/bin" | grep -v '^rexboard$')" ] \
+[ "$RC" = 1 ] && [ "$(cat "$DST")" = raced ] && no_stage \
   && ok "a binary that appears during the download is never overwritten" \
   || bad "a binary that appears during the download is never overwritten"
 rm -f "$STUB/curl"

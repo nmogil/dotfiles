@@ -99,6 +99,10 @@ mac() {
       say "rexboard $kegs is installed with Homebrew but isn't on PATH (brew link rexboard)" >&2
       return 1
     fi
+    if [ ! -f "$onpath" ] || [ ! -x "$onpath" ]; then
+      say "rexboard at $onpath is not an executable file; reinstall it with Homebrew" >&2
+      return 1
+    fi
     resolved="$(resolve "$onpath" || true)"
     case "$resolved" in
       "$real_kegs"/*) ;;
@@ -182,7 +186,7 @@ linux() {
       say "$DST differs from the pinned $version build; --apply leaves it alone (--apply --force backs it up and installs the pin)"
       return 0 ;;
     --apply:noexec)
-      chmod 755 "$DST" || die "couldn't make $DST executable"
+      chmod u+x "$DST" || die "couldn't make $DST executable"
       say "restored the execute bit on $DST (matches the pinned $version build)."
       return 0 ;;
     --apply:differs)
