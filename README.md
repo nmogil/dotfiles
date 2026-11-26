@@ -150,6 +150,7 @@ private-endpoint patterns you want `./dot pi doctor` to reject in
 | `templates/hermes/config.portable.yaml`, `scripts/setup-hermes-config.sh` | Credential-free Hermes preferences, deep-merged without touching local secrets/state |
 | `docs/agent-config-sync.md` | Cross-machine Herdr, Pi, and Hermes bootstrap and safety boundary |
 | `scripts/rex-safe-upgrade.py`, `templates/pi-rex/`, `scripts/setup-rex-safe-upgrade.sh` | Restart Rex onto a new version once no agent's work would be lost, and list each agent's resume command (`./dot rex ...`, `docs/rex-safe-upgrade.md`) |
+| `scripts/rex-status-smoke.py` | Live check that Rex shows Pi as blocked while `ask_user_question` waits (`./dot rex status-smoke`, `docs/pi-rex-status.md`) |
 | `config/rexboard/release.pins`, `scripts/setup-rexboard.sh` | rexboard, an attention board for agent panes across Rex hosts (Mac: Brewfile; Linux: pinned, checksum-verified; `./dot rexboard`, `docs/rexboard.md`) |
 | `config/hunk/config.toml` | Hunk diff-review TUI defaults (copied to `~/.config/hunk/`) |
 | `config/ghostty/config` | Ghostty terminal config (copied to `~/Library/Application Support/com.mitchellh.ghostty/`) |
@@ -410,6 +411,15 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 
 `./dot doctor` warns when the running server is behind the installed Rex. See
 [`docs/rex-safe-upgrade.md`](docs/rex-safe-upgrade.md).
+
+After upgrading Rex, Pi, or Pi packages, check that Rex still shows a waiting
+Pi question as blocked (one small model call; run from a Rex pane):
+
+```bash
+./dot rex status-smoke
+```
+
+See [`docs/pi-rex-status.md`](docs/pi-rex-status.md).
 
 ## rexboard
 

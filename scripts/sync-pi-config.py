@@ -24,6 +24,18 @@ SETTINGS = ".pi/agent/settings.json"
 OWNERSHIP = ".local/state/dotfiles/pi-config-files.json"
 # User-approved floating exception; other packages still require exact versions.
 FLOATING_PACKAGES = {"npm:@ogulcancelik/pi-codex-compaction"}
+# Lowest release of a package the baseline may pin, and why. Capture refuses a
+# live pin below it; apply/check refuse a baseline below it. Check already
+# requires each machine's installed version to equal the pin, so this also
+# keeps machines from drifting back. A package the baseline doesn't list is
+# not required. Verify the behavior end to end with ./dot rex status-smoke.
+PACKAGE_MINIMUMS = {
+    "@juicesharp/rpiv-ask-user-question": (
+        "2.16.0",
+        "first release that reports a waiting questionnaire as blocked (OSC 7501), "
+        "so Rex shows Pi as waiting for you",
+    ),
+}
 # Deliberately exclude auth, MCP, model endpoints, memory destinations, caches,
 # trust, sessions, generated npm state, and every non-personal profile.
 FILES = {
@@ -78,10 +90,26 @@ def preferences(value: dict) -> dict:
         for item in packages
     ):
         raise ValueError("portable packages must be exact-version npm sources or approved floating compaction")
+    for item in packages:
+        if item not in FLOATING_PACKAGES:
+            require_package_minimum(*item.removeprefix("npm:").rsplit("@", 1))
     encoded = json.dumps(result)
     if "https://" in encoded or "http://" in encoded:
         raise ValueError("portable settings contain a URL; review machine-local configuration")
     return result
+
+
+def require_package_minimum(name: str, version: str) -> None:
+    """Raise ValueError if `name`@`version` is below its PACKAGE_MINIMUMS entry."""
+    if name not in PACKAGE_MINIMUMS:
+        return
+    minimum, reason = PACKAGE_MINIMUMS[name]
+    release, _, prerelease = version.partition("-")
+    # A prerelease of the minimum (2.16.0-beta.1) comes before it.
+    if pi_version.parse(release) > pi_version.parse(minimum) or (release == minimum and not prerelease):
+        return
+    raise ValueError(f"package minimum: {name}@{version} is older than {minimum} ({reason}); "
+                     f"pin npm:{name}@{minimum} or newer")
 
 
 def encoded(value: dict) -> bytes:

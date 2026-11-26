@@ -77,6 +77,8 @@ Usage: ./dot <command> [args]
                        see docs/rexboard.md)
   rex upgrade [args]   Restart Rex onto the installed version and resume agents
                        (no args: show the plan only; 'run' to do it)
+  rex status-smoke     Live check: Rex shows Pi as blocked on ask_user_question
+                       (one model call; run after Pi/package/Rex upgrades)
   rex config [flags]   Install/check Mac Rex image paste (--apply/--check/--force;
                        see docs/rex-image-paste.md)
   chezmoi <cmd> [...]  Thin passthrough to chezmoi (diff/apply/init/...). Only
@@ -336,7 +338,8 @@ case "$cmd" in
       install) shift; run scripts/setup-rex-safe-upgrade.sh "$@" ;;
       upgrade) shift; exec python3 "$DOT_ROOT/scripts/rex-safe-upgrade.py" "$@" ;;
       config)  shift; run scripts/setup-rex-config.sh "$@" ;;
-      *) echo "dot: rex needs 'install', 'upgrade', or 'config'" >&2; usage; exit 1 ;;
+      status-smoke) shift; exec python3 "$DOT_ROOT/scripts/rex-status-smoke.py" "$@" ;;
+      *) echo "dot: rex needs 'install', 'upgrade', 'config', or 'status-smoke'" >&2; usage; exit 1 ;;
     esac ;;
   rexboard) run scripts/setup-rexboard.sh "$@" ;;
   chezmoi) chezmoi_wrap "$@" ;;
