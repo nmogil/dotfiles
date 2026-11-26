@@ -180,6 +180,9 @@ case "$*" in
     echo "Pi CLI: 1.6.0 (minimum 1.6.0)"
     echo "drift  .pi/agent/example.ts"
     echo "3 managed files; 1 differ; 0 retired. Unmanaged files preserved." ;;
+  "pi config packages --apply")
+    echo "Pi CLI: 1.6.0 (minimum 1.6.0)"
+    if [ -n "${STUB_PACKAGES_INSTALLED:-}" ]; then echo "install npm:example@1.0.0"; fi ;;
   "pi config packages"*) echo "Pi CLI: 1.6.0 (minimum 1.6.0)"; echo "would install npm:example@1.0.0" ;;
   "rex config --apply")
     if [ -n "${STUB_REX_APPLY_DIFFERS:-}" ]; then
@@ -603,10 +606,23 @@ if [ "$RC" = 0 ] && has "NEW-UPDATER-RAN --internal-apply-phase" \
   ok "an upstream change to the updater re-execs the new updater for the apply phase only"
 else bad "an upstream change to the updater re-execs the new updater for the apply phase only"; show_calls; fi
 
+# --- 6a: installed packages get the restart + live status check reminder ------
+fresh
+STUB_PI_LATEST=1.6.0 STUB_PACKAGES_INSTALLED=1 run_update
+if [ "$RC" = 0 ] && has "restart Pi sessions to load package changes" && has "./dot rex status-smoke"; then
+  ok "packages: an install prints the restart and ./dot rex status-smoke reminders"
+else bad "packages: an install prints the restart and ./dot rex status-smoke reminders"; show_calls; fi
+fresh
+STUB_PI_LATEST=1.6.0 run_update
+if [ "$RC" = 0 ] && ! has "load package changes" && ! has "status-smoke"; then
+  ok "packages: nothing installed prints no reminders"
+else bad "packages: nothing installed prints no reminders"; show_calls; fi
+
 # --- 6b: the Pi CLI is updated first, independently of the repos -----------------
 fresh
 STUB_PI_LATEST=1.6.1 run_update
 if [ "$RC" = 0 ] && has "✓ Pi CLI — 1.6.0 → 1.6.1" && has "running Pi sessions keep 1.6.0 until restarted" \
+  && has "./dot rex status-smoke" \
   && [ "$(head -n 1 "$TMP/calls")" = "pi-cli update --self --no-approve @ $HOME" ] \
   && [ "$(pi_pkg_version)" = 1.6.1 ] && called "pi config apply --apply"; then
   ok "Pi CLI: pi update --self --no-approve runs from \$HOME before the Pi apply and reports old → new"
@@ -614,7 +630,7 @@ else bad "Pi CLI: pi update --self --no-approve runs from \$HOME before the Pi a
 
 fresh
 STUB_PI_LATEST=1.6.0 run_update
-if [ "$RC" = 0 ] && has "✓ Pi CLI — 1.6.0 (latest)" && ! has "until restarted" \
+if [ "$RC" = 0 ] && has "✓ Pi CLI — 1.6.0 (latest)" && ! has "until restarted" && ! has "status-smoke" \
   && [ "$(count_calls "pi-cli update --self --no-approve @ $HOME")" = 1 ]; then
   ok "Pi CLI: already the latest is reported as (latest), with no restart hint"
 else bad "Pi CLI: already the latest is reported as (latest), with no restart hint"; show_calls; fi

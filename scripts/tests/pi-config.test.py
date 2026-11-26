@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CLI behavior tests using isolated homes and a version-only Pi executable."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -354,6 +355,40 @@ class PiConfigTest(unittest.TestCase):
         self.assertNotIn("private-endpoint-fixture", result.stderr)
         self.assertFalse(self.bundle.exists())
 
+    def test_package_minimums_refuse_older_pins_everywhere(self):
+        name = "@juicesharp/rpiv-ask-user-question"
+        package = f".pi/agent/npm/node_modules/{name}/package.json"
+        # Capture refuses a live pin below the minimum, prerelease of it included.
+        for old in ("2.15.0", "2.16.0-beta.1", "1.99.99"):
+            self.put(self.mac, ".pi/agent/settings.json", json.dumps({"packages": [f"npm:{name}@{old}"]}))
+            result = self.run_cli("capture", apply=True, expected=2)
+            self.assertIn(f"package minimum: {name}@{old} is older than 2.16.0", result.stderr)
+            self.assertFalse(self.bundle.exists())
+        # Equal and newer (numerically, not lexically) are accepted.
+        for ok in ("2.16.0", "2.16.1", "2.100.0", "3.0.0-rc.1"):
+            self.put(self.mac, ".pi/agent/settings.json", json.dumps({"packages": [f"npm:{name}@{ok}"]}))
+            self.run_cli("capture")
+        self.run_cli("capture", apply=True)
+        self.run_cli("apply", self.vps, apply=True)
+        self.put(self.vps, package, '{"version":"3.0.0-rc.1"}')
+        self.run_cli("check", self.vps)
+        # A baseline someone edited below the minimum is refused by apply and
+        # check, before anything is written.
+        settings = self.bundle / "files/.pi/agent/settings.json"
+        manifest = json.loads((self.bundle / "manifest.json").read_text())
+        old = settings.read_text().replace("3.0.0-rc.1", "2.15.0")
+        settings.write_text(old)
+        manifest["files"][".pi/agent/settings.json"] = hashlib.sha256(old.encode()).hexdigest()
+        (self.bundle / "manifest.json").write_text(json.dumps(manifest))
+        before = (self.vps / ".pi/agent/settings.json").read_text()
+        for command, apply in (("check", False), ("apply", True)):
+            result = self.run_cli(command, self.vps, apply=apply, expected=2)
+            self.assertIn("is older than 2.16.0", result.stderr)
+        self.assertEqual((self.vps / ".pi/agent/settings.json").read_text(), before)
+        # Packages without a minimum keep working at any exact version.
+        self.put(self.mac, ".pi/agent/settings.json", '{"packages":["npm:@example/pi-test@0.0.1"]}')
+        self.run_cli("capture")
+
     def test_live_secrets_and_unpinned_packages_are_rejected(self):
         secret = self.put(self.mac, ".pi/agent/skills/test/key.txt", "sk-ant-" + "a" * 30)
         self.run_cli("capture", apply=True, expected=2)
@@ -387,6 +422,26 @@ class PiConfigTest(unittest.TestCase):
         if previous is not None:
             args += ["--previous-bundle", str(previous)]
         return tuple(args)
+
+    def test_protect_local_upgrades_from_a_previous_baseline_below_a_minimum(self):
+        # ./dot update compares against the baseline this machine last applied,
+        # which may predate a package minimum. Only the incoming one must meet it.
+        name = "@juicesharp/rpiv-ask-user-question"
+        self.put(self.mac, ".pi/agent/settings.json", json.dumps({"packages": [f"npm:{name}@2.16.0"]}))
+        self.run_cli("capture", apply=True)
+        previous = self.root / "previous"
+        shutil.copytree(self.bundle, previous)
+        settings = previous / "files/.pi/agent/settings.json"
+        old = settings.read_text().replace("2.16.0", "2.15.0")
+        settings.write_text(old)
+        manifest = json.loads((previous / "manifest.json").read_text())
+        manifest["files"][".pi/agent/settings.json"] = hashlib.sha256(old.encode()).hexdigest()
+        (previous / "manifest.json").write_text(json.dumps(manifest))
+        self.run_cli("apply", self.vps, apply=True)
+        self.put(self.vps, ".pi/agent/settings.json", old)  # what the old baseline left behind
+        self.run_cli("apply", self.vps, apply=True, extra_args=self.protect(previous))
+        live = json.loads((self.vps / ".pi/agent/settings.json").read_text())
+        self.assertEqual(live["packages"], [f"npm:{name}@2.16.0"])
 
     def test_protect_local_refuses_newly_managed_file_that_differs(self):
         previous = self.synced_previous()

@@ -24,6 +24,18 @@ SETTINGS = ".pi/agent/settings.json"
 OWNERSHIP = ".local/state/dotfiles/pi-config-files.json"
 # User-approved floating exception; other packages still require exact versions.
 FLOATING_PACKAGES = {"npm:@ogulcancelik/pi-codex-compaction"}
+# Lowest release of a package the baseline may pin, and why. Capture refuses a
+# live pin below it; apply/check refuse a baseline below it. Check already
+# requires each machine's installed version to equal the pin, so this also
+# keeps machines from drifting back. A package the baseline doesn't list is
+# not required. Verify the behavior end to end with ./dot rex status-smoke.
+PACKAGE_MINIMUMS = {
+    "@juicesharp/rpiv-ask-user-question": (
+        "2.16.0",
+        "first release that reports a waiting questionnaire as blocked (OSC 7501), "
+        "so Rex shows Pi as waiting for you",
+    ),
+}
 # Deliberately exclude auth, MCP, model endpoints, memory destinations, caches,
 # trust, sessions, generated npm state, and every non-personal profile.
 FILES = {
@@ -66,7 +78,7 @@ def object_file(path: Path) -> dict:
     return value
 
 
-def preferences(value: dict) -> dict:
+def preferences(value: dict, minimums: bool = True) -> dict:
     result = {key: value[key] for key in sorted(PREFERENCES) if key in value}
     # Only the reviewed compaction package may float. Local/git package sources
     # and other unpinned packages still require separate review.
@@ -78,10 +90,26 @@ def preferences(value: dict) -> dict:
         for item in packages
     ):
         raise ValueError("portable packages must be exact-version npm sources or approved floating compaction")
+    for item in packages:
+        if minimums and item not in FLOATING_PACKAGES:
+            require_package_minimum(*item.removeprefix("npm:").rsplit("@", 1))
     encoded = json.dumps(result)
     if "https://" in encoded or "http://" in encoded:
         raise ValueError("portable settings contain a URL; review machine-local configuration")
     return result
+
+
+def require_package_minimum(name: str, version: str) -> None:
+    """Raise ValueError if `name`@`version` is below its PACKAGE_MINIMUMS entry."""
+    if name not in PACKAGE_MINIMUMS:
+        return
+    minimum, reason = PACKAGE_MINIMUMS[name]
+    release, _, prerelease = version.partition("-")
+    # A prerelease of the minimum (2.16.0-beta.1) comes before it.
+    if pi_version.parse(release) > pi_version.parse(minimum) or (release == minimum and not prerelease):
+        return
+    raise ValueError(f"package minimum: {name}@{version} is older than {minimum} ({reason}); "
+                     f"pin npm:{name}@{minimum} or newer")
 
 
 def encoded(value: dict) -> bytes:
@@ -199,7 +227,9 @@ def installed_pi() -> tuple[str, str]:
     return pi_path, pi_version.installed_version(pi_path)
 
 
-def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
+def load_bundle(bundle: Path, minimums: bool = True) -> tuple[dict, dict[str, bytes]]:
+    """Verify and read a baseline. `minimums=False` is only for --previous-bundle,
+    a past baseline read to detect local edits, never applied."""
     manifest = object_file(safe_path(bundle, "manifest.json"))
     version = manifest.get("piVersion")
     files = manifest.get("files")
@@ -220,7 +250,7 @@ def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
             raise ValueError(f"baseline checksum mismatch: {name}")
         result[name] = data
     settings = json.loads(result[SETTINGS])
-    if not isinstance(settings, dict) or preferences(settings) != settings:
+    if not isinstance(settings, dict) or preferences(settings, minimums) != settings:
         raise ValueError("baseline settings contain non-portable fields")
     return manifest, result
 
@@ -395,7 +425,8 @@ def main() -> int:
     # absent here are simply installed.
     protected = []
     if args.protect_local:
-        prior = load_bundle(args.previous_bundle.absolute())[1] if args.previous_bundle else {}
+        # The previous baseline may predate a package minimum; it is only compared.
+        prior = load_bundle(args.previous_bundle.absolute(), minimums=False)[1] if args.previous_bundle else {}
         for name in sorted(set(changes) | set(removed)):
             target = safe_path(home, name)
             if not target.exists() and not target.is_symlink():

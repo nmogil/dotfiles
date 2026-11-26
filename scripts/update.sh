@@ -116,6 +116,9 @@ N_OK=0 N_WARN=0 N_FAIL=0 N_SKIP=0
 MAX_DETAIL_LINES=15
 
 section() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
+# Pi, its packages, or Rex changing can silently stop Rex showing a waiting
+# Pi question as blocked; the live check is opt-in (a short Pi run).
+STATUS_SMOKE_HINT="then in a Rex pane: ./dot rex status-smoke (checks Rex still shows Pi questions as blocked)"
 say_ok()   { N_OK=$((N_OK+1));     printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"; }
 say_warn() { N_WARN=$((N_WARN+1)); printf '  %s!%s %s\n' "$C_WARN" "$C_RESET" "$1"; }
 say_fail() { N_FAIL=$((N_FAIL+1)); printf '  %s✗%s %s\n' "$C_FAIL" "$C_RESET" "$1"; }
@@ -629,6 +632,7 @@ update_pi_cli() {
   else
     say_ok "Pi CLI — ${before:-unknown} → $after"
     note "running Pi sessions keep ${before:-the old version} until restarted"
+    note "$STATUS_SMOKE_HINT"
   fi
 }
 section "Pi CLI"
@@ -801,7 +805,10 @@ else
         log_lines | grep -E -- "$CHANGE_LINES" | indent
         if run_step "packages" '' say_fail "Pi config is applied but packages are not; fix and rerun" \
           pi_config packages --apply; then
-          ! log_lines | grep -Eq '^(install|npm install) ' || note "  restart Pi sessions to load package changes"
+          if log_lines | grep -Eq '^(install|npm install) '; then
+            note "  restart Pi sessions to load package changes"
+            note "  $STATUS_SMOKE_HINT"
+          fi
           # Only now is this commit's baseline fully applied on this machine.
           record_applied || say_warn "could not record the applied baseline in $APPLIED_STATE"
         fi
