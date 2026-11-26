@@ -162,6 +162,8 @@ def main() -> int:
             except CannotRun as error:
                 print(f"FAIL: could not close the test pane {pane}: {error}", file=sys.stderr)
                 result = 1
+        if result == 0:
+            print("PASS: Rex shows Pi as blocked on ask_user_question and clears it after the answer.")
         return result
 
 
@@ -178,9 +180,18 @@ def run_checks(pane: str, args) -> int:
             print(f"FAIL: Pi never showed the question within {args.timeout:.0f}s "
                   f"({summary(records(pane))}). Last screen:\n{tail}")
         return 1
+    # Pi's built-in select/input dialogs also report blocked/question: only
+    # the questionnaire on screen, from a known Pi process, proves this one.
+    pid = owner(hit)
+    if pid is None:
+        print(f"FAIL: the blocked record has no owner process ({summary([hit])})")
+        return 1
+    if not wait_for(lambda: QUESTIONNAIRE_ON_SCREEN.search(rex("capture", "-b", pane, "--trim", check=False)),
+                    min(args.timeout, 15), args.interval):
+        print(f"FAIL: Pi is blocked on a question, but not ask_user_question's ({summary([hit])})")
+        return 1
     print(f"ok   blocked while asking: {summary([hit])}")
 
-    pid = owner(hit)
     rex("send-key", "-b", pane, "enter")
     snapshot = []
 
@@ -193,7 +204,6 @@ def run_checks(pane: str, args) -> int:
         print(f"FAIL: {reason} {args.timeout:.0f}s after answering ({summary(snapshot)})")
         return 1
     print(f"ok   cleared after answering: {summary(snapshot)}")
-    print("PASS: Rex shows Pi as blocked on ask_user_question and clears it after the answer.")
     return 0
 
 

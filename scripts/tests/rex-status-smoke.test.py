@@ -56,6 +56,7 @@ BLOCKED = dict(PI, state="blocked", kind="question", msg="Waiting for your answe
 WORKING = dict(PI, state="working")
 DONE = dict(PI, state="done")
 IDLE = dict(PI, state="idle")
+QUESTIONNAIRE = " Color\n Which color do you prefer?\n ❯ 1. Red\n   2. Blue\n   3. Type something."
 PROMPT_ECHO = "Call the ask_user_question tool exactly once with one question: header 'Color', " \
     "question 'Which color do you prefer?', options Red and Blue. Do nothing else."
 
@@ -87,6 +88,7 @@ class RexStatusSmokeTest(unittest.TestCase):
         }
 
     def run_smoke(self, scenario, *args, env=None):
+        scenario.setdefault("screen", QUESTIONNAIRE)
         self.scenario.write_text(json.dumps(scenario))
         return subprocess.run([sys.executable, str(SCRIPT), "--timeout", "2", "--interval", "0.05", *args],
                               capture_output=True, text=True, env=env or self.env)
@@ -140,6 +142,21 @@ class RexStatusSmokeTest(unittest.TestCase):
         r = self.run_smoke({"asking": [BLOCKED], "after": [DONE], "close_fails": True})
         self.assertEqual(r.returncode, 1)
         self.assertIn("could not close the test pane block:smoke", r.stderr)
+        self.assertNotIn("PASS", r.stdout, "the verdict comes after cleanup")
+
+    def test_another_pi_dialog_blocked_on_a_question_is_not_enough(self):
+        # Pi's own select/input dialogs also report blocked/question.
+        r = self.run_smoke({"asking": [BLOCKED], "after": [DONE], "screen": PROMPT_ECHO + "\n Pick a model\n > haiku"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not ask_user_question's", r.stdout)
+        self.assertNotIn(["send-key", "-b", "block:smoke", "enter"], self.calls())
+        self.assert_pane_closed()
+
+    def test_a_blocked_record_without_an_owner_is_not_enough(self):
+        ownerless = {k: v for k, v in BLOCKED.items() if k != "owner"}
+        r = self.run_smoke({"asking": [ownerless], "after": [dict(DONE, owner=None)]})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no owner process", r.stdout)
 
     def test_question_on_screen_but_not_blocked_is_the_regression(self):
         r = self.run_smoke({"asking": [WORKING], "after": [],

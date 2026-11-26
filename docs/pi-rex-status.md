@@ -72,12 +72,15 @@ It opens a real Pi in a new pane below yours and asks it to call
 Only records Pi reported count (`app=pi`):
 
 - while the question is open, a record must be `blocked` with
-  `kind=question`;
+  `kind=question`, from a known Pi process, with the questionnaire's numbered
+  options on screen (Pi's built-in `select`/`input` dialogs also report
+  `blocked/question`, so the record alone isn't proof);
 - after the check answers (Enter), one snapshot must show no blocked record
   and Pi's root record, from the same process, `done` or `idle`.
 
 It prints the Rex, Pi, and package versions and exits 0 pass, 1 fail, 2 could
-not run. It closes the pane at the end and fails if it can't. Each `rex` call
+not run. It closes the pane before printing the verdict and fails if it
+can't. Each `rex` call
 has a 30-second limit.
 
 ```
