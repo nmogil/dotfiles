@@ -117,7 +117,7 @@ MAX_DETAIL_LINES=15
 
 section() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
 # Pi, its packages, or Rex changing can silently stop Rex showing a waiting
-# Pi question as blocked; the live check is opt-in (one model call).
+# Pi question as blocked; the live check is opt-in (a short Pi run).
 STATUS_SMOKE_HINT="then in a Rex pane: ./dot rex status-smoke (checks Rex still shows Pi questions as blocked)"
 say_ok()   { N_OK=$((N_OK+1));     printf '  %s✓%s %s\n' "$C_OK" "$C_RESET" "$1"; }
 say_warn() { N_WARN=$((N_WARN+1)); printf '  %s!%s %s\n' "$C_WARN" "$C_RESET" "$1"; }

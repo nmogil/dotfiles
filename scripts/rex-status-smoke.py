@@ -8,10 +8,12 @@ ask_user_question once, and reads Rex's program status (OSC 7501) for that pane:
   2. after the smoke answers it (Enter), the blocked record must go away and
      Pi must settle (done or idle).
 
-It covers Pi, @juicesharp/rpiv-ask-user-question, and Rex together, so run it
-after upgrading any of them. It costs one small model call, needs a running
-Rex, and runs from inside a Rex pane (or pass --block). The pane is always
-closed at the end. Exit status: 0 pass, 1 fail, 2 could not run.
+Only records from the launched Pi count (app=pi, one owner process). It covers
+Pi, @juicesharp/rpiv-ask-user-question, and Rex together, so run it after
+upgrading any of them. It costs one short Pi run (a couple of small model
+requests), needs a running Rex, and runs from inside a Rex pane (or pass
+--block). The pane is closed at the end; a failed close is reported and
+fails the run. Exit status: 0 pass, 1 fail, 2 could not run.
 See docs/pi-rex-status.md.
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +35,10 @@ PROMPT = (
     "Call the ask_user_question tool exactly once with one question: header 'Color', "
     f"question '{QUESTION}', options Red and Blue. Do nothing else."
 )
+# The questionnaire renders numbered options; the prompt Pi echoes never does.
+QUESTIONNAIRE_ON_SCREEN = re.compile(r"\b1\. Red\b[\s\S]*\b2\. Blue\b")
 RPIV = "@juicesharp/rpiv-ask-user-question"
+REX_CALL_TIMEOUT = 30
 
 
 class CannotRun(Exception):
@@ -40,7 +46,12 @@ class CannotRun(Exception):
 
 
 def rex(*args: str, check: bool = True) -> str:
-    result = subprocess.run(["rex", *args], capture_output=True, text=True)
+    try:
+        result = subprocess.run(["rex", *args], capture_output=True, text=True, timeout=REX_CALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        if check:
+            raise CannotRun(f"rex {args[0]} timed out after {REX_CALL_TIMEOUT}s") from None
+        return ""
     if check and result.returncode != 0:
         command = " ".join(a for a in args[:2] if not a.startswith("-"))
         raise CannotRun(f"rex {command} failed: {(result.stderr or result.stdout).strip()}")
@@ -56,12 +67,26 @@ def records(block: str) -> list[dict]:
     return [r for r in found if isinstance(r, dict)]
 
 
+def from_pi(found: list[dict]) -> list[dict]:
+    """Records Pi reported: Rex resolves `app` (inherited from the root) as effective_app."""
+    return [r for r in found if (r.get("effective_app") or r.get("app")) == "pi"]
+
+
+def owner(record: dict) -> object:
+    value = record.get("owner")
+    return value.get("pid") if isinstance(value, dict) else None
+
+
 def blocked_question(found: list[dict]) -> dict | None:
-    return next((r for r in found if r.get("state") == "blocked" and r.get("kind") == "question"), None)
+    return next((r for r in from_pi(found) if r.get("state") == "blocked" and r.get("kind") == "question"), None)
 
 
-def root_state(found: list[dict]) -> str | None:
-    return next((r.get("state") for r in found if not r.get("id")), None)
+def settled(found: list[dict], pid: object) -> bool:
+    """One snapshot: no blocked record from Pi, and Pi's root record (same process) is done or idle."""
+    if any(r.get("state") == "blocked" for r in from_pi(found)):
+        return False
+    root = next((r for r in from_pi(found) if not r.get("id")), None)
+    return root is not None and root.get("state") in ("done", "idle") and (pid is None or owner(root) == pid)
 
 
 def summary(found: list[dict]) -> str:
@@ -85,8 +110,12 @@ def versions() -> str:
         parts.append(f"rex {rex_version or 'unknown'}")
     except json.JSONDecodeError:
         parts.append("rex unknown")
-    pi = subprocess.run(["pi", "--version"], capture_output=True, text=True)
-    parts.append(f"pi {(pi.stdout or pi.stderr).strip().splitlines()[0] if pi.returncode == 0 else 'unknown'}")
+    try:
+        pi = subprocess.run(["pi", "--version"], capture_output=True, text=True, timeout=REX_CALL_TIMEOUT)
+        lines = (pi.stdout or pi.stderr).strip().splitlines()
+        parts.append(f"pi {lines[0] if pi.returncode == 0 and lines else 'unknown'}")
+    except subprocess.TimeoutExpired:
+        parts.append("pi unknown")
     agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi/agent"))
     package = agent_dir / "npm/node_modules" / RPIV / "package.json"
     try:
@@ -122,17 +151,25 @@ def main() -> int:
             pane = json.loads(created)["block_ids"][0]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
             raise CannotRun(f"rex split returned no pane: {created.strip()[:200]}") from None
+        result = 1
         try:
-            return run_checks(pane, args)
+            result = run_checks(pane, args)
         finally:
-            rex("block", "close", pane, check=False)
+            # An interrupt between Rex creating the pane and returning its id
+            # can't be cleaned up here; the pane's cwd names this smoke.
+            try:
+                rex("block", "close", pane)
+            except CannotRun as error:
+                print(f"FAIL: could not close the test pane {pane}: {error}", file=sys.stderr)
+                result = 1
+        return result
 
 
 def run_checks(pane: str, args) -> int:
     hit = wait_for(lambda: blocked_question(records(pane)), args.timeout, args.interval)
     if not hit:
         screen = rex("capture", "-b", pane, "--trim", check=False)
-        if QUESTION in screen:
+        if QUESTIONNAIRE_ON_SCREEN.search(screen):
             print(f"FAIL: the question is on screen but Rex doesn't show Pi as blocked ({summary(records(pane))}).\n"
                   f"      {RPIV} or Pi stopped reporting it; check their changelogs and "
                   "docs/pi-rex-status.md.")
@@ -143,18 +180,19 @@ def run_checks(pane: str, args) -> int:
         return 1
     print(f"ok   blocked while asking: {summary([hit])}")
 
+    pid = owner(hit)
     rex("send-key", "-b", pane, "enter")
-    cleared = wait_for(lambda: (lambda f: f if not blocked_question(f) else None)(records(pane)),
-                       args.timeout, args.interval)
-    if cleared is None:
-        print(f"FAIL: still blocked {args.timeout:.0f}s after answering ({summary(records(pane))})")
+    snapshot = []
+
+    def done():
+        snapshot[:] = records(pane)
+        return settled(snapshot, pid)
+
+    if not wait_for(done, args.timeout, args.interval):
+        reason = "still blocked" if blocked_question(snapshot) else "Pi didn't settle"
+        print(f"FAIL: {reason} {args.timeout:.0f}s after answering ({summary(snapshot)})")
         return 1
-    settled = wait_for(lambda: root_state(records(pane)) in ("done", "idle"), args.timeout, args.interval)
-    found = records(pane)
-    if not settled:
-        print(f"FAIL: Pi didn't settle after the answer ({summary(found)})")
-        return 1
-    print(f"ok   cleared after answering: {summary(found)}")
+    print(f"ok   cleared after answering: {summary(snapshot)}")
     print("PASS: Rex shows Pi as blocked on ask_user_question and clears it after the answer.")
     return 0
 

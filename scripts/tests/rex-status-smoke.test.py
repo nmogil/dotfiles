@@ -18,6 +18,7 @@ SCRIPT = ROOT / "scripts/rex-status-smoke.py"
 FAKE_REX = r'''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+WORKING = {"state": "working", "app": "pi", "effective_app": "pi", "owner": {"pid": 7}}
 state = Path(os.environ["FAKE_REX_STATE"])
 scenario = json.loads(Path(os.environ["FAKE_REX_SCENARIO"]).read_text())
 s = json.loads(state.read_text()) if state.exists() else {"reads": 0, "answered": False}
@@ -37,19 +38,26 @@ elif args[:2] == ["block", "call"]:
     if s["answered"]:
         records = scenario["after"]
     else:
-        records = scenario["asking"] if s["reads"] > scenario.get("delay", 0) else [{"state": "working"}]
+        records = scenario["asking"] if s["reads"] > scenario.get("delay", 0) else [WORKING]
     print(json.dumps({"records": records}))
 elif args[:1] == ["send-key"]:
     s["answered"] = True; save()
 elif args[:1] == ["capture"]:
     print(scenario.get("screen", ""))
 elif args[:2] == ["block", "close"]:
-    pass
+    if scenario.get("close_fails"):
+        print("block not found", file=sys.stderr); sys.exit(1)
 else:
     print("unexpected: " + " ".join(args), file=sys.stderr); sys.exit(3)
 '''
 
-BLOCKED = {"state": "blocked", "kind": "question", "msg": "Waiting for your answer"}
+PI = {"app": "pi", "effective_app": "pi", "owner": {"pid": 7}}
+BLOCKED = dict(PI, state="blocked", kind="question", msg="Waiting for your answer")
+WORKING = dict(PI, state="working")
+DONE = dict(PI, state="done")
+IDLE = dict(PI, state="idle")
+PROMPT_ECHO = "Call the ask_user_question tool exactly once with one question: header 'Color', " \
+    "question 'Which color do you prefer?', options Red and Blue. Do nothing else."
 
 
 class RexStatusSmokeTest(unittest.TestCase):
@@ -90,8 +98,7 @@ class RexStatusSmokeTest(unittest.TestCase):
         self.assertEqual(self.calls()[-1], ["block", "close", "block:smoke"], "the test pane is always closed")
 
     def test_pass_when_blocked_then_cleared(self):
-        r = self.run_smoke({"asking": [{"state": "working"}, dict(BLOCKED, id="x")], "after": [{"state": "done"}],
-                            "delay": 3})
+        r = self.run_smoke({"asking": [WORKING, dict(BLOCKED, id="x", app=None)], "after": [DONE], "delay": 3})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("rex 0.0.0-test, pi 1.6.1, rpiv-ask-user-question 2.16.0", r.stdout)
         self.assertIn("PASS", r.stdout)
@@ -102,18 +109,48 @@ class RexStatusSmokeTest(unittest.TestCase):
         self.assert_pane_closed()
 
     def test_idle_after_answer_also_passes(self):
-        r = self.run_smoke({"asking": [BLOCKED], "after": [{"state": "idle"}]})
+        r = self.run_smoke({"asking": [BLOCKED], "after": [IDLE]})
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_records_not_from_the_launched_pi_never_pass(self):
+        foreign = dict(BLOCKED, app="other", effective_app="other")
+        r = self.run_smoke({"asking": [WORKING, foreign], "after": [DONE]})
+        self.assertEqual(r.returncode, 1, "a blocked record from another program is not Pi's")
+        self.assertNotIn(["send-key", "-b", "block:smoke", "enter"], self.calls())
+        self.assert_pane_closed()
+
+    def test_settled_record_from_another_process_fails(self):
+        r = self.run_smoke({"asking": [BLOCKED], "after": [dict(IDLE, owner={"pid": 8})]})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Pi didn't settle", r.stdout)
+
+    def test_blocked_again_in_the_settled_snapshot_fails(self):
+        r = self.run_smoke({"asking": [BLOCKED], "after": [DONE, dict(BLOCKED, id="again")]})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("still blocked", r.stdout)
+
+    def test_echoed_prompt_with_an_error_is_not_the_regression(self):
+        r = self.run_smoke({"asking": [dict(PI, state="error")], "after": [],
+                            "screen": PROMPT_ECHO + "\nNo API key for provider"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Pi never showed the question", r.stdout)
+        self.assertNotIn("on screen but", r.stdout)
+
+    def test_a_failed_close_fails_the_run(self):
+        r = self.run_smoke({"asking": [BLOCKED], "after": [DONE], "close_fails": True})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not close the test pane block:smoke", r.stderr)
+
     def test_question_on_screen_but_not_blocked_is_the_regression(self):
-        r = self.run_smoke({"asking": [{"state": "working"}], "after": [], "screen": "Which color do you prefer?\n 1. Red"})
+        r = self.run_smoke({"asking": [WORKING], "after": [],
+                            "screen": PROMPT_ECHO + "\n Color\n Which color do you prefer?\n ❯ 1. Red\n   2. Blue"})
         self.assertEqual(r.returncode, 1)
         self.assertIn("the question is on screen but Rex doesn't show Pi as blocked", r.stdout)
         self.assertNotIn(["send-key", "-b", "block:smoke", "enter"], self.calls())
         self.assert_pane_closed()
 
     def test_pi_never_asking_shows_the_screen(self):
-        r = self.run_smoke({"asking": [{"state": "error"}], "after": [], "screen": "No API key for provider"})
+        r = self.run_smoke({"asking": [dict(PI, state="error")], "after": [], "screen": "No API key for provider"})
         self.assertEqual(r.returncode, 1)
         self.assertIn("Pi never showed the question", r.stdout)
         self.assertIn("| No API key for provider", r.stdout)
@@ -126,18 +163,18 @@ class RexStatusSmokeTest(unittest.TestCase):
         self.assert_pane_closed()
 
     def test_not_settling_after_answer_fails(self):
-        r = self.run_smoke({"asking": [BLOCKED], "after": [{"state": "working"}]})
+        r = self.run_smoke({"asking": [BLOCKED], "after": [WORKING]})
         self.assertEqual(r.returncode, 1)
         self.assertIn("didn't settle", r.stdout)
         self.assert_pane_closed()
 
     def test_model_override_and_pi_default(self):
-        self.run_smoke({"asking": [BLOCKED], "after": [{"state": "done"}]}, "--model", "openai/test")
+        self.run_smoke({"asking": [BLOCKED], "after": [DONE]}, "--model", "openai/test")
         split = next(c for c in self.calls() if c[0] == "split")
         self.assertEqual(split[split.index("--") + 1:][:4], ["pi", "--no-session", "--model", "openai/test"])
         self.log.unlink()
         (self.root / "state.json").unlink()
-        self.run_smoke({"asking": [BLOCKED], "after": [{"state": "done"}]}, "--model", "")
+        self.run_smoke({"asking": [BLOCKED], "after": [DONE]}, "--model", "")
         split = next(c for c in self.calls() if c[0] == "split")
         self.assertEqual(split[split.index("--") + 1:][:2], ["pi", "--no-session"])
         self.assertNotIn("--model", split[split.index("--"):])

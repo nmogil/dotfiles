@@ -413,7 +413,7 @@ rex-safe-upgrade run        # do it (safe to start from inside a Rex pane)
 [`docs/rex-safe-upgrade.md`](docs/rex-safe-upgrade.md).
 
 After upgrading Rex, Pi, or Pi packages, check that Rex still shows a waiting
-Pi question as blocked (one small model call; run from a Rex pane):
+Pi question as blocked (one short Pi run on a small model; run from a Rex pane):
 
 ```bash
 ./dot rex status-smoke

@@ -40,8 +40,12 @@ personal Pi baseline may pin, with the reason:
 
 - `./dot pi config capture` refuses a live pin below the minimum (a prerelease
   of the minimum counts as below).
-- `./dot pi config apply` and `check`, and so `./dot update`, refuse a
-  baseline below it before writing anything.
+- `./dot pi config apply` and `check` refuse a baseline below it before
+  writing any Pi config. In `./dot update` that step comes after the repos
+  are fast-forwarded and the Pi CLI is updated, so those still happen.
+- The baseline a machine last applied (what `./dot update` compares against
+  to spot local edits) is exempt, so upgrading from a pre-minimum baseline
+  works.
 - `check` already requires each machine's installed version to equal the
   baseline pin, so machines can't drift back either.
 
@@ -64,11 +68,17 @@ the package, Pi, or Rex still behaves. The live check does:
 ```
 
 It opens a real Pi in a new pane below yours and asks it to call
-`ask_user_question` once. Then it reads Rex's program status for that pane:
-a record must be `blocked` with `kind=question` while the question is open,
-and after the check answers (Enter) the blocked record must go away and Pi
-must settle (`done` or `idle`). It prints the Rex, Pi, and package versions,
-always closes the pane, and exits 0 pass, 1 fail, 2 could not run.
+`ask_user_question` once. Then it reads Rex's program status for that pane.
+Only records Pi reported count (`app=pi`):
+
+- while the question is open, a record must be `blocked` with
+  `kind=question`;
+- after the check answers (Enter), one snapshot must show no blocked record
+  and Pi's root record, from the same process, `done` or `idle`.
+
+It prints the Rex, Pi, and package versions and exits 0 pass, 1 fail, 2 could
+not run. It closes the pane at the end and fails if it can't. Each `rex` call
+has a 30-second limit.
 
 ```
 rex-status-smoke: rex 0.1.0-preview.25, pi 1.6.1, rpiv-ask-user-question 2.16.0
@@ -83,16 +93,18 @@ On 2.15.0 it fails with the actual cause:
 FAIL: the question is on screen but Rex doesn't show Pi as blocked ([{"state": "working"}]).
 ```
 
-It costs one small model call (default `anthropic/claude-haiku-5-5:low`,
-override with `--model` or `DOTFILES_REX_SMOKE_MODEL`) and needs a running
-Rex, so it isn't run automatically. `./dot update` prints a reminder to run it
+It costs one short Pi run, usually two small model requests (default
+`anthropic/claude-haiku-5-5:low`, override with `--model` or
+`DOTFILES_REX_SMOKE_MODEL`), and needs a running Rex, so it isn't run
+automatically. `./dot update` prints a reminder to run it
 whenever it updates the Pi CLI or installs Pi packages. Run it yourself after
 a Rex update.
 
 ## When the live check fails
 
 1. Read the versions it printed and compare them with the last passing run.
-2. "On screen but not blocked": the package or Pi stopped reporting it. Check
+2. "On screen but not blocked" (the questionnaire's numbered options are
+   visible): the package or Pi stopped reporting it. Check
    whether the package still passes `blocked` to `ctx.ui.custom()`
    (`grep -n "blocked" ~/.pi/agent/npm/node_modules/@juicesharp/rpiv-ask-user-question/ask-user-question.ts`)
    and both changelogs. Pin the last good version in the baseline

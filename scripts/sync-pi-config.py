@@ -78,7 +78,7 @@ def object_file(path: Path) -> dict:
     return value
 
 
-def preferences(value: dict) -> dict:
+def preferences(value: dict, minimums: bool = True) -> dict:
     result = {key: value[key] for key in sorted(PREFERENCES) if key in value}
     # Only the reviewed compaction package may float. Local/git package sources
     # and other unpinned packages still require separate review.
@@ -91,7 +91,7 @@ def preferences(value: dict) -> dict:
     ):
         raise ValueError("portable packages must be exact-version npm sources or approved floating compaction")
     for item in packages:
-        if item not in FLOATING_PACKAGES:
+        if minimums and item not in FLOATING_PACKAGES:
             require_package_minimum(*item.removeprefix("npm:").rsplit("@", 1))
     encoded = json.dumps(result)
     if "https://" in encoded or "http://" in encoded:
@@ -227,7 +227,9 @@ def installed_pi() -> tuple[str, str]:
     return pi_path, pi_version.installed_version(pi_path)
 
 
-def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
+def load_bundle(bundle: Path, minimums: bool = True) -> tuple[dict, dict[str, bytes]]:
+    """Verify and read a baseline. `minimums=False` is only for --previous-bundle,
+    a past baseline read to detect local edits, never applied."""
     manifest = object_file(safe_path(bundle, "manifest.json"))
     version = manifest.get("piVersion")
     files = manifest.get("files")
@@ -248,7 +250,7 @@ def load_bundle(bundle: Path) -> tuple[dict, dict[str, bytes]]:
             raise ValueError(f"baseline checksum mismatch: {name}")
         result[name] = data
     settings = json.loads(result[SETTINGS])
-    if not isinstance(settings, dict) or preferences(settings) != settings:
+    if not isinstance(settings, dict) or preferences(settings, minimums) != settings:
         raise ValueError("baseline settings contain non-portable fields")
     return manifest, result
 
@@ -423,7 +425,8 @@ def main() -> int:
     # absent here are simply installed.
     protected = []
     if args.protect_local:
-        prior = load_bundle(args.previous_bundle.absolute())[1] if args.previous_bundle else {}
+        # The previous baseline may predate a package minimum; it is only compared.
+        prior = load_bundle(args.previous_bundle.absolute(), minimums=False)[1] if args.previous_bundle else {}
         for name in sorted(set(changes) | set(removed)):
             target = safe_path(home, name)
             if not target.exists() and not target.is_symlink():

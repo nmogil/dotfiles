@@ -423,6 +423,26 @@ class PiConfigTest(unittest.TestCase):
             args += ["--previous-bundle", str(previous)]
         return tuple(args)
 
+    def test_protect_local_upgrades_from_a_previous_baseline_below_a_minimum(self):
+        # ./dot update compares against the baseline this machine last applied,
+        # which may predate a package minimum. Only the incoming one must meet it.
+        name = "@juicesharp/rpiv-ask-user-question"
+        self.put(self.mac, ".pi/agent/settings.json", json.dumps({"packages": [f"npm:{name}@2.16.0"]}))
+        self.run_cli("capture", apply=True)
+        previous = self.root / "previous"
+        shutil.copytree(self.bundle, previous)
+        settings = previous / "files/.pi/agent/settings.json"
+        old = settings.read_text().replace("2.16.0", "2.15.0")
+        settings.write_text(old)
+        manifest = json.loads((previous / "manifest.json").read_text())
+        manifest["files"][".pi/agent/settings.json"] = hashlib.sha256(old.encode()).hexdigest()
+        (previous / "manifest.json").write_text(json.dumps(manifest))
+        self.run_cli("apply", self.vps, apply=True)
+        self.put(self.vps, ".pi/agent/settings.json", old)  # what the old baseline left behind
+        self.run_cli("apply", self.vps, apply=True, extra_args=self.protect(previous))
+        live = json.loads((self.vps / ".pi/agent/settings.json").read_text())
+        self.assertEqual(live["packages"], [f"npm:{name}@2.16.0"])
+
     def test_protect_local_refuses_newly_managed_file_that_differs(self):
         previous = self.synced_previous()
         self.put(self.mac, ".pi/agent/extensions/new.ts", "export const fromMac = 1;\n")
