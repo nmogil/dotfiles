@@ -186,10 +186,19 @@ def run_checks(pane: str, args) -> int:
     if pid is None:
         print(f"FAIL: the blocked record has no owner process ({summary([hit])})")
         return 1
-    if not wait_for(lambda: QUESTIONNAIRE_ON_SCREEN.search(rex("capture", "-b", pane, "--trim", check=False)),
-                    min(args.timeout, 15), args.interval):
-        print(f"FAIL: Pi is blocked on a question, but not ask_user_question's ({summary([hit])})")
+    def questionnaire_blocked():
+        # Same poll: the questionnaire is on screen AND the same Pi still
+        # reports blocked/question, so an earlier, unrelated dialog can't pass.
+        if not QUESTIONNAIRE_ON_SCREEN.search(rex("capture", "-b", pane, "--trim", check=False)):
+            return None
+        current = blocked_question(records(pane))
+        return current if current is not None and owner(current) == pid else None
+
+    confirmed = wait_for(questionnaire_blocked, min(args.timeout, 15), args.interval)
+    if not confirmed:
+        print(f"FAIL: Pi is blocked on a question, but not ask_user_question's ({summary(records(pane))})")
         return 1
+    hit = confirmed
     print(f"ok   blocked while asking: {summary([hit])}")
 
     rex("send-key", "-b", pane, "enter")

@@ -21,8 +21,10 @@ from pathlib import Path
 WORKING = {"state": "working", "app": "pi", "effective_app": "pi", "owner": {"pid": 7}}
 state = Path(os.environ["FAKE_REX_STATE"])
 scenario = json.loads(Path(os.environ["FAKE_REX_SCENARIO"]).read_text())
-s = json.loads(state.read_text()) if state.exists() else {"reads": 0, "answered": False}
+s = json.loads(state.read_text()) if state.exists() else {"reads": 0, "polls": 0, "answered": False}
 args = sys.argv[1:]
+if args[:2] == ["block", "call"] or args[:1] == ["capture"]:
+    s["polls"] += 1  # every status read or screen capture
 with open(os.environ["FAKE_REX_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
 def save():
@@ -39,11 +41,19 @@ elif args[:2] == ["block", "call"]:
         records = scenario["after"]
     else:
         records = scenario["asking"] if s["reads"] > scenario.get("delay", 0) else [WORKING]
+        later = scenario.get("asking_later")  # after N polls: {"polls": N, "records": [...], "screen": "..."}
+        if later and s["polls"] > later["polls"]:
+            records = later["records"]
     print(json.dumps({"records": records}))
 elif args[:1] == ["send-key"]:
     s["answered"] = True; save()
 elif args[:1] == ["capture"]:
-    print(scenario.get("screen", ""))
+    later = scenario.get("asking_later")
+    save()
+    if later and not s["answered"] and s["polls"] > later["polls"] and "screen" in later:
+        print(later["screen"])
+    else:
+        print(scenario.get("screen", ""))
 elif args[:2] == ["block", "close"]:
     if scenario.get("close_fails"):
         print("block not found", file=sys.stderr); sys.exit(1)
@@ -151,6 +161,15 @@ class RexStatusSmokeTest(unittest.TestCase):
         self.assertIn("not ask_user_question's", r.stdout)
         self.assertNotIn(["send-key", "-b", "block:smoke", "enter"], self.calls())
         self.assert_pane_closed()
+
+    def test_an_earlier_dialog_then_an_unblocked_questionnaire_is_not_enough(self):
+        # Another dialog reports blocked/question with no questionnaire on screen;
+        # then the questionnaire appears while Pi reports only working.
+        r = self.run_smoke({"asking": [BLOCKED], "after": [DONE], "screen": "Pick a model",
+                            "asking_later": {"polls": 2, "records": [WORKING], "screen": QUESTIONNAIRE}})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not ask_user_question's", r.stdout)
+        self.assertNotIn(["send-key", "-b", "block:smoke", "enter"], self.calls())
 
     def test_a_blocked_record_without_an_owner_is_not_enough(self):
         ownerless = {k: v for k, v in BLOCKED.items() if k != "owner"}
