@@ -83,6 +83,26 @@ destination (a symlinked `~/.config` is common and fine) or against other
 processes changing either tree while it runs. Do not edit the overlay or the
 Rex config directory concurrently with `./dot rex config`.
 
+## Program resume
+
+`init.lua` also trusts Pi's resume reports (OSC 7577). Pi 1.7+ tells Rex how to
+reopen its session (`pi --session <id>`, with `--agent-dir`, and `--session-dir`
+when not the default, for a non-default profile such as `~/.pi/agent-work`). Rex
+runs that command in the pane after a server restart only if a rule trusts it, and
+Rex preview.25 ships no Pi rule. The rules accept a UUID session and profile
+directories under `~/.pi` only, and have no `flags` tables (Pi's docs say those
+don't work for Pi yet). Check them with `rex config check` ("resume rules"), and a
+pane's report with `rex block call -s <session> -b <block> program_resume_records`.
+Rex turns program resume off when the server runs as root (the VPS), so there
+`rex-safe-upgrade` still lists resume commands.
+
+What the rules deliberately leave as a plain shell after a restart: a Pi that
+reports any extra flag (such as `--tools`, `--no-tools`, `--no-extensions` or
+`--no-approve`), and a default-profile Pi with custom session storage (it reports
+`--session-dir` without `--agent-dir`). Limit: the rules can only see what Pi
+reports. Pi 1.7 doesn't repeat `--offline` in its resume command, so a Pi started
+with `--offline` comes back without it.
+
 ## Limits
 
 - Mac clipboard only. This is not an image-paste solution for Rex iOS.

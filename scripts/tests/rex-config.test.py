@@ -138,6 +138,31 @@ class RexConfigTest(unittest.TestCase):
         self.run_setup('--apply')
         self.assertTrue((self.config/'dotfiles_private.lua').is_file())
 
+    def test_pi_resume_trust_rules_are_in_force(self):
+        # Rex runs a reported resume command only if a rule trusts it; Pi needs ours.
+        import json
+        T = Path(self.tmp.name) / 'check'
+        shutil.copytree(ROOT / 'config/rex', T)
+        r = subprocess.run([REX, 'config', 'check', '--json', str(T / 'init.lua')], capture_output=True, text=True,
+                           env=dict(self.env, REX_CONFIG=str(T / 'init.lua')))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        report = json.loads(r.stdout)
+        self.assertEqual(report.get('diagnostics') or [], [], report.get('diagnostics'))
+        if 'resume_rules' not in report:
+            self.skipTest('this Rex has no resume rules')
+        ours = {x['name']: x for x in report['resume_rules'] if not x.get('built_in')}
+        uuid, under = {'match': 'uuid'}, {'dir': '~/.pi', 'match': 'under'}
+        expected = {
+            'pi': ['pi', '--session', uuid],
+            'pi_profile': ['pi', '--agent-dir', under, '--session', uuid],
+            'pi_profile_sessions': ['pi', '--agent-dir', under, '--session-dir', under, '--session', uuid],
+        }
+        self.assertEqual(set(ours), set(expected), 'no other custom resume rules')
+        for name, command in expected.items():
+            self.assertIn(name, ours)
+            self.assertEqual(ours[name]['rule']['command'], command)
+            self.assertFalse(ours[name]['rule'].get('flags'), f'{name} must not have a flags table')
+
     def test_init_without_overlay_still_validates(self):
         self.run_setup('--apply')
         self.assertFalse((self.config/'dotfiles_private.lua').exists())
