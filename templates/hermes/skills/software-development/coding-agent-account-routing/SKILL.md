@@ -72,7 +72,7 @@ an interactive shell alive if Pi exits:
 
 ```bash
 ACTIVE_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-rex window new -s "$REX_SESSION" "<label>" -c "$TARGET_REPO" --focus=false --json -- \
+rex window new -s "$REX_BLOCK" "<label>" -c "$TARGET_REPO" --focus=false --json -- \
   sh -lc 'PI_CODING_AGENT_DIR="$1" pi --model "$2" --thinking "$3" "@$4"; exec "${SHELL:-/bin/zsh}" -l' \
   _ "$ACTIVE_AGENT_DIR" "<provider/model>" "<thinking>" "/tmp/<prompt>.md"
 ```
