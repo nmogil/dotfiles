@@ -157,6 +157,7 @@ class RexConfigTest(unittest.TestCase):
             'pi_profile': ['pi', '--agent-dir', under, '--session', uuid],
             'pi_profile_sessions': ['pi', '--agent-dir', under, '--session-dir', under, '--session', uuid],
         }
+        self.assertEqual(set(ours), set(expected), 'no other custom resume rules')
         for name, command in expected.items():
             self.assertIn(name, ours)
             self.assertEqual(ours[name]['rule']['command'], command)
