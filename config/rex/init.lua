@@ -3,6 +3,26 @@
 require("rex-image-paste").setup()
 rex.bind("cmd+shift+v", "image_paste")
 
+-- Program resume (OSC 7577): Pi 1.7+ reports how to reopen its session, and Rex
+-- runs that command after a server restart only if a rule trusts it. Rex
+-- (preview.25) ships no Pi rule yet. Pi reports `pi --session <id>`, plus
+-- `--agent-dir <dir>` (and `--session-dir <dir>` when it isn't the default) for
+-- a non-default profile such as ~/.pi/agent-work. No `flags` tables: Pi's docs say
+-- they don't work for Pi yet. Rex never runs program resume as root.
+-- See docs/rex-image-paste.md ("Program resume").
+if rex.match then
+  rex.set("resume.trust.pi", { command = { "pi", "--session", rex.match.uuid } })
+  rex.set("resume.trust.pi_profile", {
+    command = { "pi", "--agent-dir", rex.match.under("~/.pi"), "--session", rex.match.uuid },
+  })
+  rex.set("resume.trust.pi_profile_sessions", {
+    command = {
+      "pi", "--agent-dir", rex.match.under("~/.pi"),
+      "--session-dir", rex.match.under("~/.pi"), "--session", rex.match.uuid,
+    },
+  })
+end
+
 -- Optional private overlay (installed by ./dot rex config from the private companion).
 -- Rex puts the loaded config file's directory first on package.path
 -- ("<dir>/?.lua"), so this also works with a custom REX_CONFIG. Load the overlay

@@ -138,6 +138,20 @@ class RexConfigTest(unittest.TestCase):
         self.run_setup('--apply')
         self.assertTrue((self.config/'dotfiles_private.lua').is_file())
 
+    def test_pi_resume_trust_rules_are_in_force(self):
+        # Rex runs a reported resume command only if a rule trusts it; Pi needs ours.
+        T = Path(self.tmp.name) / 'check'
+        shutil.copytree(ROOT / 'config/rex', T)
+        r = subprocess.run([REX, 'config', 'check', str(T / 'init.lua')], capture_output=True, text=True,
+                           env=dict(self.env, REX_CONFIG=str(T / 'init.lua')))
+        out = r.stdout + r.stderr
+        if 'resume rules' not in out:
+            self.skipTest('this Rex has no resume rules')
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn('command: pi --session <uuid>', out)
+        self.assertIn('command: pi --agent-dir <path under ~/.pi> --session <uuid>', out)
+        self.assertIn('command: pi --agent-dir <path under ~/.pi> --session-dir <path under ~/.pi> --session <uuid>', out)
+
     def test_init_without_overlay_still_validates(self):
         self.run_setup('--apply')
         self.assertFalse((self.config/'dotfiles_private.lua').exists())
