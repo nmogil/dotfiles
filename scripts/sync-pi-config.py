@@ -60,7 +60,7 @@ PREFERENCES = {
     "editorPaddingX", "outputPad", "autocompleteMaxVisible", "showHardwareCursor",
     "fullscreenExitOutput", "fullscreenScrollbar", "fullscreenCopyOnSelect",
     "fullscreenWheelScrollLines", "showCacheMissNotices", "enableSkillCommands",
-    "enableAnalytics", "retry", "transport", "markdown",
+    "enableInstallTelemetry", "enableAnalytics", "retry", "transport", "markdown",
 }
 SECRET = re.compile(
     rb"sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|"

@@ -96,6 +96,13 @@ pane's report with `rex block call -s <session> -b <block> program_resume_record
 Rex turns program resume off when the server runs as root (the VPS), so there
 `rex-safe-upgrade` still lists resume commands.
 
+What the rules deliberately leave as a plain shell after a restart: a Pi that
+reports any extra flag (such as `--tools`, `--no-tools`, `--no-extensions` or
+`--no-approve`), and a default-profile Pi with custom session storage (it reports
+`--session-dir` without `--agent-dir`). Limit: the rules can only see what Pi
+reports. Pi 1.7 doesn't repeat `--offline` in its resume command, so a Pi started
+with `--offline` comes back without it.
+
 ## Limits
 
 - Mac clipboard only. This is not an image-paste solution for Rex iOS.
